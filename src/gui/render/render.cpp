@@ -65,6 +65,21 @@ static bool send_init()
     return true;
 }
 
+static int complete_write(int fd, const char *buf, size_t count)
+{
+    int ret;
+    while (count) {
+        ret = write(fd, buf, count);
+        if (ret < 0)
+            return ret;
+        if (ret == 0)
+            return count;
+        buf += ret;
+        count -= ret;
+    }
+    return 0;
+}
+
 Render render;
 ScalerLineHandler_t RENDER_DrawLine;
 
@@ -262,6 +277,8 @@ static void halt_render()
 	render.active   = false;
 }
 
+Bit8u sendbuf[8+1024+320*224];
+
 void RENDER_EndUpdate([[maybe_unused]] bool abort)
 {
 	if (!render.updating) {
@@ -295,6 +312,25 @@ void RENDER_EndUpdate([[maybe_unused]] bool abort)
 
 		CAPTURE_AddFrame(image, frames_per_second);
 	}
+
+        if (render.src.width==320 && render.src.height==224) {
+            Bit32u sendlen= 320*224 + 8;
+            Bit32u sendflags = 0;
+            if (render.pal.changed) {
+                sendlen += 1024;
+                sendflags |= 1;
+            }
+            memcpy(sendbuf, &sendlen, 4);
+            memcpy(sendbuf+4, &sendflags, 4);
+            if (sendflags & 1)
+                memcpy(sendbuf+8, &render.pal.rgb, 1024);
+            memcpy(sendbuf+8+(sendflags&1?1024:0), &scalerSourceCache, 320*224);
+            int ret = complete_write(sock, (const char*) sendbuf, sendlen);
+            if (ret < 0)
+                pr_error();
+            if (ret != 0)
+                exit(1);
+        }
 
 	GFX_EndUpdate();
 
