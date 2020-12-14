@@ -10,6 +10,13 @@
 #include <memory>
 #include <mutex>
 
+#include <unistd.h>
+#include <errno.h>
+
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+
 #include "capture/capture.h"
 #include "config/config.h"
 #include "config/setup.h"
@@ -25,6 +32,38 @@
 #include "utils/fraction.h"
 #include "utils/math_utils.h"
 #include "utils/string_utils.h"
+
+static void pr_error()
+{
+    char buf[1024];
+    char *err = strerror_r(errno, buf, 1024);
+    fprintf(stderr, "Error %s: %s\n", err);
+}
+
+static int sock;
+
+static bool send_init()
+{
+    struct sockaddr_in servaddr;
+
+    sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) {
+        pr_error();
+        return false;
+    }
+
+    memset(&servaddr, 0, sizeof(servaddr));
+
+    servaddr.sin_family = AF_INET;
+    servaddr.sin_addr.s_addr = 0x0100007f;
+    servaddr.sin_port = htons(5677);
+
+    if (connect(sock, (struct sockaddr *) &servaddr, sizeof(servaddr)) != 0) {
+        pr_error();
+        return false;
+    }
+    return true;
+}
 
 Render render;
 ScalerLineHandler_t RENDER_DrawLine;
@@ -1486,6 +1525,9 @@ void RENDER_SyncMonochromePaletteSetting(const enum MonochromePalette palette)
 
 void RENDER_Init()
 {
+    if (!send_init())
+        exit(1);
+
 	auto section = get_section("render");
 	assert(section);
 
