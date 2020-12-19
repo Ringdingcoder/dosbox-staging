@@ -10,6 +10,7 @@
 #include <memory>
 #include <mutex>
 
+#include <time.h>
 #include <unistd.h>
 #include <errno.h>
 
@@ -316,6 +317,7 @@ void RENDER_EndUpdate([[maybe_unused]] bool abort)
         if (render.src.width==320 && render.src.height==224) {
             Bit32u sendlen= 320*224 + 32;
             Bit32u sendflags = 0;
+            Bit64u timebits[2];
             if (render.pal.changed) {
                 sendlen += 1024;
                 sendflags |= 1;
@@ -325,6 +327,11 @@ void RENDER_EndUpdate([[maybe_unused]] bool abort)
             if (sendflags & 1)
                 memcpy(sendbuf+32, &render.pal.rgb, 1024);
             memcpy(sendbuf+32+(sendflags&1?1024:0), &scalerSourceCache, 320*224);
+            timespec ts;
+            clock_gettime(CLOCK_REALTIME, &ts);
+            timebits[0] = ts.tv_sec;
+            timebits[1] = ts.tv_nsec;
+            memcpy(sendbuf+8, timebits, sizeof(timebits));
             int ret = complete_write(sock, (const char*) sendbuf, sendlen);
             if (ret < 0)
                 pr_error();
