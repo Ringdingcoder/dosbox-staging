@@ -16,6 +16,7 @@
 
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <arpa/inet.h>
 
 #include "capture/capture.h"
@@ -49,6 +50,12 @@ static bool send_init()
 
     sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock < 0) {
+        pr_error();
+        return false;
+    }
+
+    int delayval = 1;
+    if (setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, &delayval, sizeof(int)) < 0) {
         pr_error();
         return false;
     }
