@@ -1899,6 +1899,10 @@ void GFX_InitAndStartGui()
 	    sdl.fullscreen.mode == FullscreenMode::ForcedBorderless) {
 		enter_fullscreen();
 	}
+
+                globl_kbd_exchange.lock = SDL_CreateMutex();
+                globl_kbd_exchange.cond = SDL_CreateCond();
+                globl_kbd_exchange.turn = 1;
 }
 
 static void notify_sdl_setting_updated(SectionProp& section,
@@ -2446,6 +2450,32 @@ void GFX_MaybePresentFrame()
 	}
 }
 
+kbd_event_exchange globl_kbd_exchange;
+
+static bool replacement_poll_event(SDL_Event *event)
+{
+    bool fakekey = false;
+    SDL_mutexP(globl_kbd_exchange.lock);
+    if (globl_kbd_exchange.turn == 0) {
+        fakekey = true;
+        event->type = globl_kbd_exchange.state == 0 ? SDL_KEYUP : SDL_KEYDOWN;
+        event->key.type = event->type;
+        event->key.state = event->type == SDL_KEYUP ? SDL_RELEASED : SDL_PRESSED;
+        event->key.keysym.scancode = globl_kbd_exchange.scancode;
+        memcpy(&event->key.keysym.sym, &globl_kbd_exchange.sym, 4);
+        memcpy(&event->key.keysym.mod, &globl_kbd_exchange.mod, 2);
+
+        globl_kbd_exchange.turn = 1;
+        SDL_CondBroadcast(globl_kbd_exchange.cond);
+    }
+    SDL_mutexV(globl_kbd_exchange.lock);
+
+    if (fakekey)
+        return true;
+
+    return SDL_PollEvent(event);
+}
+
 // Returns:
 //   true  - event loop can keep running
 //   false - event loop wants to quit
@@ -2465,7 +2495,7 @@ bool GFX_PollAndHandleEvents()
 		MAPPER_UpdateJoysticks();
 	}
 
-	while (SDL_PollEvent(&event)) {
+	while (replacement_poll_event(&event)) {
 #if C_DEBUGGER
 		if (is_debugger_event(event)) {
 			pdc_event_queue.push(event);

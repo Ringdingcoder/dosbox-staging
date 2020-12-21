@@ -238,4 +238,19 @@ std::vector<uint8_t> KEYBOARD_GetScanCode3(const KBD_KEYS key_type,
                                            const bool is_pressed);
 #endif // ENABLE_SCANCODE_SET_3
 
+struct SDL_mutex;
+struct SDL_cond;
+
+struct kbd_event_exchange {
+    SDL_mutex *lock;
+    SDL_cond *cond;
+    int state;                  // 0 .. keyup, 1 .. keydown
+    int turn;                   // 0 .. receiver's turn, else sender's turn
+    Bit8u scancode;
+    Bit32u sym;
+    Bit16u mod;
+};
+
+extern kbd_event_exchange globl_kbd_exchange;
+
 #endif // DOSBOX_KEYBOARD_H

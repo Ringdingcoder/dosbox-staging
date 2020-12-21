@@ -26,6 +26,7 @@
 #include "gui/mapper.h"
 #include "gui/render/render.h"
 #include "gui/render/render_backend.h"
+#include "hardware/input/keyboard.h"
 #include "hardware/video/vga.h"
 #include "misc/notifications.h"
 #include "misc/support.h"
@@ -35,27 +36,29 @@
 #include "utils/math_utils.h"
 #include "utils/string_utils.h"
 
+#include "SDL_thread.h"
+
 static void pr_error()
 {
     char buf[1024];
     char *err = strerror_r(errno, buf, 1024);
-    fprintf(stderr, "Error %s: %s\n", err);
+    fprintf(stderr, "Error: %s\n", err);
 }
 
-static int sock;
+static int sock, sock_kbd;
 
-static bool send_init()
+static bool sock_init(int *sock, int port)
 {
     struct sockaddr_in servaddr;
 
-    sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (sock < 0) {
+    *sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (*sock < 0) {
         pr_error();
         return false;
     }
 
     int delayval = 1;
-    if (setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, &delayval, sizeof(int)) < 0) {
+    if (setsockopt(*sock, IPPROTO_TCP, TCP_NODELAY, &delayval, sizeof(int)) < 0) {
         pr_error();
         return false;
     }
@@ -64,13 +67,43 @@ static bool send_init()
 
     servaddr.sin_family = AF_INET;
     servaddr.sin_addr.s_addr = 0x0100007f;
-    servaddr.sin_port = htons(5677);
+    servaddr.sin_port = htons(port);
 
-    if (connect(sock, (struct sockaddr *) &servaddr, sizeof(servaddr)) != 0) {
+    if (connect(*sock, (struct sockaddr *) &servaddr, sizeof(servaddr)) != 0) {
         pr_error();
         return false;
     }
     return true;
+}
+
+static int kbd_reader_thread(void *);
+
+static bool send_init()
+{
+    if (!sock_init(&sock, 5677))
+        return false;
+    if (!sock_init(&sock_kbd, 5678))
+        return false;
+
+    if (!SDL_CreateThread(kbd_reader_thread, 0))
+        return false;
+
+    return true;
+}
+
+static int complete_read(int fd, char *buf, size_t count)
+{
+    int ret;
+    while (count) {
+        ret = read(fd, buf, count);
+        if (ret < 0)
+            return ret;
+        if (ret == 0)
+            return count;
+        buf += ret;
+        count -= ret;
+    }
+    return 0;
 }
 
 static int complete_write(int fd, const char *buf, size_t count)
@@ -84,6 +117,30 @@ static int complete_write(int fd, const char *buf, size_t count)
             return count;
         buf += ret;
         count -= ret;
+    }
+    return 0;
+}
+
+static int kbd_reader_thread(void *)
+{
+    for (;;) {
+        Bit8u buf[8];
+        if (complete_read(sock_kbd, (char*) buf, 8))
+            return 1;
+
+        printf("received kbd event!\n");
+
+        SDL_mutexP(globl_kbd_exchange.lock);
+        while (globl_kbd_exchange.turn == 0)
+            SDL_CondWait(globl_kbd_exchange.cond, globl_kbd_exchange.lock);
+        globl_kbd_exchange.turn = 0;
+        globl_kbd_exchange.state = buf[0];
+        globl_kbd_exchange.scancode = buf[1];
+        memcpy(&globl_kbd_exchange.sym, buf+2, 4);
+        memcpy(&globl_kbd_exchange.mod, buf+6, 2);
+        SDL_mutexV(globl_kbd_exchange.lock);
+
+        printf("dispatched kbd event!\n");
     }
     return 0;
 }
