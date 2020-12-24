@@ -36,6 +36,7 @@
 #include "utils/math_utils.h"
 #include "utils/string_utils.h"
 
+#include "SDL_keyboard.h"
 #include "SDL_thread.h"
 
 static void pr_error()
@@ -135,9 +136,11 @@ static int kbd_reader_thread(void *)
             SDL_CondWait(globl_kbd_exchange.cond, globl_kbd_exchange.lock);
         globl_kbd_exchange.turn = 0;
         globl_kbd_exchange.state = buf[0];
-        globl_kbd_exchange.scancode = buf[1];
-        memcpy(&globl_kbd_exchange.sym, buf+2, 4);
-        memcpy(&globl_kbd_exchange.mod, buf+6, 2);
+        globl_kbd_exchange.scancode = buf[1] + 8;
+        // memcpy(&globl_kbd_exchange.sym, buf+2, 4);
+        // memcpy(&globl_kbd_exchange.mod, buf+6, 2);
+        globl_kbd_exchange.sym = SDLK_UNKNOWN;
+        globl_kbd_exchange.mod = KMOD_NONE;
         SDL_mutexV(globl_kbd_exchange.lock);
 
         printf("dispatched kbd event!\n");
