@@ -19,6 +19,8 @@
 #include <netinet/tcp.h>
 #include <arpa/inet.h>
 
+#include <lz4.h>
+
 #include "capture/capture.h"
 #include "config/config.h"
 #include "config/setup.h"
@@ -47,6 +49,7 @@ static void pr_error()
 }
 
 static int sock, sock_kbd;
+LZ4_stream_t stream;
 
 static bool sock_init(int *sock, int port)
 {
@@ -88,6 +91,9 @@ static bool send_init()
 
     if (!SDL_CreateThread(kbd_reader_thread, 0))
         return false;
+
+    LZ4_stream_t *streamt = LZ4_initStream(&stream, sizeof(stream));
+    assert(streamt == &stream);
 
     return true;
 }
@@ -345,7 +351,14 @@ static void halt_render()
 	render.active   = false;
 }
 
-Bit8u sendbuf[32+1024+320*224];
+typedef struct input_buf_t {
+    Bit8u buf[16+1024+320*224];
+} input_buf;
+struct {
+    input_buf ibuf[2];
+    int which;
+} ibufs;
+Bit8u real_sendbuf[140000];
 
 void RENDER_EndUpdate([[maybe_unused]] bool abort)
 {
@@ -382,24 +395,29 @@ void RENDER_EndUpdate([[maybe_unused]] bool abort)
 	}
 
         if (render.src.width==320 && render.src.height==224) {
-            Bit32u sendlen= 320*224 + 32;
+            Bit32u sendlen= 320*224 + 16;
             Bit32u sendflags = 0;
             Bit64u timebits[2];
             if (render.pal.changed) {
                 sendlen += 1024;
                 sendflags |= 1;
             }
-            memcpy(sendbuf, &sendlen, 4);
-            memcpy(sendbuf+4, &sendflags, 4);
+            Bit8u *sendbuf = ibufs.ibuf[ibufs.which].buf;
+            ibufs.which = !ibufs.which;
+            memcpy(sendbuf, &sendflags, 4);
             if (sendflags & 1)
-                memcpy(sendbuf+32, &render.pal.rgb, 1024);
-            memcpy(sendbuf+32+(sendflags&1?1024:0), &scalerSourceCache, 320*224);
+                memcpy(sendbuf+16, &render.pal.rgb, 1024);
+            memcpy(sendbuf+16+(sendflags&1?1024:0), &scalerSourceCache, 320*224);
+            sendlen = LZ4_compress_fast_continue(&stream, (const char *) sendbuf, (char*) real_sendbuf+4, sendlen, sizeof(real_sendbuf)-4, 2);
+            if (sendlen == 0)
+                exit(1);
+            memcpy(real_sendbuf, &sendlen, 4);
             timespec ts;
             clock_gettime(CLOCK_REALTIME, &ts);
             timebits[0] = ts.tv_sec;
             timebits[1] = ts.tv_nsec;
             memcpy(sendbuf+8, timebits, sizeof(timebits));
-            int ret = complete_write(sock, (const char*) sendbuf, sendlen);
+            int ret = complete_write(sock, (const char*) real_sendbuf, sendlen+4);
             if (ret < 0)
                 pr_error();
             if (ret != 0)
