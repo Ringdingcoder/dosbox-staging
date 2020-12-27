@@ -94,10 +94,10 @@ static bool send_init()
 
     LZ4_streamHC_t *streamt = LZ4_initStreamHC(&stream_uh, sizeof(stream_uh));
     assert(streamt == &stream_uh);
-    LZ4_resetStreamHC_fast(&stream_uh, LZ4HC_CLEVEL_MIN);
+    LZ4_resetStreamHC_fast(&stream_uh, 7);
     streamt = LZ4_initStreamHC(&stream_lh, sizeof(stream_lh));
     assert(streamt == &stream_lh);
-    LZ4_resetStreamHC_fast(&stream_lh, LZ4HC_CLEVEL_MIN);
+    LZ4_resetStreamHC_fast(&stream_lh, 7);
 
     return true;
 }
