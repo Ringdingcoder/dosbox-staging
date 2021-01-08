@@ -364,6 +364,89 @@ struct {
     int which;
 } ibufs;
 uint8_t real_sendbuf[140000];
+uint8_t prevScreen[320*224];
+
+static void translateInplace(uint8_t *blt, int dx, int dy)
+{
+    if (!dy && !dx)
+        return;
+    if (dy > 0) {
+        // lines from bottom to top
+        int loffsTgt = 320*223;
+        int loffsSrc = loffsTgt - 320*dy;
+        for (int y=223; y>=dy; y--) {
+            if (dx > 0) {
+                // move right
+                memcpy(blt + loffsTgt + dx, blt + loffsSrc, 320 - dx);
+            } else {
+                memcpy(blt + loffsTgt, blt + loffsSrc - dx, 320 + dx);
+            }
+            loffsTgt -= 320;
+            loffsSrc -= 320;
+        }
+    } else {
+        int loffsTgt = 0;
+        int loffsSrc = -320*dy;
+        for (int y=0; y<224+dy; y++) {
+            if (dx > 0) {
+                // move right
+                memmove(blt + loffsTgt + dx, blt + loffsSrc, 320 - dx);
+            } else {
+                memmove(blt + loffsTgt, blt + loffsSrc - dx, 320 + dx);
+            }
+            loffsTgt += 320;
+            loffsSrc += 320;
+        }
+    }
+}
+
+static void checkTranslation(uint8_t *src, int16_t *translate_x, int16_t *translate_y)
+{
+    int val[19][19];            // 0 == -9; 9 == 0; 18 == +9
+
+    // x: 160 - 224 (mid 192)
+    // y: 112 - 176 (mid 144)
+    for (int j=0; j<19; j++) {
+        for (int i=0; i<19; i++) {
+            int v = 0;
+            int offs = i-9 + 320*(j-9);
+            // horizontal
+            for (int k=0; k<64; k++) {
+                if (prevScreen[offs+k+144*320+160] == src[k+144*320+160])
+                    v++;
+            }
+            // vertical
+            for (int k=0; k<64; k++) {
+                if (prevScreen[offs+(k+112)*320+192] == src[(k+112)*320+192])
+                    v++;
+            }
+            val[j][i] = v;
+        }
+    }
+
+    int bestidx_x = 9, bestidx_y = 9;
+    int best = 0;
+
+    for (int j=0; j<19; j++) {
+        for (int i=0; i<19; i++) {
+            if (val[j][i] > best) {
+                best = val[j][i];
+                bestidx_x = i;
+                bestidx_y = j;
+            }
+        }
+    }
+
+    *translate_x = 9-bestidx_x;
+    *translate_y = 9-bestidx_y;
+}
+
+static void diffcpy(uint8_t *tgt, uint8_t *src)
+{
+    uint8_t *prevp = prevScreen;
+    for (int i=0; i<320*224; i++)
+        *tgt++ = *src++ - *prevp++;
+}
 
 void RENDER_EndUpdate([[maybe_unused]] bool abort)
 {
@@ -404,6 +487,7 @@ void RENDER_EndUpdate([[maybe_unused]] bool abort)
             uint32_t origlen= 320*224 + 32;
             uint32_t sendflags = 0;
             uint64_t timebits[2];
+            int16_t translate_x, translate_y;
             if (memcmp(render.prevpal, &render.pal.rgb, 1024)) {
                 printf("sending pal!\n");
                 origlen += 1024;
@@ -416,7 +500,14 @@ void RENDER_EndUpdate([[maybe_unused]] bool abort)
                 memcpy(sendbuf+32, &render.pal.rgb, 1024);
                 memcpy(render.prevpal, &render.pal.rgb, 1024);
             }
-            memcpy(sendbuf+32+(sendflags&1?1024:0), render.framebuf, 320*224);
+
+            checkTranslation(render.framebuf, &translate_x, &translate_y);
+            memcpy(sendbuf+4, &translate_x, 2);
+            memcpy(sendbuf+6, &translate_y, 2);
+            translateInplace(prevScreen, translate_x, translate_y);
+            diffcpy(sendbuf+32+(sendflags&1?1024:0), render.framebuf);
+            memcpy(prevScreen, render.framebuf, 320*224);
+
             timespec ts;
             clock_gettime(CLOCK_REALTIME, &ts);
             timebits[0] = ts.tv_sec;
@@ -1668,6 +1759,8 @@ void RENDER_Init()
 {
     if (!send_init())
         exit(1);
+
+    memset(prevScreen, 0, 320*224);
 
 	auto section = get_section("render");
 	assert(section);
