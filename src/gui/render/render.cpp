@@ -355,14 +355,10 @@ static void halt_render()
 	render.active   = false;
 }
 
-typedef struct input_buf_t {
-    uint8_t buf[32+1024+320*224];
-    uint32_t spacing;
-} input_buf;
-struct {
-    input_buf ibuf[2];
-    int which;
-} ibufs;
+constexpr int MAX_SEND_SIZE = 32 + 1024 + 320*224; // must be larger than 64kb window size for lz4!
+
+uint8_t input_buf[3*MAX_SEND_SIZE];
+int input_pos;
 uint8_t real_sendbuf[140000];
 uint8_t prevScreen[320*224];
 
@@ -493,8 +489,10 @@ void RENDER_EndUpdate([[maybe_unused]] bool abort)
                 origlen += 1024;
                 sendflags |= 1;
             }
-            uint8_t *sendbuf = ibufs.ibuf[ibufs.which].buf;
-            ibufs.which = !ibufs.which;
+            if (input_pos >= 2*MAX_SEND_SIZE)
+                input_pos = 0;
+            uint8_t *sendbuf = input_buf + input_pos;
+            input_pos += origlen;
             memcpy(sendbuf, &sendflags, 4);
             if (sendflags & 1) {
                 memcpy(sendbuf+32, &render.pal.rgb, 1024);
