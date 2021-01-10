@@ -49,7 +49,7 @@ static void pr_error()
 }
 
 static int sock, sock_kbd;
-LZ4_streamHC_t stream_uh, stream_lh;
+LZ4_streamHC_t stream_uh;
 
 static bool sock_init(int *sock, int port)
 {
@@ -95,9 +95,6 @@ static bool send_init()
     LZ4_streamHC_t *streamt = LZ4_initStreamHC(&stream_uh, sizeof(stream_uh));
     assert(streamt == &stream_uh);
     LZ4_resetStreamHC_fast(&stream_uh, 7);
-    streamt = LZ4_initStreamHC(&stream_lh, sizeof(stream_lh));
-    assert(streamt == &stream_lh);
-    LZ4_resetStreamHC_fast(&stream_lh, 7);
 
     return true;
 }
@@ -355,7 +352,7 @@ static void halt_render()
 	render.active   = false;
 }
 
-constexpr int MAX_SEND_SIZE = 32 + 1024 + 320*224; // must be larger than 64kb window size for lz4!
+constexpr int MAX_SEND_SIZE = 32 + 1024 + 320*224 + 320*224/8; // must be larger than 64kb window size for lz4!
 
 uint8_t input_buf[3*MAX_SEND_SIZE];
 int input_pos;
@@ -437,11 +434,41 @@ static void checkTranslation(uint8_t *src, int16_t *translate_x, int16_t *transl
     *translate_y = 9-bestidx_y;
 }
 
-static void diffcpy(uint8_t *tgt, uint8_t *src)
+static uint8_t *encode_diff(uint8_t *tgt, uint8_t *src)
 {
+    int output_latch = 0;
+    int output_shift = 0;
+
     uint8_t *prevp = prevScreen;
-    for (int i=0; i<320*224; i++)
-        *tgt++ = *src++ - *prevp++;
+    for (int i=0; i<320*224; i++) {
+        // OB(*src++ == *prevp++)
+        output_latch <<= 1;
+        output_latch |= *src++ != *prevp++;
+        if (++output_shift == 8) {
+            *tgt++ = output_latch;
+            output_shift = 0;
+            output_latch = 0;
+        }
+    }
+
+    uint8_t *bitbuf_input = tgt - 320*224/8;
+    int input_latch = *bitbuf_input++;
+    int input_shift = 0;
+
+    src -= 320*224;
+    for (int i=0; i<320*224; i++) {
+        int bit_value = input_latch & 0x80;
+        input_latch <<= 1;
+        if (++input_shift == 8) {
+            input_shift = 0;
+            input_latch = *bitbuf_input++;
+        }
+        if (bit_value)
+            *tgt++ = *src;
+        src++;
+    }
+
+    return tgt;
 }
 
 void RENDER_EndUpdate([[maybe_unused]] bool abort)
@@ -480,19 +507,16 @@ void RENDER_EndUpdate([[maybe_unused]] bool abort)
 
         if (render.src.width==320 && (render.src.height==448 || render.src.height==224)) {
             // scale.cachePitch == 1280, src.pixel_format == 32
-            uint32_t origlen= 320*224 + 32;
             uint32_t sendflags = 0;
             uint64_t timebits[2];
             int16_t translate_x, translate_y;
             if (memcmp(render.prevpal, &render.pal.rgb, 1024)) {
                 printf("sending pal!\n");
-                origlen += 1024;
                 sendflags |= 1;
             }
             if (input_pos >= 2*MAX_SEND_SIZE)
                 input_pos = 0;
             uint8_t *sendbuf = input_buf + input_pos;
-            input_pos += origlen;
             memcpy(sendbuf, &sendflags, 4);
             if (sendflags & 1) {
                 memcpy(sendbuf+32, &render.pal.rgb, 1024);
@@ -503,23 +527,25 @@ void RENDER_EndUpdate([[maybe_unused]] bool abort)
             memcpy(sendbuf+4, &translate_x, 2);
             memcpy(sendbuf+6, &translate_y, 2);
             translateInplace(prevScreen, translate_x, translate_y);
-            diffcpy(sendbuf+32+(sendflags&1?1024:0), render.framebuf);
+            int origlen = 32 + (sendflags&1?1024:0);
+            uint8_t *encoded_end = encode_diff(sendbuf + origlen, render.framebuf);
             memcpy(prevScreen, render.framebuf, 320*224);
+            origlen = encoded_end - sendbuf;
+            input_pos += origlen;
+            input_pos = (input_pos + 15) & ~15;
 
             timespec ts;
             clock_gettime(CLOCK_REALTIME, &ts);
             timebits[0] = ts.tv_sec;
             timebits[1] = ts.tv_nsec;
             memcpy(sendbuf+8, timebits, sizeof(timebits));
-            uint16_t sendlen_uh = LZ4_compress_HC_continue(&stream_uh, (const char *) sendbuf, (char*) real_sendbuf+4, 32000, sizeof(real_sendbuf)-4);
+            uint16_t sendlen_uh = LZ4_compress_HC_continue(&stream_uh, (const char *) sendbuf, (char*) real_sendbuf+4, origlen, sizeof(real_sendbuf)-4);
             if (sendlen_uh == 0)
                 exit(1);
             memcpy(real_sendbuf, &sendlen_uh, 2);
-            uint16_t sendlen_lh = LZ4_compress_HC_continue(&stream_lh, (const char *) sendbuf + 32000, (char*) real_sendbuf+4+sendlen_uh, origlen-32000, sizeof(real_sendbuf)-4-sendlen_uh);
-            if (sendlen_lh == 0)
-                exit(1);
+            uint16_t sendlen_lh = 0;
             memcpy(real_sendbuf+2, &sendlen_lh, 2);
-            int ret = complete_write(sock, (const char*) real_sendbuf, (unsigned) sendlen_lh+sendlen_uh+4);
+            int ret = complete_write(sock, (const char*) real_sendbuf, (unsigned) sendlen_uh+4);
             if (ret < 0)
                 pr_error();
             if (ret != 0)
