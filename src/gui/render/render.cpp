@@ -94,7 +94,7 @@ static bool send_init()
 
     LZ4_streamHC_t *streamt = LZ4_initStreamHC(&stream_uh, sizeof(stream_uh));
     assert(streamt == &stream_uh);
-    LZ4_resetStreamHC_fast(&stream_uh, 7);
+    LZ4_resetStreamHC_fast(&stream_uh, 9);
 
     return true;
 }
@@ -352,7 +352,7 @@ static void halt_render()
 	render.active   = false;
 }
 
-constexpr int MAX_SEND_SIZE = 32 + 1024 + 320*224 + 320*224/8; // must be larger than 64kb window size for lz4!
+constexpr int MAX_SEND_SIZE = 32 + 1024 + 320*224 + 320*224/64; // must be larger than 64kb window size for lz4!
 
 uint8_t input_buf[3*MAX_SEND_SIZE];
 int input_pos;
@@ -438,32 +438,42 @@ static uint8_t *encode_diff(uint8_t *tgt, uint8_t *src)
 {
     int output_latch = 0;
     int output_shift = 0;
+    int output_blockval = 0;
+    int output_blockpos = 0;
 
     uint8_t *prevp = prevScreen;
     for (int i=0; i<320*224; i++) {
-        // OB(*src++ == *prevp++)
-        output_latch <<= 1;
-        output_latch |= *src++ != *prevp++;
-        if (++output_shift == 8) {
-            *tgt++ = output_latch;
-            output_shift = 0;
-            output_latch = 0;
+        output_blockval |= *src++ != *prevp++;
+        if (++output_blockpos == 8) {
+            output_latch <<= 1;
+            output_latch |= output_blockval;
+            output_blockpos = 0;
+            output_blockval = 0;
+            if (++output_shift == 8) {
+                *tgt++ = output_latch;
+                output_shift = 0;
+                output_latch = 0;
+            }
         }
     }
 
-    uint8_t *bitbuf_input = tgt - 320*224/8;
-    int input_latch = *bitbuf_input++;
+    uint8_t *bitbuf_input = tgt - 320*224/64;
+    int input_latch;
     int input_shift = 0;
+    int input_blockval;
+    int input_blockpos = 0;
 
     src -= 320*224;
     for (int i=0; i<320*224; i++) {
-        int bit_value = input_latch & 0x80;
-        input_latch <<= 1;
-        if (++input_shift == 8) {
-            input_shift = 0;
-            input_latch = *bitbuf_input++;
+        if (input_blockpos == 0) {
+            if (input_shift == 0)
+                input_latch = *bitbuf_input++;
+            input_blockval = input_latch & 0x80;
+            input_latch <<= 1;
+            input_shift = (input_shift+1) & 7;
         }
-        if (bit_value)
+        input_blockpos = (input_blockpos+1) & 7;
+        if (input_blockval)
             *tgt++ = *src;
         src++;
     }
