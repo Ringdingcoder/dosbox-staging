@@ -439,7 +439,8 @@ static void gen_synchreg(DynReg * dnew,DynReg * dsynch) {
 	if ((dnew->flags ^ dsynch->flags) & DYNFLG_CHANGED) {
 		/* Ensure the changed value gets saved */	
 		if (dnew->flags & DYNFLG_CHANGED) {
-			dnew->genreg->Save();
+			if (GCC_LIKELY(dnew->genreg != NULL))
+				dnew->genreg->Save();
 		} else dnew->flags|=DYNFLG_CHANGED;
 	}
 }
@@ -517,7 +518,7 @@ static void gen_load_host(void * data,DynReg * dr1,Bitu size) {
 static void gen_mov_host(void * data,DynReg * dr1,Bitu size,Bit8u di1=0) {
 	int idx = FindDynReg(dr1,size==4)->index;
 	opcode op;
-	Bit8u tmp;
+	Bit8u tmp = 0x00;
 	switch (size) {
 	case 1:
 		op.setreg(idx,di1);
@@ -659,7 +660,7 @@ static void gen_dop_byte_imm_mem(DualOps op,DynReg * dr1,Bit8u di1,void* data) {
 		i = opcode(dst->index,true,di1).setea(src);
 	}
 
-	Bit8u tmp;
+	Bit8u tmp = 0x00;
 	switch (op) {
 	case DOP_ADD:	tmp=0x02; break;
 	case DOP_ADC:	tmp=0x12; break;
@@ -1099,7 +1100,7 @@ static void gen_call_function(void * func,const char* ops,...) {
 }
 
 static void gen_call_write(DynReg * dr,Bit32u val,Bitu write_size) {
-	void *func;
+	void *func = NULL;
 	gen_protectflags();
 	gen_load_arg_reg(0,dr,"rd");
 

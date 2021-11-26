@@ -45,7 +45,6 @@ private:
 	Bit32u fileBegin;
 	Bit32u filePos;
 	Bit32u fileEnd;
-	Bit16u info;
 };
 
 isoFile::isoFile(isoDrive *drive, const char *name, FileStat_Block *stat, Bit32u offset) {
@@ -512,7 +511,7 @@ int isoDrive :: readDirEntry(isoDirEntry *de, Bit8u *data) {
 }
 
 bool isoDrive :: loadImage() {
-	Bit8u pvd[COOKED_SECTOR_SIZE];
+	Bit8u pvd[BYTES_PER_COOKED_REDBOOK_FRAME];
 	dataCD = false;
 	readSector(pvd, ISO_FIRST_VD);
 	if (pvd[0] == 1 && !strncmp((char*)(&pvd[1]), "CD001", 5) && pvd[6] == 1) iso = true;

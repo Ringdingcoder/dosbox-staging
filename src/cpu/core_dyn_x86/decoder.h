@@ -370,17 +370,6 @@ static void dyn_check_irqrequest(void) {
 	used_save_info++;
 }
 
-static void dyn_check_bool_exception_ne(void) {
-	save_info[used_save_info].branch_pos=gen_create_branch_long(BR_Z);
-	dyn_savestate(&save_info[used_save_info].state);
-	if (!decode.cycles) decode.cycles++;
-	save_info[used_save_info].cycles=decode.cycles;
-	save_info[used_save_info].eip_change=decode.op_start-decode.code_start;
-	if (!cpu.code.big) save_info[used_save_info].eip_change&=0xffff;
-	save_info[used_save_info].type=db_exception;
-	used_save_info++;
-}
-
 static void dyn_fill_blocks(void) {
 	for (Bitu sct=0; sct<used_save_info; sct++) {
 		gen_fill_branch_long(save_info[sct].branch_pos);
@@ -485,6 +474,19 @@ static void dyn_write_word_release(DynReg * addr,DynReg * val,bool dword) {
 
 #else
 #if C_TARGETCPU == X86
+
+static void dyn_check_bool_exception_ne(void) {
+	save_info[used_save_info].branch_pos = gen_create_branch_long(BR_Z);
+	dyn_savestate(&save_info[used_save_info].state);
+	if (!decode.cycles)
+		decode.cycles++;
+	save_info[used_save_info].cycles = decode.cycles;
+	save_info[used_save_info].eip_change = decode.op_start - decode.code_start;
+	if (!cpu.code.big)
+		save_info[used_save_info].eip_change &= 0xffff;
+	save_info[used_save_info].type = db_exception;
+	used_save_info++;
+}
 
 static void dyn_read_intro(DynReg * addr,bool release_addr=true) {
 	gen_protectflags();
@@ -1883,15 +1885,6 @@ static void dyn_closeblock(void) {
 	cache_closeblock();
 }
 
-static void dyn_normal_exit(BlockReturn code) {
-	gen_protectflags();
-	dyn_reduce_cycles();
-	dyn_set_eip_last();
-	dyn_save_critical_regs();
-	gen_return(code);
-	dyn_closeblock();
-}
-
 static void dyn_exit_link(Bits eip_change) {
 	gen_protectflags();
 	gen_dop_word_imm(DOP_ADD,decode.big_op,DREG(EIP),(decode.code-decode.code_start)+eip_change);
@@ -1953,6 +1946,9 @@ static void dyn_loop(LoopTypes type) {
 	case LOOP_NE:
 		gen_needflags();
 		branch1=gen_create_branch(BR_Z);
+		break;
+	case LOOP_NONE:
+	case LOOP_JCXZ:
 		break;
 	}
 	gen_protectflags();
@@ -2103,7 +2099,6 @@ static CacheBlock * CreateCacheBlock(CodePageHandler * codepage,PhysPt start,Bit
 /* Init a load of variables */
 	decode.code_start=start;
 	decode.code=start;
-	Bitu cycles=0;
 	decode.page.code=codepage;
 	decode.page.index=start&4095;
 	decode.page.wmap=codepage->write_map;
