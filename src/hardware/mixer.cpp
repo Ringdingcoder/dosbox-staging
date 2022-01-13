@@ -22,9 +22,12 @@
 	That should call the mixer start from there or something.
 */
 
+// #define DEBUG 1
+
 #include <string.h>
 #include <sys/types.h>
 #include <math.h>
+#include <algorithm>
 
 #if defined (WIN32)
 //Midi listing
@@ -90,21 +93,40 @@ static struct {
 
 Bit8u MixTemp[MIXER_BUFSIZE];
 
-MixerChannel * MIXER_AddChannel(MIXER_Handler handler,Bitu freq,const char * name) {
-	MixerChannel * chan=new MixerChannel();
-	chan->scale = 1.0;
-	chan->handler=handler;
-	chan->name=name;
+MixerChannel::MixerChannel(MIXER_Handler _handler, Bitu _freq, const char * _name) :
+		// Public member initialization
+		volmain      {0, 0},
+		next         (nullptr),
+		name         (_name),
+		done         (0),
+		enabled      (false),
+
+		// Private member initialization
+		handler      (_handler),
+		freq_add     (0),
+		freq_counter (0),
+		needed       (0),
+		prev_sample  {0, 0},
+		next_sample  {0, 0},
+		volmul       {0, 0},
+		scale        {0, 0},
+		channel_map  {0, 0},
+		interpolate  (false) {
+}
+
+MixerChannel * MIXER_AddChannel(MIXER_Handler handler, Bitu freq, const char * name) {
+	MixerChannel * chan=new MixerChannel(handler, freq, name);
 	chan->next=mixer.channels;
-	chan->SetVolume(1,1);
-	chan->enabled=false;
-	chan->interpolate = false;
-	chan->SetFreq(freq); //Sets interpolate as well.
+	chan->SetFreq(freq); // also enables 'interpolate' if needed
 	chan->last_samples_were_silence = true;
 	chan->last_samples_were_stereo = false;
 	chan->offset[0] = 0;
 	chan->offset[1] = 0;
-	mixer.channels = chan;
+	chan->SetScale(1.0);
+	chan->SetVolume(1, 1);
+	chan->MapChannels(0, 1);
+	chan->Enable(false);
+	mixer.channels=chan;
 	return chan;
 }
 
@@ -132,19 +154,54 @@ void MIXER_DelChannel(MixerChannel* delchan) {
 }
 
 void MixerChannel::UpdateVolume(void) {
-	volmul[0]=(Bits)((1 << MIXER_VOLSHIFT)*scale*volmain[0]*mixer.mastervol[0]);
-	volmul[1]=(Bits)((1 << MIXER_VOLSHIFT)*scale*volmain[1]*mixer.mastervol[1]);
+	volmul[0]=(Bits)((1 << MIXER_VOLSHIFT)*scale[0]*volmain[0]*mixer.mastervol[0]);
+	volmul[1]=(Bits)((1 << MIXER_VOLSHIFT)*scale[1]*volmain[1]*mixer.mastervol[1]);
 }
 
 void MixerChannel::SetVolume(float _left,float _right) {
-	volmain[0]=_left;
-	volmain[1]=_right;
+	// Allow unconstrained user-defined values
+	volmain[0] = _left;
+	volmain[1] = _right;
 	UpdateVolume();
 }
 
-void MixerChannel::SetScale( float f ) {
-	scale = f;
-	UpdateVolume();
+void MixerChannel::SetScale(float f) {
+	SetScale(f, f);
+}
+
+void MixerChannel::SetScale(float _left, float _right) {
+	// Constrain application-defined volume between 0% and 100%
+	const float min_volume(0.0);
+	const float max_volume(1.0);
+	_left  = clamp(_left,  min_volume, max_volume);
+	_right = clamp(_right, min_volume, max_volume);
+	if (scale[0] != _left || scale[1] != _right) {
+		scale[0] = _left;
+		scale[1] = _right;
+		UpdateVolume();
+#ifdef DEBUG
+		LOG_MSG("MIXER %-7s channel: application changed left and right volumes to %3.0f%% and %3.0f%%, respectively",
+		        name, scale[0] * 100, scale[1] * 100);
+#endif
+	}
+}
+
+void MixerChannel::MapChannels(Bit8u _left, Bit8u _right) {
+	// Constrain mapping to the 0 (left) and 1 (right) channel indexes
+	const Bit8u min_channel(0);
+	const Bit8u max_channel(1);
+	_left =  clamp(_left,  min_channel, max_channel);
+	_right = clamp(_right, min_channel, max_channel);
+	if (channel_map[0] != _left || channel_map[1] != _right) {
+		channel_map[0] = _left;
+		channel_map[1] = _right;
+#ifdef DEBUG
+		LOG_MSG("MIXER %-7s channel: application changed audio-channel mapping to left=>%s and right=>%s",
+		        name,
+		        channel_map[0] == 0 ? "left" : "right",
+		        channel_map[1] == 0 ? "left" : "right");
+#endif
+	}
 }
 
 void MixerChannel::Enable(bool _yesno) {
@@ -180,11 +237,11 @@ void MixerChannel::Mix(Bitu _needed) {
 
 void MixerChannel::AddSilence(void) {
 	if (done < needed) {
-		if(prevSample[0] == 0 && prevSample[1] == 0) {
+		if(prev_sample[0] == 0 && prev_sample[1] == 0) {
 			done = needed;
 			//Make sure the next samples are zero when they get switched to prev
-			nextSample[0] = 0;
-			nextSample[1] = 0;
+			next_sample[0] = 0;
+			next_sample[1] = 0;
 			//This should trigger an instant request for new samples
 			freq_counter = FREQ_NEXT;
 		} else {
@@ -193,21 +250,21 @@ void MixerChannel::AddSilence(void) {
 			Bitu mixpos = mixer.pos + done;
 			while (done < needed) {
 				// Maybe depend on sample rate. (the 4)
-				if (prevSample[0] > 4)       nextSample[0] = prevSample[0] - 4;
-				else if (prevSample[0] < -4) nextSample[0] = prevSample[0] + 4;
-				else nextSample[0] = 0;
-				if (prevSample[1] > 4)       nextSample[1] = prevSample[1] - 4;
-				else if (prevSample[1] < -4) nextSample[1] = prevSample[1] + 4;
-				else nextSample[1] = 0;
+				if (prev_sample[0] > 4)       next_sample[0] = prev_sample[0] - 4;
+				else if (prev_sample[0] < -4) next_sample[0] = prev_sample[0] + 4;
+				else next_sample[0] = 0;
+				if (prev_sample[1] > 4)       next_sample[1] = prev_sample[1] - 4;
+				else if (prev_sample[1] < -4) next_sample[1] = prev_sample[1] + 4;
+				else next_sample[1] = 0;
 
 				mixpos &= MIXER_BUFMASK;
 				Bit32s* write = mixer.work[mixpos];
 
-				write[0] += prevSample[0] * volmul[0];
-				write[1] += (stereo ? prevSample[1] : prevSample[0]) * volmul[1];
+				write[0] += prev_sample[0] * volmul[0];
+				write[1] += (stereo ? prev_sample[1] : prev_sample[0]) * volmul[1];
 
-				prevSample[0] = nextSample[0];
-				prevSample[1] = nextSample[1];
+				prev_sample[0] = next_sample[0];
+				prev_sample[1] = next_sample[1];
 				mixpos++;
 				done++;
 				freq_counter = FREQ_NEXT;
@@ -249,24 +306,26 @@ inline void MixerChannel::AddSamples(Bitu len, const Type* data) {
 				return;
 			}
 			freq_counter -= FREQ_NEXT;
-			prevSample[0] = nextSample[0];
+
+			prev_sample[0] = next_sample[0];
 			if (stereo) {
-				prevSample[1] = nextSample[1];
+				prev_sample[1] = next_sample[1];
 			}
+
 			if ( sizeof( Type) == 1) {
 				if (!signeddata) {
 					if (stereo) {
-						nextSample[0]=(((Bit8s)(data[pos*2+0] ^ 0x80)) << 8);
-						nextSample[1]=(((Bit8s)(data[pos*2+1] ^ 0x80)) << 8);
+						next_sample[0]=(((Bit8s)(data[pos*2+0] ^ 0x80)) << 8);
+						next_sample[1]=(((Bit8s)(data[pos*2+1] ^ 0x80)) << 8);
 					} else {
-						nextSample[0]=(((Bit8s)(data[pos] ^ 0x80)) << 8);
+						next_sample[0]=(((Bit8s)(data[pos] ^ 0x80)) << 8);
 					}
 				} else {
 					if (stereo) {
-						nextSample[0]=(data[pos*2+0] << 8);
-						nextSample[1]=(data[pos*2+1] << 8);
+						next_sample[0]=(data[pos*2+0] << 8);
+						next_sample[1]=(data[pos*2+1] << 8);
 					} else {
-						nextSample[0]=(data[pos] << 8);
+						next_sample[0]=(data[pos] << 8);
 					}
 				}
 			//16bit and 32bit both contain 16bit data internally
@@ -274,50 +333,50 @@ inline void MixerChannel::AddSamples(Bitu len, const Type* data) {
 				if (signeddata) {
 					if (stereo) {
 						if (nativeorder) {
-							nextSample[0]=data[pos*2+0];
-							nextSample[1]=data[pos*2+1];
+							next_sample[0]=data[pos*2+0];
+							next_sample[1]=data[pos*2+1];
 						} else {
 							if ( sizeof( Type) == 2) {
-								nextSample[0]=(Bit16s)host_readw((HostPt)&data[pos*2+0]);
-								nextSample[1]=(Bit16s)host_readw((HostPt)&data[pos*2+1]);
+								next_sample[0]=(Bit16s)host_readw((HostPt)&data[pos*2+0]);
+								next_sample[1]=(Bit16s)host_readw((HostPt)&data[pos*2+1]);
 							} else {
-								nextSample[0]=(Bit32s)host_readd((HostPt)&data[pos*2+0]);
-								nextSample[1]=(Bit32s)host_readd((HostPt)&data[pos*2+1]);
+								next_sample[0]=(Bit32s)host_readd((HostPt)&data[pos*2+0]);
+								next_sample[1]=(Bit32s)host_readd((HostPt)&data[pos*2+1]);
 							}
 						}
 					} else {
 						if (nativeorder) {
-							nextSample[0] = data[pos];
+							next_sample[0] = data[pos];
 						} else {
 							if ( sizeof( Type) == 2) {
-								nextSample[0]=(Bit16s)host_readw((HostPt)&data[pos]);
+								next_sample[0]=(Bit16s)host_readw((HostPt)&data[pos]);
 							} else {
-								nextSample[0]=(Bit32s)host_readd((HostPt)&data[pos]);
+								next_sample[0]=(Bit32s)host_readd((HostPt)&data[pos]);
 							}
 						}
 					}
 				} else {
 					if (stereo) {
 						if (nativeorder) {
-							nextSample[0]=(Bits)data[pos*2+0]-32768;
-							nextSample[1]=(Bits)data[pos*2+1]-32768;
+							next_sample[0]=(Bits)data[pos*2+0]-32768;
+							next_sample[1]=(Bits)data[pos*2+1]-32768;
 						} else {
 							if ( sizeof( Type) == 2) {
-								nextSample[0]=(Bits)host_readw((HostPt)&data[pos*2+0])-32768;
-								nextSample[1]=(Bits)host_readw((HostPt)&data[pos*2+1])-32768;
+								next_sample[0]=(Bits)host_readw((HostPt)&data[pos*2+0])-32768;
+								next_sample[1]=(Bits)host_readw((HostPt)&data[pos*2+1])-32768;
 							} else {
-								nextSample[0]=(Bits)host_readd((HostPt)&data[pos*2+0])-32768;
-								nextSample[1]=(Bits)host_readd((HostPt)&data[pos*2+1])-32768;
+								next_sample[0]=(Bits)host_readd((HostPt)&data[pos*2+0])-32768;
+								next_sample[1]=(Bits)host_readd((HostPt)&data[pos*2+1])-32768;
 							}
 						}
 					} else {
 						if (nativeorder) {
-							nextSample[0]=(Bits)data[pos]-32768;
+							next_sample[0]=(Bits)data[pos]-32768;
 						} else {
 							if ( sizeof( Type) == 2) {
-								nextSample[0]=(Bits)host_readw((HostPt)&data[pos])-32768;
+								next_sample[0]=(Bits)host_readw((HostPt)&data[pos])-32768;
 							} else {
-								nextSample[0]=(Bits)host_readd((HostPt)&data[pos])-32768;
+								next_sample[0]=(Bits)host_readd((HostPt)&data[pos])-32768;
 							}
 						}
 					}
@@ -327,32 +386,41 @@ inline void MixerChannel::AddSamples(Bitu len, const Type* data) {
 			pos++;
 #if MIXER_UPRAMP_STEPS > 0
 			if (last_samples_were_silence && pos == 1) {
-				offset[0] = nextSample[0] - prevSample[0];
-				if (stereo) offset[1] = nextSample[1] - prevSample[1];
+				offset[0] = next_sample[0] - prev_sample[0];
+				if (stereo) offset[1] = next_sample[1] - prev_sample[1];
 				//Don't bother with small steps.
 				if (offset[0] < (MIXER_UPRAMP_SAVE*4) && offset[0] > (-MIXER_UPRAMP_SAVE*4)) offset[0] = 0;
 				if (offset[1] < (MIXER_UPRAMP_SAVE*4) && offset[1] > (-MIXER_UPRAMP_SAVE*4)) offset[1] = 0;
 			}
 
 			if (offset[0] || offset[1]) {
-				nextSample[0] = nextSample[0] - (offset[0]*(MIXER_UPRAMP_STEPS*static_cast<Bits>(len)-static_cast<Bits>(pos))) /( MIXER_UPRAMP_STEPS*static_cast<Bits>(len) );
-				nextSample[1] = nextSample[1] - (offset[1]*(MIXER_UPRAMP_STEPS*static_cast<Bits>(len)-static_cast<Bits>(pos))) /( MIXER_UPRAMP_STEPS*static_cast<Bits>(len) );
+				next_sample[0] = next_sample[0] - (offset[0]*(MIXER_UPRAMP_STEPS*static_cast<Bits>(len)-static_cast<Bits>(pos))) /( MIXER_UPRAMP_STEPS*static_cast<Bits>(len) );
+				next_sample[1] = next_sample[1] - (offset[1]*(MIXER_UPRAMP_STEPS*static_cast<Bits>(len)-static_cast<Bits>(pos))) /( MIXER_UPRAMP_STEPS*static_cast<Bits>(len) );
 			}
 #endif
 		}
+
+		//Apply the left and right channel mappers only on write[..]
+		//assignments.  This ensures the channels are mapped only once
+		//(avoiding double-swapping) and also minimizes the places where
+		//we use our mapping variables as array indexes.
+		//Note that volumes are independent of the channels mapping.
+		const Bit8u left_map(channel_map[0]);
+		const Bit8u right_map(channel_map[1]);
+
 		//Where to write
 		mixpos &= MIXER_BUFMASK;
 		Bit32s* write = mixer.work[mixpos];
 		if (!interpolate) {
-			write[0] += prevSample[0] * volmul[0];
-			write[1] += (stereo ? prevSample[1] : prevSample[0]) * volmul[1];
+			write[0] += prev_sample[left_map] * volmul[0];
+			write[1] += (stereo ? prev_sample[right_map] : prev_sample[left_map]) * volmul[1];
 		}
 		else {
 			Bits diff_mul = freq_counter & FREQ_MASK;
-			Bits sample = prevSample[0] + (((nextSample[0] - prevSample[0]) * diff_mul) >> FREQ_SHIFT);
+			Bits sample = prev_sample[left_map] + (((next_sample[left_map] - prev_sample[left_map]) * diff_mul) >> FREQ_SHIFT);
 			write[0] += sample*volmul[0];
 			if (stereo) {
-				sample = prevSample[1] + (((nextSample[1] - prevSample[1]) * diff_mul) >> FREQ_SHIFT);
+				sample = prev_sample[right_map] + (((next_sample[right_map] - prev_sample[right_map]) * diff_mul) >> FREQ_SHIFT);
 			}
 			write[1] += sample*volmul[1];
 		}
@@ -381,14 +449,14 @@ void MixerChannel::AddStretched(Bitu len,Bit16s * data) {
 		if (pos != new_pos) {
 			pos = new_pos;
 			//Forward the previous sample
-			prevSample[0] = data[0];
+			prev_sample[0] = data[0];
 			data++;
 		}
-		Bits diff = data[0] - prevSample[0];
+		Bits diff = data[0] - prev_sample[0];
 		Bits diff_mul = index & FREQ_MASK;
 		index += index_add;
 		mixpos &= MIXER_BUFMASK;
-		Bits sample = prevSample[0] + ((diff * diff_mul) >> FREQ_SHIFT);
+		Bits sample = prev_sample[0] + ((diff * diff_mul) >> FREQ_SHIFT);
 		mixer.work[mixpos][0] += sample * volmul[0];
 		mixer.work[mixpos][1] += sample * volmul[1];
 		mixpos++;
@@ -772,7 +840,7 @@ void MIXER_Init(Section* sec) {
 		mixer.tick_add=calc_tickadd(mixer.freq);
 		TIMER_AddTickHandler(MIXER_Mix_NoSound);
 	} else {
-		if ((mixer.freq != static_cast<Bit32u>(obtained.freq)) || (mixer.blocksize != obtained.samples))
+		if((static_cast<Bit16s>(mixer.freq) != obtained.freq) || (mixer.blocksize != obtained.samples))
 			LOG_MSG("MIXER: Got different values from SDL: freq %d, blocksize %d",obtained.freq,obtained.samples);
 		mixer.freq=obtained.freq;
 		mixer.blocksize=obtained.samples;

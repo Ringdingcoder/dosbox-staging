@@ -239,7 +239,7 @@ static void dh_fpu_esc3(){
 			switch (sub) {
 			case 0x00:				//FNENI
 			case 0x01:				//FNDIS
-				LOG(LOG_FPU,LOG_ERROR)("8087 only fpu code used esc 3: group 4: subfuntion :%" sBitfs(d),sub);
+				LOG(LOG_FPU,LOG_ERROR)("8087 only fpu code used esc 3: group 4: subfunction :%" sBitfs(d),sub);
 				break;
 			case 0x02:				//FNCLEX FCLEX
 				cache_addb(0xdb);

@@ -233,7 +233,8 @@ static void gen_synchreg(DynReg * dnew,DynReg * dsynch) {
 	if ((dnew->flags ^ dsynch->flags) & DYNFLG_CHANGED) {
 		/* Ensure the changed value gets saved */	
 		if (dnew->flags & DYNFLG_CHANGED) {
-			dnew->genreg->Save();
+			if (GCC_LIKELY(dnew->genreg != NULL))
+				dnew->genreg->Save();
 		} else dnew->flags|=DYNFLG_CHANGED;
 	}
 }
@@ -328,7 +329,7 @@ static void gen_mov_host(void * data,DynReg * dr1,Bitu size,Bitu di1=0) {
 
 static void gen_dop_byte(DualOps op,DynReg * dr1,Bit8u di1,DynReg * dr2,Bit8u di2) {
 	GenReg * gr1=FindDynReg(dr1);GenReg * gr2=FindDynReg(dr2);
-	Bit8u tmp;
+	Bit8u tmp = 0x00;
 	switch (op) {
 	case DOP_ADD:	tmp=0x02; break;
 	case DOP_ADC:	tmp=0x12; break;
