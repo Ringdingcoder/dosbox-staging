@@ -25,6 +25,8 @@
 #include "cpu.h"
 #include "video.h"
 #include "pic.h"
+#include "pinhacks.h"
+
 
 #define crtc(blah) vga.crtc.blah
 
@@ -195,17 +197,27 @@ void vga_write_p3d5(io_port_t, io_val_t value, io_width_t)
 		*/
 		break;
 	case 0x0C:	/* Start Address High Register */
-		crtc(start_address_high)=val;
-		vga.config.display_start=(vga.config.display_start & 0xFF00FF)| (val << 8);
+		if (pinhack.trigger) {
+                        crtc(start_address_high)=0;
+                        vga.config.display_start=(vga.config.display_start & 0xFF00FF)| (0 << 8);
+		} else {
+			crtc(start_address_high)=val;
+			vga.config.display_start=(vga.config.display_start & 0xFF00FF)| (val << 8);
+		}
 		/* 0-7  Upper 8 bits of the start address of the display buffer */
 		break;
 	case 0x0D:	/* Start Address Low Register */
-		crtc(start_address_low)=val;
-		vga.config.display_start=(vga.config.display_start & 0xFFFF00)| val;
+		if (pinhack.trigger) {
+                        crtc(start_address_low)=0;
+                        vga.config.display_start=(vga.config.display_start & 0xFFFF00)| 0;
+		} else {
+			crtc(start_address_low)=val;
+			vga.config.display_start=(vga.config.display_start & 0xFFFF00)| val;
+		}
 		/*	0-7	Lower 8 bits of the start address of the display buffer */
 		break;
 	case 0x0E:	/*Cursor Location High Register */
-		crtc(cursor_location_high)=val;
+		crtc(cursor_location_high)=0;
 		vga.config.cursor_start&=0xff00ff;
 		vga.config.cursor_start|=val << 8;
 		/*	0-7  Upper 8 bits of the address of the cursor */
