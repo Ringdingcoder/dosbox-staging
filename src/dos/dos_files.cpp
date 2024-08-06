@@ -34,6 +34,8 @@
 #include "cross.h"
 #include "string_utils.h"
 #include "support.h"
+#include "pinhacks.h"
+
 
 #define DOS_FILESTART 4
 
@@ -827,6 +829,11 @@ bool DOS_OpenFile(const char* name, uint8_t flags, uint16_t* entry, bool fcb)
 	/* First check for devices */
 	if (flags>2) LOG(LOG_FILES,LOG_ERROR)("Special file open command %X file %s",flags,name);
 	else LOG(LOG_FILES,LOG_NORMAL)("file open command %X file %s",flags,name);
+
+        if ( pinhack.enabled && pinhack.specifichack.pinballdreams.enabled ) {
+                if ( !strcmp(name,"flippers.spr") ) { printf("PINHACK: pinhackpd: flippers.spr loaded, hack should trigger on next resolution change.\n");
+                pinhack.specifichack.pinballdreams.trigger=true; };
+        }
 
 	FatAttributeFlags attr = {};
 	uint8_t devnum = DOS_FindDevice(name);
