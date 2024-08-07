@@ -33,13 +33,13 @@
 #include "math_utils.h"
 #include "mem_unaligned.h"
 #include "pic.h"
+#include "pinhacks.h"
 #include "reelmagic.h"
 #include "render.h"
 #include "rgb565.h"
 #include "vga.h"
-#include "pinhacks.h"
-#include <cstdio>
 #include "video.h"
+#include <cstdio>
 
 // #define DEBUG_VGA_DRAW
 
@@ -1064,17 +1064,18 @@ static void VGA_DrawPart(uint32_t lines)
 			vga.draw.address+=vga.draw.address_add;
 		}
 		++vga.draw.lines_done;
-  	        if (pinhack.trigger == false) {
+		if (pinhack.trigger == false) {
 
-                    if (vga.draw.split_line==vga.draw.lines_done) {
+			if (vga.draw.split_line == vga.draw.lines_done) {
 #ifdef VGA_KEEP_CHANGES
-			VGA_ChangesEnd( );
+				VGA_ChangesEnd();
 #endif
-			VGA_ProcessSplit();
+				VGA_ProcessSplit();
 #ifdef VGA_KEEP_CHANGES
-			vga.changes.start = vga.draw.address >> VGA_CHANGE_SHIFT;
+				vga.changes.start = vga.draw.address >>
+				                    VGA_CHANGE_SHIFT;
 #endif
-                    }
+			}
 		}
 	}
 	if (--vga.draw.parts_left) {
@@ -2861,27 +2862,43 @@ ImageInfo setup_drawing()
 	vga.draw.vblank_skip = vblank_skip;
 	setup_line_drawing_delays(render_height);
 
-        if (pinhack.enabled) {  // Enabled in config?
-            printf("PINHACK: "); // Check for triggering preconditions...
-            if ((!pinhack.specifichack.pinballdreams.enabled || pinhack.specifichack.pinballdreams.trigger ) &&
-                (render_height>=pinhack.triggerheight.min && render_height<=pinhack.triggerheight.max) &&
-                (pinhack.triggerwidth.min<=render_width && render_width<=pinhack.triggerwidth.max)) {
-                printf("triggered -> ");
-                pinhack.trigger = true;
-                printf("original geometry: %dx%d. expanding to geometry: %dx%d.\n", render_width, render_height,
-                       pinhack.expand.width ? pinhack.expand.width : render_width,
-                       pinhack.expand.height ? pinhack.expand.height : render_height);
-                // If width or height not set, do not expand!
-                if (pinhack.expand.height) render_height = pinhack.expand.height;
-                if (pinhack.expand.width) render_width = pinhack.expand.width;
-                if (pinhack.specifichack.pinballdreams.trigger) pinhack.specifichack.pinballdreams.trigger=false; // On next resolution change, return to normal
+	if (pinhack.enabled) {       // Enabled in config?
+		printf("PINHACK: "); // Check for triggering preconditions...
+		if ((!pinhack.specifichack.pinballdreams.enabled ||
+		     pinhack.specifichack.pinballdreams.trigger) &&
+		    (render_height >= pinhack.triggerheight.min &&
+		     render_height <= pinhack.triggerheight.max) &&
+		    (pinhack.triggerwidth.min <= render_width &&
+		     render_width <= pinhack.triggerwidth.max)) {
+			printf("triggered -> ");
+			pinhack.trigger = true;
+			printf("original geometry: %dx%d. expanding to geometry: %dx%d.\n",
+			       render_width,
+			       render_height,
+			       pinhack.expand.width ? pinhack.expand.width : render_width,
+			       pinhack.expand.height ? pinhack.expand.height
+			                             : render_height);
+			// If width or height not set, do not expand!
+			if (pinhack.expand.height) {
+				render_height = pinhack.expand.height;
+			}
+			if (pinhack.expand.width) {
+				render_width = pinhack.expand.width;
+			}
+			if (pinhack.specifichack.pinballdreams.trigger) {
+				pinhack.specifichack.pinballdreams.trigger =
+				        false; // On next resolution change,
+				               // return to normal
+			}
 
-                vga.draw.lines_total = render_height;
-            } else {
-                pinhack.trigger = false;
-                printf("trigger values evaluated but not triggered! Current resolution: %dx%d\n", render_width, render_height);
-            };
-        }
+			vga.draw.lines_total = render_height;
+		} else {
+			pinhack.trigger = false;
+			printf("trigger values evaluated but not triggered! Current resolution: %dx%d\n",
+			       render_width,
+			       render_height);
+		};
+	}
 
 	vga.draw.line_length = render_width *
 	                       ((get_bits_per_pixel(pixel_format) + 1) / 8);
@@ -2937,13 +2954,15 @@ ImageInfo setup_drawing()
 
 	ImageInfo img_info = {};
 
-        if (pinhack.trigger) {
-            if (pinhack.doublewidth == "yes")
-                double_width = true;
-            if (pinhack.doublewidth == "no")
-                double_width = false;
-            printf("PINHACK: Doublewidth: %s\n", pinhack.doublewidth.c_str());
-        }
+	if (pinhack.trigger) {
+		if (pinhack.doublewidth == "yes") {
+			double_width = true;
+		}
+		if (pinhack.doublewidth == "no") {
+			double_width = false;
+		}
+		printf("PINHACK: Doublewidth: %s\n", pinhack.doublewidth.c_str());
+	}
 
 	img_info.width                   = render_width;
 	img_info.height                  = render_height;

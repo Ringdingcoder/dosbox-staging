@@ -50,6 +50,7 @@
 #include "ne2000.h"
 #include "pci_bus.h"
 #include "pic.h"
+#include "pinhacks.h"
 #include "programs.h"
 #include "reelmagic.h"
 #include "render.h"
@@ -59,8 +60,6 @@
 #include "timer.h"
 #include "tracy.h"
 #include "video.h"
-#include "pinhacks.h"
-
 
 bool shutdown_requested = false;
 MachineType machine;
@@ -161,17 +160,16 @@ void Null_Init([[maybe_unused]] Section *sec) {
 
 scrollhack pinhack;
 
-void parsetriggerrange (const char *range, int &min, int &max, char delim) { // PINHACK stuff
-       char* range_delim = const_cast<char*>(strchr(range,delim));
-               if(range_delim && * range_delim) {
-                       min = atoi(range);
-                       max = atoi(range_delim+1);
-               }
-               else if (!range_delim) { // single value given
-                       max =  min = atoi(range);
-               }
+void parsetriggerrange(const char* range, int& min, int& max, char delim)
+{ // PINHACK stuff
+	char* range_delim = const_cast<char*>(strchr(range, delim));
+	if (range_delim && *range_delim) {
+		min = atoi(range);
+		max = atoi(range_delim + 1);
+	} else if (!range_delim) { // single value given
+		max = min = atoi(range);
+	}
 }
-
 
 // forward declaration
 static void increase_ticks();
@@ -585,31 +583,49 @@ double DOSBOX_GetUptime()
 	return GetTicksSince(start_ms) / MillisInSecond;
 }
 
-static void PINHACK_Init(Section * sec) {
-       Section_prop * section=static_cast<Section_prop *>(sec);
-       /* PINHACK config file parsing */
-       pinhack.enabled=(section->Get_bool("pinhack"));
-       std::string pinhacktriggerwidthrange=section->Get_string("pinhacktriggerwidth");
-       std::string pinhacktriggerheightrange=section->Get_string("pinhacktriggerheight");
-       pinhack.doublewidth=section->Get_string("pinhackdoublewidth");
-       pinhack.expand.height=(section->Get_int("pinhackexpandheight"));
-       pinhack.expand.width=(section->Get_int("pinhackexpandwidth"));
-       parsetriggerrange ( pinhacktriggerheightrange.c_str(), pinhack.triggerheight.min, pinhack.triggerheight.max, '-' );
-       parsetriggerrange ( pinhacktriggerwidthrange.c_str(), pinhack.triggerwidth.min, pinhack.triggerwidth.max, '-' );
-       if ( ( pinhack.triggerwidth.min == 0 ) && ( pinhack.triggerwidth.max == 0 ) ) pinhack.triggerwidth.max=9999;
-       printf("PINHACK: Your DOSBox has been hacked with pinball hacks V %d ",PINHACKVERSION);
-       if (pinhack.enabled) {
-               printf("and enabled in your config file!\n");
-               printf("PINHACK: width settings: trigger at:");
-               printf("%d-%d, expand to %d\n",pinhack.triggerwidth.min, pinhack.triggerwidth.max,pinhack.expand.width);
-               printf("PINHACK: height settings: trigger at:");
-               printf("%d-%d, expand to %d\n",pinhack.triggerheight.min, pinhack.triggerheight.max,pinhack.expand.height);
-               printf("PINHACK: doublewidth: %s\n",pinhack.doublewidth.c_str());
-       }
-       else printf("but disabled in your config file!\n");
-       pinhack.specifichack.pinballdreams.enabled=(section->Get_bool("pinhackpd"));
+static void PINHACK_Init(Section* sec)
+{
+	Section_prop* section = static_cast<Section_prop*>(sec);
+	/* PINHACK config file parsing */
+	pinhack.enabled                      = (section->Get_bool("pinhack"));
+	std::string pinhacktriggerwidthrange = section->Get_string(
+	        "pinhacktriggerwidth");
+	std::string pinhacktriggerheightrange = section->Get_string(
+	        "pinhacktriggerheight");
+	pinhack.doublewidth   = section->Get_string("pinhackdoublewidth");
+	pinhack.expand.height = (section->Get_int("pinhackexpandheight"));
+	pinhack.expand.width  = (section->Get_int("pinhackexpandwidth"));
+	parsetriggerrange(pinhacktriggerheightrange.c_str(),
+	                  pinhack.triggerheight.min,
+	                  pinhack.triggerheight.max,
+	                  '-');
+	parsetriggerrange(pinhacktriggerwidthrange.c_str(),
+	                  pinhack.triggerwidth.min,
+	                  pinhack.triggerwidth.max,
+	                  '-');
+	if ((pinhack.triggerwidth.min == 0) && (pinhack.triggerwidth.max == 0)) {
+		pinhack.triggerwidth.max = 9999;
+	}
+	printf("PINHACK: Your DOSBox has been hacked with pinball hacks V %d ",
+	       PINHACKVERSION);
+	if (pinhack.enabled) {
+		printf("and enabled in your config file!\n");
+		printf("PINHACK: width settings: trigger at:");
+		printf("%d-%d, expand to %d\n",
+		       pinhack.triggerwidth.min,
+		       pinhack.triggerwidth.max,
+		       pinhack.expand.width);
+		printf("PINHACK: height settings: trigger at:");
+		printf("%d-%d, expand to %d\n",
+		       pinhack.triggerheight.min,
+		       pinhack.triggerheight.max,
+		       pinhack.expand.height);
+		printf("PINHACK: doublewidth: %s\n", pinhack.doublewidth.c_str());
+	} else {
+		printf("but disabled in your config file!\n");
+	}
+	pinhack.specifichack.pinballdreams.enabled = (section->Get_bool("pinhackpd"));
 }
-
 
 void DOSBOX_Init()
 {
@@ -630,40 +646,52 @@ void DOSBOX_Init()
 
 	/* Setup all the different modules making up DOSBox */
 
-       // PINHACK: pinhack config file section
+	// PINHACK: pinhack config file section
 
-       secprop=control->AddSection_prop("pinhack",&PINHACK_Init, true);
+	secprop = control->AddSection_prop("pinhack", &PINHACK_Init, true);
 
-       pbool = secprop->Add_bool("pinhack",Property::Changeable::Always,false);
-       pbool->Set_help("Boolean: Enable pinball hacks to display whole table at once. Not enabled per default.");
+	pbool = secprop->Add_bool("pinhack", Property::Changeable::Always, false);
+	pbool->Set_help("Boolean: Enable pinball hacks to display whole table at once. Not enabled per default.");
 
-       pstring = secprop->Add_string("pinhacktriggerwidth",Property::Changeable::Always,"0");
-       pstring->Set_help("The X resolution (width) the pinball hack should trigger at. It is not checked by default or if set to 0. Can be a range.");
+	pstring = secprop->Add_string("pinhacktriggerwidth",
+	                              Property::Changeable::Always,
+	                              "0");
+	pstring->Set_help(
+	        "The X resolution (width) the pinball hack should trigger at. It is not checked by default or if set to 0. Can be a range.");
 
-       pstring = secprop->Add_string("pinhacktriggerheight",Property::Changeable::Always,"350");
-       pstring->Set_help("The Y resolution (height) the pinball hack should trigger at. Default is 350 (good for Pinball Fantasies). Can be a range.");
+	pstring = secprop->Add_string("pinhacktriggerheight",
+	                              Property::Changeable::Always,
+	                              "350");
+	pstring->Set_help(
+	        "The Y resolution (height) the pinball hack should trigger at. Default is 350 (good for Pinball Fantasies). Can be a range.");
 
-       pint = secprop->Add_int("pinhackexpandwidth",Property::Changeable::Always,0);
-       pint->SetMinMax(0,4000);
-       pint->Set_help("The X resolution (width) DOSBox will expand to if pinball hack is enabled and triggers.\n"
-                       "Not very useful probably, but provided here in case someone finds a game where it is useful!");
+	pint = secprop->Add_int("pinhackexpandwidth", Property::Changeable::Always, 0);
+	pint->SetMinMax(0, 4000);
+	pint->Set_help(
+	        "The X resolution (width) DOSBox will expand to if pinball hack is enabled and triggers.\n"
+	        "Not very useful probably, but provided here in case someone finds a game where it is useful!");
 
-       pint = secprop->Add_int("pinhackexpandheight",Property::Changeable::Always,608);
-       pint->SetMinMax(1,4000);
-       pint->Set_help("The Y resolution (height) DOSBox will expand to if pinball hack is enabled and triggers.");
+	pint = secprop->Add_int("pinhackexpandheight",
+	                        Property::Changeable::Always,
+	                        608);
+	pint->SetMinMax(1, 4000);
+	pint->Set_help("The Y resolution (height) DOSBox will expand to if pinball hack is enabled and triggers.");
 
-       pbool = secprop->Add_bool("pinhackpd",Property::Changeable::Always,false);
-       pbool->Set_help("Boolean: Enable pinball dreams to work correctly during intros. Default:false\n");
+	pbool = secprop->Add_bool("pinhackpd", Property::Changeable::Always, false);
+	pbool->Set_help("Boolean: Enable pinball dreams to work correctly during intros. Default:false\n");
 
-       pbool = secprop->Add_bool("pinhackpsycho",Property::Changeable::Always,false);
-       pbool->Set_help("Boolean: Psycho Pinball tilt craphics are messed up if hack enabled. TODO, this is a placeholder and has no function currently.");
+	pbool = secprop->Add_bool("pinhackpsycho", Property::Changeable::Always, false);
+	pbool->Set_help("Boolean: Psycho Pinball tilt craphics are messed up if hack enabled. TODO, this is a placeholder and has no function currently.");
 
-       pstring = secprop->Add_string("pinhackdoublewidth",Property::Changeable::Always,"normal");
-       pstring->Set_help("Used to enable forcing (or disabling) doublewidth with pinhack. The original patch disabled it,\n"
-                       "but you may find it better enabled, or left to decide by dosbox and use aspect ratio correction insread.\n"
-                       "normal=do not touch the setting, let DOSBox decide. yes=doublewidth. no=no doublewidth");
+	pstring = secprop->Add_string("pinhackdoublewidth",
+	                              Property::Changeable::Always,
+	                              "normal");
+	pstring->Set_help(
+	        "Used to enable forcing (or disabling) doublewidth with pinhack. The original patch disabled it,\n"
+	        "but you may find it better enabled, or left to decide by dosbox and use aspect ratio correction insread.\n"
+	        "normal=do not touch the setting, let DOSBox decide. yes=doublewidth. no=no doublewidth");
 
-// PINHACK: end config file section
+	// PINHACK: end config file section
 
 	secprop = control->AddSection_prop("dosbox", &DOSBOX_RealInit);
 	pstring = secprop->Add_string("language", always, "");
