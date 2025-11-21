@@ -1,35 +1,19 @@
-/*
- *  Copyright (C) 2021-2024  The DOSBox Staging Team
- *  Copyright (C) 2002-2021  The DOSBox Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2021-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
-#include "paging.h"
+#include "cpu/paging.h"
 
 #include <cassert>
 #include <cstdlib>
 #include <cstring>
 #include <memory>
 
-#include "mem.h"
-#include "regs.h"
+#include "cpu/cpu.h"
+#include "cpu/registers.h"
+#include "debugger/debugger.h"
+#include "hardware/memory.h"
 #include "lazyflags.h"
-#include "cpu.h"
-#include "debug.h"
-#include "setup.h"
 
 #define LINK_TOTAL		(64*1024)
 
@@ -273,8 +257,7 @@ static inline bool InitPage_CheckUseraccess(uint32_t u1,uint32_t u2) {
 	}
 }
 
-
-class InitPageHandler final : public PageHandler {
+class InitPageHandler : public PageHandler {
 public:
 	InitPageHandler() {
 		flags=PFLAG_INIT|PFLAG_NOCODE;
@@ -572,7 +555,7 @@ public:
 	}
 };
 
-class InitPageUserROHandler final : public PageHandler {
+class InitPageUserROHandler : public PageHandler {
 public:
 	InitPageUserROHandler() {
 		flags=PFLAG_INIT|PFLAG_NOCODE;
@@ -730,7 +713,6 @@ public:
 		PAGING_LinkPage(lin_page,phys_page);
 	}
 };
-
 
 bool PAGING_MakePhysPage(Bitu & page) {
 	assert(page <= UINT32_MAX);
@@ -1013,9 +995,10 @@ bool PAGING_Enabled()
 	return paging.enabled;
 }
 
-class PAGING final : public Module_base{
+class PAGING final {
 public:
-	PAGING(Section* configuration):Module_base(configuration){
+	PAGING()
+	{
 		/* Setup default Page Directory, force it to update */
 		paging.enabled=false;
 		PAGING_InitTLB();
@@ -1026,9 +1009,9 @@ public:
 	}
 };
 
-static std::unique_ptr<PAGING> paging_instance = nullptr;
+static std::unique_ptr<PAGING> paging_instance = {};
 
-void PAGING_Init(Section *sec)
+void PAGING_Init()
 {
-	paging_instance = std::make_unique<PAGING>(sec);
+	paging_instance = std::make_unique<PAGING>();
 }

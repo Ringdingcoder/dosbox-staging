@@ -2,7 +2,7 @@ project(
     'dosbox-staging', 'c', 'cpp',
 
     version: run_command(
-      meson.project_source_root() + '/scripts/get-version.sh',
+      meson.project_source_root() + '/scripts/ci/get-version.sh',
       'version', check: true,
     ).stdout().strip(),
 
@@ -16,18 +16,25 @@ project(
         'b_pie=false',
         'warning_level=3',
         'glib:b_staticpic=true',
+        'glib:bsymbolic_functions=false',
         'glib:glib_assert=false',
         'glib:glib_checks=false',
         'glib:glib_debug=disabled',
+        'glib:dtrace=false',
+        'glib:force_posix_threads=false',
         'glib:libmount=disabled',
         'glib:libelf=disabled',
         'glib:nls=disabled',
+        'glib:selinux=disabled',
+        'glib:systemtap=false',
+        'glib:sysprof=disabled',
         'glib:tests=false',
         'glib:warning_level=0',
         'glib:xattr=false',
         'gtest:warning_level=0',
         'libjpeg-turbo:b_staticpic=true',
         'libpng:b_staticpic=true',
+        'pcre2:grep=false',
         'zlib-ng:c_std=c11',
     ],
 )
@@ -47,17 +54,19 @@ install_data(
     'LICENSE',
     'licenses/BSD-2-Clause.txt',
     'licenses/BSD-3-Clause.txt',
+    'licenses/DEBUG.COM.txt',
     'licenses/GPL-2.0.txt',
     'licenses/LGPL-2.1.txt',
     'licenses/MIT.txt',
+    'licenses/UNICODE.txt',
     'licenses/Zlib.txt',
     install_dir: licenses_dir,
 )
-install_data('AUTHORS', 'README', 'THANKS', install_dir: doc_dir)
+install_data('docs/AUTHORS', 'docs/THANKS', install_dir: doc_dir)
 
-subdir('contrib/linux')
-subdir('contrib/icons')
-subdir('contrib/resources')
+subdir('extras/linux')
+subdir('extras/icons')
+subdir('resources')
 
 # Gather OS family type
 # ~~~~~~~~~~~~~~~~~~~~~
@@ -406,13 +415,13 @@ add_project_arguments(cxx_supported_arguments, language: 'cpp')
 link_supported_arguments = cxx.get_supported_link_arguments(extra_link_flags)
 add_project_link_arguments(link_supported_arguments, language: 'cpp')
 
-# Gather data to populate config.h
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-# The actual config.h file will be generated after interpreting
+# Gather data to populate dosbox_config.h
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# The actual dosbox_config.h file will be generated after interpreting
 # all the build files in all the subdirs.
 #
 git_hash = run_command(
-  './scripts/get-version.sh', 'hash', check: true,
+  './scripts/ci/get-version.sh', 'hash', check: true,
 ).stdout().strip()
 
 conf_data = configuration_data()
@@ -427,20 +436,17 @@ conf_data.set_quoted(
 conf_data.set10(os_family_name, true)
 conf_data.set10('C_MODEM', get_option('use_sdl2_net'))
 conf_data.set10('C_IPX', get_option('use_sdl2_net'))
-conf_data.set10('C_SLIRP', get_option('use_slirp'))
-conf_data.set10('C_NE2000', get_option('use_slirp'))
-conf_data.set10('C_FLUIDSYNTH', get_option('use_fluidsynth'))
 conf_data.set10('C_MT32EMU', get_option('use_mt32emu'))
 conf_data.set10('C_TRACY', get_option('tracy'))
 conf_data.set10('C_FPU', true)
 conf_data.set10('C_FPU_X86', host_machine.cpu_family() in ['x86', 'x86_64'])
 
 if get_option('enable_debugger') != 'none'
-    conf_data.set10('C_DEBUG', true)
+    conf_data.set10('C_DEBUGGER', true)
 endif
 
 if get_option('enable_debugger') == 'heavy'
-    conf_data.set10('C_HEAVY_DEBUG', true)
+    conf_data.set10('C_HEAVY_DEBUGGER', true)
 endif
 
 foreach osdef : ['LINUX', 'WIN32', 'MACOSX', 'BSD']
@@ -459,13 +465,6 @@ endif
 
 if cc.has_function('__builtin___clear_cache')
     conf_data.set10('HAVE_BUILTIN_CLEAR_CACHE', true)
-endif
-
-if cxx.has_type(
-    'std::pmr::unsynchronized_pool_resource',
-    prefix: '#include <memory_resource>',
-)
-    conf_data.set10('HAVE_MEMORY_RESOURCE', true)
 endif
 
 if cc.has_function('mprotect', prefix: '#include <sys/mman.h>')
@@ -549,41 +548,6 @@ if host_machine.endian() == 'big'
 endif
 
 
-# Get host page size
-# ~~~~~~~~~~~~~~~~~~
-# When detecting the page size, we use Meson's configured
-# compiler to make a system call because Meson will build and run
-# it via the cross compiler (if one is in use), which is
-# particularly important we get the destiantion machine's page
-# size as opposed to the local build machine's page size.
-#
-pagesize = 4096
-pagesize_option = get_option('pagesize')
-if pagesize_option > 0
-    # User has provided the page size
-    pagesize = pagesize_option
-else
-    # Detect the page size using a syscall via the cross compiler
-    pagesize_api = os_family_name == 'WIN32' ? 'windows' : 'posix'
-    pagesize_src = files('contrib/pagesize' / pagesize_api + '_pagesize.c')
-    pagesize_cmd = cc.run(
-        pagesize_src,
-        name: 'Query host page size',
-    )
-    if pagesize_cmd.returncode() == 0
-        pagesize = pagesize_cmd.stdout().strip().to_int()
-    else
-        error('''Unable to detect the host's page size''')
-    endif
-endif
-conf_data.set('PAGESIZE', pagesize)
-summary(
-    'Host page size (bytes)',
-    pagesize.to_string(),
-    section: 'Build Summary',
-)
-
-
 set_prio_code = '''
 #include <sys/resource.h>
 int main() {
@@ -594,51 +558,11 @@ if cc.compiles(set_prio_code, name: 'test for setpriority support')
     conf_data.set10('HAVE_SETPRIORITY', true)
 endif
 
-# New compilers can check for this feature using __has_builtin, but this is
-# broken prior to Clang 10 and GCC 10, so we prefer to have this compilation
-# check for now:
-builtin_expect_code = '''
-void fun(bool test) {
-  // value of 'test' is usually going to be true
-  if (__builtin_expect(test, true)) {
-    /* likely branch */
-  } else {
-    /* unlikely branch */
-  }
-}
-'''
-if cxx.compiles(builtin_expect_code, name: 'test for __builtin_expect support')
-    conf_data.set10('C_HAS_BUILTIN_EXPECT', true)
-endif
-
-atomic_code = '''
-  #include <atomic>
-  #include <cstdint>
- int main() {
-  std::atomic<std::int32_t> x32 = 1;
-  std::atomic<std::int64_t> x64 = 1;
-  return static_cast<int>(x64.load() - x32.load());
- }
- '''
-
-atomic_external_dep = dependency('atomic', required: false)
-atomic_internal_dep = declare_dependency(link_args: '-latomic')
-
-if cxx.links(
-    atomic_code,
-    dependencies: atomic_external_dep,
-    name: 'compiler supports atomic types using external library',
-)
-    atomic_dep = atomic_external_dep
-elif cxx.links(
-    atomic_code,
-    dependencies: atomic_internal_dep,
-    name: 'compiler supports atomic types using internal library',
-)
-    atomic_dep = atomic_internal_dep
-else
-    atomic_dep = dependency('atomic')
-endif
+# libatomic is part of the GCC runtime library.
+# This is used by GCC and Clang by default on Linux.
+# Mac and Windows don't need this except for maybe MSYS2.
+# This is required for Linux to use all features of std::atomic.
+atomic_dep = cxx.find_library('atomic', required:false)
 
 # Gather external dependencies
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -683,21 +607,35 @@ opus_dep = dependency(
     include_type: 'system',
 )
 
-if host_machine.system() == 'darwin' and not wraps_disabled
-    # use SDL2 wrap so we can control MACOSX_DEPLOYMENT_TARGET during the build
-    sdl2_dep = subproject(
-        'sdl2',
-        default_options: default_wrap_options,
-    ).get_variable('sdl2_dep')
-else
-    sdl2_dep = dependency(
-        'sdl2',
-        version: ['>= 2.0.5', '< 3'],
-        static: ('sdl2' in static_libs_list),
-        fallback: [],
-        include_type: 'system',
-    )
-endif
+sdl2_dep = dependency(
+    'sdl2',
+    version: ['>= 2.0.5', '< 3'],
+    static: ('sdl2' in static_libs_list or prefers_static_libs),
+    default_options: default_wrap_options
+    + [
+        'assertions=' + (is_optimized_buildtype ? 'disabled' : 'enabled'),
+        'prefer_dlopen=true',
+        'test=' + wants_tests.to_string(),
+        'use_audio=enabled',
+        'use_events=enabled',
+        'use_joystick=enabled',
+        'use_loadso=enabled',
+        'use_timers=enabled',
+        'use_video=enabled',
+
+        'use_dummies=false',
+        'system_iconv=disabled',
+        'use_atomic=enabled',
+        'use_file=disabled',
+        'use_filesystem=disabled',
+        'use_hidapi=disabled',
+        'use_haptic=disabled',
+        'use_locale=disabled',
+        'use_sensor=disabled',
+        'use_power=disabled',
+    ],
+    include_type: 'system',
+)
 
 # zlib
 # ~~~~
@@ -904,7 +842,7 @@ can_trust_system_speexdsp = (
 # Test the library. Trust is dropped if the test fails.
 if can_trust_system_speexdsp
     system_speexdsp_test = cxx.run(
-        files('contrib/check-speexdsp/test_speexdsp_float_api.cpp'),
+        files('extras/check-speexdsp/test_speexdsp_float_api.cpp'),
         dependencies: speexdsp_dep,
         name: 'SpeexDSP system library has reliable floating-point API',
     )
@@ -940,22 +878,14 @@ have_fd_zero = (
 sdl2_net_dep = optional_dep
 sdl2_net_summary_msg = 'Disabled'
 if get_option('use_sdl2_net')
-    if host_machine.system() == 'darwin' and not wraps_disabled
-        # use wrap so we can control MACOSX_DEPLOYMENT_TARGET during the build
-        sdl2_net_dep = subproject(
-            'sdl2_net',
-            default_options: default_wrap_options,
-        ).get_variable('sdl2_net_dep')
-    else
-        sdl2_net_dep = dependency(
-            'SDL2_net',
-            version: ['>= 2.0.0', '< 3'],
-            static: ('sdl2_net' in static_libs_list),
-            fallback: [],
-            not_found_message: msg.format('use_sdl2_net'),
-            include_type: 'system',
-        )
-    endif
+    sdl2_net_dep = dependency(
+        'SDL2_net',
+        version: ['>= 2.0.0', '< 3'],
+        static: ('sdl2_net' in static_libs_list or prefers_static_libs),
+        default_options: default_wrap_options,
+        not_found_message: msg.format('use_sdl2_net'),
+        include_type: 'system',
+    )
     sdl2_net_summary_msg = sdl2_net_dep.found()
 
     if sdl2_net_dep.found() and not have_fd_zero
@@ -1231,8 +1161,9 @@ endif
 
 # Set up include directories
 incdir = [
-    include_directories('include', '.'),
+    include_directories('src', '.'),
     include_directories('src/libs', is_system: true),
+    include_directories('src/libs/include', is_system: true),
 ]
 
 
@@ -1259,6 +1190,7 @@ endif
 subdir('src/misc')
 subdir('src/libs/zmbv')
 subdir('src/libs/tal-chorus')
+subdir('src/libs/glad')
 
 # A list of DOSBox's bundled 3rd party dependencies,
 # as defined by the above subdir includes. Used for
@@ -1269,6 +1201,7 @@ third_party_deps = [
     sdl2_dep,
     threads_dep,
     ghc_dep,
+    libglad_dep,
     libiir_dep,
     libloguru_dep,
     tracy_dep,
@@ -1281,27 +1214,31 @@ if conf_data.get('C_MANYMOUSE') != 0
 endif
 
 # internal libs
+subdir('src/audio')
 subdir('src/capture')
+subdir('src/config')
 subdir('src/cpu')
 subdir('src/dos')
 subdir('src/fpu')
 subdir('src/gui')
 subdir('src/hardware')
+subdir('src/network')
 subdir('src/ints')
 subdir('src/midi')
 subdir('src/shell')
+subdir('src/utils')
 
 # debugger-specific libs
 if get_option('enable_debugger') != 'none'
     subdir('src/libs/PDCurses')
-    subdir('src/debug')
+    subdir('src/debugger')
     third_party_deps += libpdcurses_dep
 endif
 
-# generate config.h
+# generate dosbox_config.h
 configure_file(
-    input: 'src/config.h.in',
-    output: 'config.h',
+    input: 'src/dosbox_config.h.in',
+    output: 'dosbox_config.h',
     configuration: conf_data,
 )
 
@@ -1314,7 +1251,7 @@ dosbox_sources = ['src/main.cpp', 'src/dosbox.cpp']
 # Add Windows resources file if building on Windows
 if host_machine.system() == 'windows'
     winmod = import('windows')
-    res_file = winmod.compile_resources('src/winres.rc')
+    res_file = winmod.compile_resources('src/platform/windows/winres.rc')
     dosbox_sources += res_file
 endif
 

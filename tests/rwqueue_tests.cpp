@@ -1,24 +1,7 @@
-/*
- *  SPDX-License-Identifier: GPL-2.0-or-later
- *
- *  Copyright (C) 2021-2023  The DOSBox Staging Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2021-2025 The DOSBox Staging Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
-#include "rwqueue.h"
+#include "utils/rwqueue.h"
 
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
@@ -331,35 +314,36 @@ TEST(RWQueue,ContainerSerial)
 		EXPECT_EQ(q.Size(), 0);
 		EXPECT_TRUE(q.IsEmpty());
 
-		container_t v(iteration + 1); 
-		v[iteration] = iteration;
-		q.Enqueue(std::move(v));
-		EXPECT_EQ(v.size(), 0); // check move
+		container_t v_outer(iteration + 1);
+		v_outer[iteration] = static_cast<int16_t>(iteration);
+		q.Enqueue(std::move(v_outer));
+		EXPECT_EQ(v_outer.size(), 0); // check move
 
 		EXPECT_EQ(q.MaxCapacity(), 65);
 		EXPECT_EQ(q.Size(), 1);
 		EXPECT_FALSE(q.IsEmpty());
+
 		for (int i = 1; i != 65; ++i) {
-			container_t v(i + 1); 
-			v[i] = i;
-			q.Enqueue(std::move(v));
-			EXPECT_EQ(v.size(), 0); // check move
+			container_t v_inner(i + 1);
+			v_inner[i] = static_cast<int16_t>(i);
+			q.Enqueue(std::move(v_inner));
+			EXPECT_EQ(v_inner.size(), 0); // check move
 		}
 		EXPECT_EQ(q.Size(), 65);
 		EXPECT_FALSE(q.IsEmpty());
 
 		// Basic dequeue
-		v = q.Dequeue().value();
-		EXPECT_EQ(v[0], 0);
-		EXPECT_EQ(v.size(), iteration + 1);
+		v_outer = q.Dequeue().value();
+		EXPECT_EQ(v_outer[0], 0);
+		EXPECT_EQ(v_outer.size(), iteration + 1);
 
 		for (int i = 1; i != 65; ++i) {
-			v = q.Dequeue().value();
-			EXPECT_EQ(v[i], i);
-			EXPECT_EQ(v.size(), i + 1);
+			v_outer = q.Dequeue().value();
+			EXPECT_EQ(v_outer[i], i);
+			EXPECT_EQ(v_outer.size(), i + 1);
 		}
-		EXPECT_EQ(v[64], 64);
-		EXPECT_EQ(v.size(), 65);
+		EXPECT_EQ(v_outer[64], 64);
+		EXPECT_EQ(v_outer.size(), 65);
 		EXPECT_TRUE(q.IsEmpty());
 	}
 }
@@ -398,7 +382,7 @@ void rw_produce_move_container(RWQueue<container_t> *q, const size_t *max_depth)
 {
 	for (int i = 0; i != iterations; ++i) {
 		container_t v(i + 1);
-		v[i] = i;
+		v[i] = static_cast<int16_t>(i);
 		q->Enqueue(std::move(v));
 		EXPECT_EQ(v.size(), 0); // check move
 		EXPECT_TRUE(q->Size() <= *max_depth);
@@ -492,8 +476,8 @@ TEST(RWQueue, StopBulkImmediately)
 	EXPECT_TRUE(q.IsEmpty());
 
 	// Bulk dequeing fails after being stopped and without any items to deqeue
-	const auto bulk_dequeue_result = q.BulkDequeue(items, num_items);
-	EXPECT_FALSE(bulk_dequeue_result);
+	const auto num_dequeued = q.BulkDequeue(items, num_items);
+	EXPECT_FALSE(num_dequeued);
 	EXPECT_TRUE(items.empty());
 }
 
@@ -504,7 +488,7 @@ TEST(RWQueue, StopBulkMidway)
 	// Bulk enque a couple before stopping
 	std::vector<int> items = {1, 2, 3, 4, 5};
 
-	auto bulk_enqueue_result = q.BulkEnqueue(items, items.size());
+	auto bulk_enqueue_result = q.BulkEnqueue(items);
 	EXPECT_TRUE(bulk_enqueue_result);
 	EXPECT_TRUE(q.IsRunning());
 	EXPECT_EQ(q.Size(), 5);
@@ -513,7 +497,7 @@ TEST(RWQueue, StopBulkMidway)
 
 	// Bulking enqueuing fails after being stopped
 	items = {6, 7};
-	bulk_enqueue_result = q.BulkEnqueue(items, items.size());
+	bulk_enqueue_result = q.BulkEnqueue(items);
 	EXPECT_FALSE(bulk_enqueue_result);
 	EXPECT_FALSE(q.IsRunning());
 	EXPECT_EQ(q.Size(), 5);
@@ -522,8 +506,8 @@ TEST(RWQueue, StopBulkMidway)
 
 	// Bulk dequeue the first couple
 	auto num_items = 2u;
-	auto bulk_dequeue_result = q.BulkDequeue(items, num_items);
-	EXPECT_TRUE(bulk_dequeue_result);
+	auto num_dequeued = q.BulkDequeue(items, num_items);
+	EXPECT_EQ(num_dequeued, num_items);
 	EXPECT_EQ(q.Size(), 3);
 	std::vector<int> expected_items = {1, 2};
 	EXPECT_EQ(items, expected_items);
@@ -535,8 +519,9 @@ TEST(RWQueue, StopBulkMidway)
 
 	// Bulk dequeue the last couple, but over-request
 	num_items = 3u;
-	bulk_dequeue_result = q.BulkDequeue(items, num_items);
-	EXPECT_TRUE(bulk_dequeue_result);
+	num_dequeued = q.BulkDequeue(items, num_items);
+	EXPECT_TRUE(num_dequeued < num_items);
+	EXPECT_EQ(num_dequeued, 2u);
 	EXPECT_TRUE(q.IsEmpty());
 	EXPECT_EQ(q.Size(), 0);
 	expected_items = {4, 5};
@@ -545,8 +530,8 @@ TEST(RWQueue, StopBulkMidway)
 	// At this point, we should be out of items, but let's try bulk
 	// dequeuing anyway
 	num_items = 10u;
-	bulk_dequeue_result = q.BulkDequeue(items, num_items);
-	EXPECT_FALSE(bulk_dequeue_result);
+	num_dequeued = q.BulkDequeue(items, num_items);
+	EXPECT_EQ(num_dequeued, 0);
 	EXPECT_TRUE(items.empty());
 
 	// At this point, we should be out of items, but let's try single

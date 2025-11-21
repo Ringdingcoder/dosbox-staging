@@ -1,22 +1,5 @@
-/*
- *  SPDX-License-Identifier: GPL-2.0-or-later
- *
- *  Copyright (C) 2020-2024  The DOSBox Staging Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2020-2025 The DOSBox Staging Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 /* This sample shows how to write a simple unit test for dosbox-staging using
  * Google C++ testing framework.
@@ -35,21 +18,21 @@
  * 4. Additional dosbox-staging headers (if needed)
  */
 
-#include "dos_inc.h"
+#include "dos/dos.h"
 
 #include <iterator>
 #include <string>
 
 #include <gtest/gtest.h>
 
-#include "control.h"
-#include "dos_system.h"
-#include "drives.h"
-#include "shell.h"
-#include "string_utils.h"
+#include "config/config.h"
+#include "dos/dos_system.h"
+#include "dos/drives.h"
+#include "shell/shell.h"
+#include "utils/string_utils.h"
 
 #include "dosbox_test_fixture.h"
-#include "../src/dos/dos_files.cpp"
+#include "dos/dos_files.cpp"
 
 namespace {
 
@@ -281,7 +264,7 @@ TEST_F(DOS_FilesTest, DOS_MakeName_Colon_Illegal_Paths)
 // ensures a fix for dark forces installer
 TEST_F(DOS_FilesTest, DOS_FindFirst_Ending_Slash)
 {
-	// `dos` comes from dos_inc.h
+	// `dos` comes from dos.h
 	dos.errorcode = DOSERR_NONE;
 	EXPECT_FALSE(DOS_FindFirst("Z:\\DARK\\LFD\\", FatAttributeFlags::Volume, false));
 	EXPECT_EQ(dos.errorcode, DOSERR_NO_MORE_FILES);

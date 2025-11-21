@@ -1,20 +1,5 @@
-/*
- *  Copyright (C) 2002-2021  The DOSBox Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2002-2025 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #ifndef DOSBOX_MISC_UTIL_H
 #define DOSBOX_MISC_UTIL_H
@@ -25,7 +10,7 @@
 
 #include <vector>
 
-#include "support.h"
+#include "misc/support.h"
 
 #if defined WIN32
  #define NATIVESOCKETS
@@ -58,7 +43,15 @@
 
 #include <SDL_net.h>
 
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+#pragma clang diagnostic ignored "-Wdeprecated-enum-enum-conversion"
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#pragma GCC diagnostic ignored "-Wdeprecated-enum-enum-conversion"
 #include "enet/include/enet.h"
+#pragma GCC diagnostic pop
+#pragma clang diagnostic pop
 
 enum class SocketType {
 	Tcp  = 0, // +SOCK0 modem command
@@ -115,6 +108,8 @@ public:
 
 	NETServerSocket(const NETServerSocket &) = delete; // prevent copying
 	NETServerSocket &operator=(const NETServerSocket &) = delete; // prevent assignment
+
+	virtual void Close();
 
 	static NETServerSocket* NETServerFactory(const SocketType socketType,
 	                                         const uint16_t port);

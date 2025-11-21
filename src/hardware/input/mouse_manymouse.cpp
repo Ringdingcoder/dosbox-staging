@@ -1,34 +1,20 @@
-/*
- *  Copyright (C) 2022-2024  The DOSBox Staging Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2022-2025 The DOSBox Staging Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
-#include "mouse_manymouse.h"
-#include "mouse_common.h"
+#include "private/mouse_manymouse.h"
+
+#include "private/mouse_common.h"
 #include "mouse_config.h"
-
-#include "callback.h"
-#include "checks.h"
-#include "dos_inc.h"
-#include "math_utils.h"
-#include "pic.h"
-#include "unicode.h"
 
 #include <algorithm>
 #include <initializer_list>
+
+#include "cpu/callback.h"
+#include "dos/dos.h"
+#include "hardware/pic.h"
+#include "misc/unicode.h"
+#include "utils/checks.h"
+#include "utils/math_utils.h"
 
 CHECK_NARROWING();
 
@@ -225,8 +211,15 @@ void ManyMouseGlue::Rescan()
 
 void ManyMouseGlue::RescanIfSafe()
 {
-	if (rescan_blocked_config)
+	if (rescan_blocked_config) {
 		return;
+	}
+
+#if defined(WIN32)
+	if (mouse_config.raw_input) {
+		return;
+	}
+#endif
 
 	ShutdownIfSafe();
 	InitIfNeeded();
@@ -298,7 +291,7 @@ bool ManyMouseGlue::ProbeForMapping(uint8_t &physical_device_idx)
 
 uint8_t ManyMouseGlue::GetIdx(const std::regex &regex)
 {
-	assert(max_mice < UINT8_MAX);
+	static_assert(max_mice < UINT8_MAX);
 
 	// Try to match the mouse name which is not mapped yet
 

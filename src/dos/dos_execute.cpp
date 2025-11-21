@@ -1,38 +1,25 @@
-/*
- *  Copyright (C) 2021-2024  The DOSBox Staging Team
- *  Copyright (C) 2002-2021  The DOSBox Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2021-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "dosbox.h"
 
 #include <cctype>
 #include <cstring>
 
-#include "callback.h"
-#include "cpu.h"
-#include "debug.h"
-#include "dos_inc.h"
-#include "mem.h"
-#include "paging.h"
-#include "program_setver.h"
-#include "programs.h"
-#include "regs.h"
-#include "string_utils.h"
-#include "video.h"
+#include "cpu/callback.h"
+#include "cpu/cpu.h"
+#include "cpu/paging.h"
+#include "cpu/registers.h"
+#include "debugger/debugger.h"
+#include "dos.h"
+#include "dos/programs.h"
+#include "gui/titlebar.h"
+#include "hardware/memory.h"
+#include "hardware/vmware.h"
+#include "misc/video.h"
+#include "programs/setver.h"
+#include "utils/string_utils.h"
 
 #ifdef _MSC_VER
 #pragma pack(1)
@@ -91,12 +78,13 @@ void DOS_UpdateCurrentProgramName()
 	// Retrieve canonical program name, if possible
 	std::string canonical_name = {};
 	if (!PAGING_Enabled()) {
-		if (psp_to_canonical_map.count(psp_segment)) {
+		if (psp_to_canonical_map.contains(psp_segment)) {
 			canonical_name = psp_to_canonical_map.at(psp_segment);
 		}
 	}
 
-	GFX_NotifyProgramName(segment_name, canonical_name);
+	TITLEBAR_NotifyProgramName(segment_name, canonical_name);
+	VMWARE_NotifyProgramName(segment_name);
 }
 
 static void add_canonical_name(const uint16_t pspseg, const std::string& canonical_name)
@@ -190,18 +178,24 @@ void DOS_Terminate(const uint16_t psp_seg, const bool is_terminate_and_stay_resi
 }
 
 static bool MakeEnv(char * name,uint16_t * segment) {
-	/* If segment to copy environment is 0 copy the caller's environment */
-	DOS_PSP psp(dos.psp());
-	PhysPt envread,envwrite;
-	uint16_t envsize=1;
-	bool parentenv=true;
+	// If segment to copy environment is 0 copy the caller's environment
+	PhysPt envread, envwrite;
+	uint16_t envsize = 1;
+	bool parentenv   = true;
 
-	if (*segment==0) {
-		if (!psp.GetEnvironment()) parentenv=false;				//environment seg=0
-		envread=PhysicalMake(psp.GetEnvironment(),0);
+	if (*segment == 0) {
+		DOS_PSP psp(dos.psp());
+		if (!psp.GetEnvironment()) {
+			// environment seg=0
+			parentenv = false;
+		}
+		envread = PhysicalMake(psp.GetEnvironment(), 0);
 	} else {
-		if (!*segment) parentenv=false;						//environment seg=0
-		envread=PhysicalMake(*segment,0);
+		if (!*segment) {
+			// environment seg=0
+			parentenv = false;
+		}
+		envread = PhysicalMake(*segment, 0);
 	}
 
 	if (parentenv) {
@@ -259,7 +253,8 @@ bool DOS_ChildPSP(uint16_t segment, uint16_t size) {
 	return true;
 }
 
-static void SetupPSP(uint16_t pspseg,uint16_t memsize,uint16_t envseg) {
+static void setup_psp(uint16_t pspseg, uint16_t memsize, uint16_t envseg)
+{
 	/* Fix the PSP for psp and environment MCB's */
 	DOS_MCB mcb((uint16_t)(pspseg-1));
 	mcb.SetPSPSeg(pspseg);
@@ -269,16 +264,20 @@ static void SetupPSP(uint16_t pspseg,uint16_t memsize,uint16_t envseg) {
 	DOS_PSP psp(pspseg);
 	psp.MakeNew(memsize);
 	psp.SetEnvironment(envseg);
-
-	/* Copy file handles */
-	DOS_PSP oldpsp(dos.psp());
-	psp.CopyFileTable(&oldpsp,true);
-
 }
 
-static void SetupCMDLine(uint16_t pspseg,DOS_ParamBlock & block) {
+static void copy_file_handles(uint16_t pspseg)
+{
 	DOS_PSP psp(pspseg);
-	// if cmdtail==0 it will inited as empty in SetCommandTail
+
+	DOS_PSP oldpsp(dos.psp());
+	psp.CopyFileTable(&oldpsp, true);
+}
+
+static void setup_command_line(const uint16_t pspseg, const DOS_ParamBlock& block)
+{
+	DOS_PSP psp(pspseg);
+	// If cmdtail is 0, empty PSP tail is going to be created
 	psp.SetCommandTail(block.exec.cmdtail);
 }
 
@@ -349,7 +348,7 @@ bool DOS_Execute(char * name,PhysPt block_pt,uint8_t flags) {
 		uint16_t minsize,maxsize;uint16_t maxfree=0xffff;DOS_AllocateMemory(&pspseg,&maxfree);
 		if (iscom) {
 			minsize=0x1000;maxsize=0xffff;
-			if (machine==MCH_PCJR) {
+			if (is_machine_pcjr()) {
 				/* try to load file into memory below 96k */ 
 				pos=0;DOS_SeekFile(fhandle,&pos,DOS_SEEK_SET);	
 				uint16_t dataread=0x1800;
@@ -381,7 +380,7 @@ bool DOS_Execute(char * name,PhysPt block_pt,uint8_t flags) {
 		if (maxfree<maxsize) memsize=maxfree;
 		else memsize=maxsize;
 		if (!DOS_AllocateMemory(&pspseg,&memsize)) E_Exit("DOS:Exec error in memory");
-		if (iscom && (machine==MCH_PCJR) && (pspseg<0x2000)) {
+		if (iscom && is_machine_pcjr() && (pspseg < 0x2000)) {
 			maxsize=0xffff;
 			/* resize to full extent of memory block */
 			DOS_ResizeMemory(pspseg,&maxsize);
@@ -433,8 +432,9 @@ bool DOS_Execute(char * name,PhysPt block_pt,uint8_t flags) {
 	/* Setup a psp */
 	if (flags!=OVERLAY) {
 		// Create psp after closing exe, to avoid dead file handle of exe in copied psp
-		SetupPSP(pspseg,memsize,envseg);
-		SetupCMDLine(pspseg,block);
+		setup_psp(pspseg, memsize, envseg);
+		copy_file_handles(pspseg);
+		setup_command_line(pspseg, block);
 	};
 	CALLBACK_SCF(false);		/* Carry flag cleared for caller if successfull */
 	if (flags==OVERLAY) {
@@ -458,7 +458,8 @@ bool DOS_Execute(char * name,PhysPt block_pt,uint8_t flags) {
 		if ((pspseg+memsize)<(RealSegment(sssp)+(RealOffset(sssp)>>4)))
 			LOG(LOG_EXEC,LOG_ERROR)("stack outside memory block at EXEC");
 
-		Program::ResetLastWrittenChar('\0'); // triggers newline injection after DOS programs
+		// triggers newline injection after DOS programs
+		CONSOLE_ResetLastWrittenChar('\0');
 	}
 
 	if ((flags==LOAD) || (flags==LOADNGO)) {
@@ -554,11 +555,80 @@ bool DOS_Execute(char * name,PhysPt block_pt,uint8_t flags) {
 		reg_di=RealOffset(sssp);
 		reg_bp=0x91c;	/* DOS internal stack begin relict */
 		SegSet16(ds,pspseg);SegSet16(es,pspseg);
-#if C_DEBUG
+#if C_DEBUGGER
 		/* Started from debug.com, then set breakpoint at start */
 		DEBUG_CheckExecuteBreakpoint(RealSegment(csip),RealOffset(csip));
 #endif
 		return true;
 	}
 	return false;
+}
+
+std::optional<uint16_t> DOS_CreateFakeTsrArea(const uint32_t bytes,
+                                              const bool force_low_memory)
+{
+	constexpr uint16_t StackNeeded = 0x80;
+	constexpr uint16_t PspSegments = 0x10;
+
+	constexpr uint32_t MaxTsrSizeBytes = 512 * 1024;
+
+	constexpr uint16_t CommandTailSegment   = 0x08;
+	constexpr uint16_t CommandTailSizeBytes = 0x80;
+
+	// Try to matche the smallest block
+	const uint8_t MemAllocStrategy = force_low_memory
+		? DosMemAllocStrategy::LowMemoryBestFit
+		: DosMemAllocStrategy::BestFit;
+
+	if (bytes == 0 || bytes > MaxTsrSizeBytes || reg_sp <= StackNeeded) {
+		return {};
+	}
+
+	// Get current DOS PSP
+	const auto app_psp_segment = dos.psp();
+	DOS_PSP psp(app_psp_segment);
+
+	// Reserve stack space for the fake process
+	reg_sp -= StackNeeded;
+
+	// Set empty DOS parameter block
+	DOS_ParamBlock param_block(SegPhys(ss) + reg_sp);
+	param_block.Clear();
+
+	// Calculate number of memory blocks to allocate
+	uint16_t blocks = PspSegments;
+	blocks += (bytes + RealSegmentSize - 1) / RealSegmentSize;
+
+	// Allocate memory
+	uint16_t tsr_psp_segment = 0;
+	const auto old_strategy = DOS_GetMemAllocStrategy();
+	DOS_SetMemAllocStrategy(MemAllocStrategy);
+	const auto result = DOS_AllocateMemory(&tsr_psp_segment, &blocks);
+	DOS_SetMemAllocStrategy(old_strategy);
+
+	if (!result) {
+		// Memory allocation failed
+		reg_sp += StackNeeded;
+		return {};
+	}
+
+	// Setup the PSP
+	setup_psp(tsr_psp_segment, blocks, 0);
+
+	// Copy the command tail
+	MEM_BlockCopy(PhysicalMake(tsr_psp_segment + CommandTailSegment, 0),
+	              PhysicalMake(app_psp_segment + CommandTailSegment, 0),
+	              CommandTailSizeBytes);
+
+	// Clear the TSR memory
+	const auto start_segment = tsr_psp_segment + PspSegments;
+	for (auto idx = start_segment; idx < blocks - PspSegments; idx++) {
+		// 16 bytes to clear, use two 8-byte writes
+		mem_writeq(PhysicalMake(idx, sizeof(uint64_t) * 0), 0);
+		mem_writeq(PhysicalMake(idx, sizeof(uint64_t) * 1), 0);
+	}
+
+	// Clean up and return the free space start segment
+	reg_sp += StackNeeded;
+	return start_segment;
 }

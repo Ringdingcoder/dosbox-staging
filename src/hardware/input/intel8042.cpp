@@ -1,35 +1,19 @@
-/*
- *  SPDX-License-Identifier: GPL-2.0-or-later
- *
- *  Copyright (C) 2022-2024  The DOSBox Staging Team
- *  Copyright (C) 2002-2022  The DOSBox Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2022-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
-#include "intel8042.h"
+#include "private/intel8042.h"
+
+#include "config/config.h"
 #include "dosbox.h"
-
-#include "bit_view.h"
-#include "bitops.h"
-#include "checks.h"
-#include "config.h"
-#include "control.h"
-#include "inout.h"
-#include "mem.h"
-#include "pic.h"
+#include "dosbox_config.h"
+#include "hardware/memory.h"
+#include "hardware/pic.h"
+#include "hardware/port.h"
+#include "hardware/vmware.h"
+#include "utils/bit_view.h"
+#include "utils/bitops.h"
+#include "utils/checks.h"
 
 CHECK_NARROWING();
 
@@ -55,6 +39,9 @@ static const std::string FirmwareCopyright = DOSBOX_COPYRIGHT;
 static constexpr uint8_t BufferSize = 64; // in bytes
 // delay appropriate for 20-30 kHz serial clock and 11 bits/byte
 static constexpr double PortDelayMs = 0.300;
+
+// Port operation width to be possibly taken over by the VMware interface
+static const auto WidthVmWare = io_width_t::dword;
 
 enum class Command : uint8_t { // PS/2 mouse/keyboard controller commands
 	None = 0x00,
@@ -381,7 +368,7 @@ static uint8_t get_irq_mouse()
 
 static uint8_t get_irq_keyboard()
 {
-	if (machine == MCH_PCJR) {
+	if (is_machine_pcjr()) {
 		return IrqNumKbdPcjr;
 	} else {
 		return IrqNumKbdIbmPc;
@@ -559,7 +546,7 @@ static uint8_t get_input_port() // aka port P1
 
 	} port;
 
-	port.lacks_cga = (machine < MCH_CGA);
+	port.lacks_cga = !is_machine_cga_or_better();
 
 	return port.data;
 }
@@ -863,7 +850,7 @@ static void execute_command(const Command command, const uint8_t param)
 		MEM_A20_Enable(bit::is(param, b1));
 		if (!bit::is(param, b0)) {
 			LOG_WARNING("I8042: Clearing P2 bit 0 locks a real PC");
-			restart_dosbox();
+			DOSBOX_Restart();
 		}
 		break;
 	case Command::SimulateInputKbd: // 0xd2
@@ -899,7 +886,7 @@ static void execute_command(const Command command, const uint8_t param)
 			}
 			if (code == 0xf0 && !(lines & 0b0001)) {
 				// System reset via keyboard controller
-				restart_dosbox();
+				DOSBOX_Restart();
 			}
 		} else {
 			// If we are here, than either this function
@@ -914,8 +901,14 @@ static void execute_command(const Command command, const uint8_t param)
 // I/O port handlers
 // ***************************************************************************
 
-static uint8_t read_data_port(io_port_t, io_width_t) // port 0x60
+static uint32_t read_data_port(io_port_t, io_width_t width)
 {
+	// Port 0x60 read handler
+
+	if (width == WidthVmWare && VMWARE_I8042_ReadTakeover()) {
+		return VMWARE_I8042_ReadDataPort();
+	}
+
 	if (!is_data_new) {
 		// Byte already read - just return the previous one
 		return data_byte;
@@ -962,15 +955,22 @@ static uint8_t read_data_port(io_port_t, io_width_t) // port 0x60
 	return ret_val;
 }
 
-static uint8_t read_status_register(io_port_t, io_width_t) // port 0x64
+static uint32_t read_status_register(io_port_t, io_width_t width)
 {
+	// Port 0x64 read handler
+
+	if (width == WidthVmWare && VMWARE_I8042_ReadTakeover()) {
+		return VMWARE_I8042_ReadStatusRegister();
+	}
+
 	return status_byte.data;
 }
 
-static void write_data_port(io_port_t, io_val_t value, io_width_t) // port 0x60
+static void write_data_port(io_port_t, io_val_t value, io_width_t)
 {
-	const auto byte = check_cast<uint8_t>(value);
+	// Port 0x60 write handler
 
+	const auto byte = check_cast<uint8_t>(value);
 	status_byte.was_last_write_cmd = false;
 
 	if (current_command != Command::None) {
@@ -1003,10 +1003,15 @@ static void write_data_port(io_port_t, io_val_t value, io_width_t) // port 0x60
 	}
 }
 
-static void write_command_port(io_port_t, io_val_t value, io_width_t) // port 0x64
+static void write_command_port(io_port_t, io_val_t value, io_width_t width)
 {
-	const auto byte = check_cast<uint8_t>(value);
+	// Port 0x64 write handler
 
+	if (width == WidthVmWare && VMWARE_I8042_WriteCommandPort(value)) {
+		return;
+	}
+
+	const auto byte = static_cast<uint8_t>(value);
 	should_skip_device_notify = true;
 
 	const bool should_notify_aux = !I8042_IsReadyForAuxFrame();
@@ -1113,6 +1118,11 @@ bool I8042_IsReadyForKbdFrame()
 	return !waiting_bytes_from_kbd && !is_disabled_kbd && !is_diagnostic_dump;
 }
 
+void I8042_TriggerAuxInterrupt()
+{
+	PIC_ActivateIRQ(get_irq_mouse());
+}
+
 // ***************************************************************************
 // Initialization
 // ***************************************************************************
@@ -1123,16 +1133,16 @@ void I8042_Init()
 
 	IO_RegisterReadHandler(port_num_i8042_data,
 	                       read_data_port,
-	                       io_width_t::byte);
+	                       io_width_t::dword);
 	IO_RegisterReadHandler(port_num_i8042_status,
 	                       read_status_register,
-	                       io_width_t::byte);
+	                       io_width_t::dword);
 	IO_RegisterWriteHandler(port_num_i8042_data,
 	                        write_data_port,
 	                        io_width_t::byte);
 	IO_RegisterWriteHandler(port_num_i8042_command,
 	                        write_command_port,
-	                        io_width_t::byte);
+	                        io_width_t::dword);
 
 	// Initialize hardware
 	flush_buffer();

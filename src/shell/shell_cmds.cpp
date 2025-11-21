@@ -1,26 +1,9 @@
-/*
- *  SPDX-License-Identifier: GPL-2.0-or-later
- *
- *  Copyright (C) 2020-2024  The DOSBox Staging Team
- *  Copyright (C) 2002-2021  The DOSBox Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2020-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
-#include "dos_system.h"
-#include "shell.h"
+#include "dos/dos_system.h"
+#include "shell/shell.h"
 
 #include <algorithm>
 #include <cassert>
@@ -35,20 +18,21 @@
 #include <string>
 #include <vector>
 
-#include "../dos/program_more_output.h"
-#include "../ints/int10.h"
-#include "ansi_code_markup.h"
-#include "bios.h"
-#include "callback.h"
-#include "control.h"
-#include "cross.h"
-#include "dos_inc.h"
-#include "drives.h"
-#include "paging.h"
-#include "regs.h"
-#include "string_utils.h"
-#include "support.h"
-#include "timer.h"
+#include "config/config.h"
+#include "cpu/callback.h"
+#include "cpu/paging.h"
+#include "cpu/registers.h"
+#include "dos/dos.h"
+#include "dos/drives.h"
+#include "dos/programs/more_output.h"
+#include "hardware/timer.h"
+#include "ints/bios.h"
+#include "ints/int10.h"
+#include "misc/ansi_code_markup.h"
+#include "misc/cross.h"
+#include "misc/support.h"
+#include "shell/command_line.h"
+#include "utils/string_utils.h"
 
 // clang-format off
 static const std::map<std::string, SHELL_Cmd> shell_cmds = {
@@ -132,34 +116,47 @@ bool lookup_shell_cmd(std::string name, SHELL_Cmd &shell_cmd)
 	return true;
 }
 
-bool DOS_Shell::ExecuteConfigChange(const char* const cmd_in, const char* const line)
+bool DOS_Shell::ExecuteConfigChange(const char* const property_name, const std::string _args)
 {
-	assert(control);
-	const auto section_dosbox = static_cast<Section_prop*>(
-	        control->GetSection("dosbox"));
+	const auto section_dosbox = get_section("dosbox");
 	assert(section_dosbox);
-	if (!section_dosbox->Get_bool("shell_config_shortcuts")) {
+
+	auto args = _args;
+	trim(args);
+
+	assert(section_dosbox);
+	if (!section_dosbox->GetBool("shell_config_shortcuts")) {
 		return false;
 	}
 
-	Section* test = control->GetSectionFromProperty(cmd_in);
-	if (!test) {
+	Section* section = control->GetSectionFromProperty(property_name);
+	if (!section) {
 		return false;
 	}
 
-	if (line && !line[0]) {
-		std::string val = test->GetPropValue(cmd_in);
+	if (args.empty()) {
+		std::string val = section->GetPropertyValue(property_name);
 		if (val != NO_SUCH_PROPERTY) {
 			WriteOut("%s\n", val.c_str());
 		}
 		return true;
 	}
 
-	char newcom[1024];
-	safe_sprintf(newcom, "z:\\config -set %s %s%s", test->GetName(), cmd_in,
-	             line ? line : "");
-	DoCommand(newcom);
+	char command[1024];
 
+	if (args.starts_with("/?")) {
+		safe_sprintf(command, "z:\\config -h %s %s", section->GetName(), property_name);
+		DoCommand(command);
+		return true;
+	}
+
+	safe_sprintf(command,
+	             "z:\\config -set %s %s %s",
+	             section->GetName(),
+	             property_name,
+	             args.c_str());
+
+	DoCommand(command);
 	return true;
 }
 
@@ -172,27 +169,35 @@ bool DOS_Shell::ExecuteShellCommand(const char* const name, char* arguments)
 	return true;
 }
 
-void DOS_Shell::DoCommand(char * line) {
-/* First split the line into command and arguments */
-	line=trim(line);
+void DOS_Shell::DoCommand(char* line)
+{
+	// First split the line into command and arguments
+	line = trim(line);
 	char cmd_buffer[CMD_MAXLINE];
-	char * cmd_write=cmd_buffer;
+	char* cmd_write = cmd_buffer;
 
-	while (*line) {
-		if (*line == 32) break;
-		if (*line == '/') break;
-		if (*line == '\t') break;
-		if (*line == '=') break;
-//		if (*line == ':') break; //This breaks drive switching as that is handled at a later stage.
-		if ((*line == '.') ||(*line == '\\')) {  //allow stuff like cd.. and dir.exe cd\kees
-			*cmd_write=0;
+	auto is_cli_delimiter = [](const char c) {
+		constexpr std::array<char, 7> Delimiters = {'\0', ' ', '/', '\t', '=', '"'};
+		// Note: ':' is also a delimiter, but handling it here breaks
+		//       drive switching as that is handled at a later stage.
+		return contains(Delimiters, c);
+	};
+
+	// Scan forward until we hit the first delimiter
+	while (!is_cli_delimiter(line[0])) {
+		// Handle squashed . and \ syntax like real MS-DOS:
+		//   C:\> cd\keen
+		//   C:\KEEN> cd..
+		//   C:\> dir.exe
+		if ((*line == '.') || (*line == '\\')) {
+			*cmd_write = 0;
 			if (ExecuteShellCommand(cmd_buffer, line)) {
 				return;
 			}
 		}
-		*cmd_write++=*line++;
+		*cmd_write++ = *line++;
 	}
-	*cmd_write=0;
+	*cmd_write = 0;
 	if (is_empty(cmd_buffer)) {
 		return;
 	}
@@ -214,17 +219,19 @@ void DOS_Shell::DoCommand(char * line) {
 }
 
 bool DOS_Shell::WriteHelp(const std::string &command, char *args) {
-	if (!args || !ScanCMDBool(args, "?"))
+	if (!args || !scan_and_remove_cmdline_switch(args, "?"))
 		return false;
 
 	MoreOutputStrings output(*this);
 	std::string short_key("SHELL_CMD_" + command + "_HELP");
-	output.AddString("%s\n", MSG_Get(short_key.c_str()));
+	output.AddString(MSG_Get(short_key));
+	output.AddString("\n");
 	std::string long_key("SHELL_CMD_" + command + "_HELP_LONG");
-	if (MSG_Exists(long_key.c_str()))
-		output.AddString("%s", MSG_Get(long_key.c_str()));
-	else
+	if (MSG_Exists(long_key)) {
+		output.AddString(MSG_Get(long_key));
+	} else {
 		output.AddString("%s\n", command.c_str());
+	}
 	output.Display();
 
 	return true;
@@ -282,7 +289,7 @@ void DOS_Shell::CMD_CLS(char *args)
 void DOS_Shell::CMD_DELETE(char * args) {
 	HELP("DELETE");
 
-	char * rem=ScanCMDRemain(args);
+	char * rem=scan_remaining_cmdline_switch(args);
 	if (rem) {
 		WriteOut(MSG_Get("SHELL_ILLEGAL_SWITCH"),rem);
 		return;
@@ -352,7 +359,7 @@ void DOS_Shell::PrintHelpForCommands(MoreOutputStrings &output, HELP_Filter req_
 				if (cat != HELP_Category::Dosbox || req_filter == HELP_Filter::Common) {
 					output.AddString("\n");
 				}
-				output.AddString(format_header, HELP_CategoryHeading(cat));
+				output.AddString(format_header, HELP_CategoryHeading(cat).c_str());
 				category_started = true;
 			}
 			std::string name(s.first);
@@ -392,7 +399,7 @@ void DOS_Shell::CMD_HELP(char * args){
 		// Print help for the provided command by
 		// calling it with the '/?' arg
 		(this->*(shell_cmd.handler))(help_arg);
-	} else if (ScanCMDBool(args, "A") || ScanCMDBool(args, "ALL")) {
+	} else if (scan_and_remove_cmdline_switch(args, "A") || scan_and_remove_cmdline_switch(args, "ALL")) {
 		// Print help for all the commands
 		MoreOutputStrings output(*this);
 		PrintHelpForCommands(output, HELP_Filter::All);
@@ -451,27 +458,7 @@ void DOS_Shell::CMD_ECHO(char * args){
 void DOS_Shell::CMD_EXIT(char *args)
 {
 	HELP("EXIT");
-
-	const bool wants_force_exit = control->arguments.exit;
-	const bool is_normal_launch = control->GetStartupVerbosity() !=
-	                              Verbosity::InstantLaunch;
-
-	// Check if this is an early-exit situation, in which case we avoid
-	// exiting because the user might have a configuration problem and we
-	// should let them see any errors in their console.
-	constexpr auto early_exit_seconds = 1.5;
-	const auto exiting_after_seconds  = DOSBOX_GetUptime();
-
-	const auto not_early_exit = exiting_after_seconds > early_exit_seconds;
-
-	if (wants_force_exit || is_normal_launch || not_early_exit) {
-		exit_cmd_called = true;
-		return;
-	}
-
-	WriteOut(MSG_Get("SHELL_CMD_EXIT_TOO_SOON"));
-	LOG_WARNING("SHELL: Exit blocked because program quit after only %.1f seconds",
-	            exiting_after_seconds);
+	exit_cmd_called = true;
 }
 
 void DOS_Shell::CMD_CHDIR(char * args) {
@@ -532,7 +519,7 @@ void DOS_Shell::CMD_CHDIR(char * args) {
 void DOS_Shell::CMD_MKDIR(char * args) {
 	HELP("MKDIR");
 	StripSpaces(args);
-	char * rem=ScanCMDRemain(args);
+	char * rem=scan_remaining_cmdline_switch(args);
 	if (rem) {
 		WriteOut(MSG_Get("SHELL_ILLEGAL_SWITCH"),rem);
 		return;
@@ -545,7 +532,7 @@ void DOS_Shell::CMD_MKDIR(char * args) {
 void DOS_Shell::CMD_RMDIR(char * args) {
 	HELP("RMDIR");
 	StripSpaces(args);
-	char * rem=ScanCMDRemain(args);
+	char * rem=scan_remaining_cmdline_switch(args);
 	if (rem) {
 		WriteOut(MSG_Get("SHELL_ILLEGAL_SWITCH"),rem);
 		return;
@@ -706,16 +693,16 @@ char *format_date(const uint16_t year, const uint8_t month, const uint8_t day)
 	int result;
 	switch (date_format) {
 	case DosDateFormat::DayMonthYear:
-		result = sprintf(format_string, "D%cM%cY", date_separator,
-		                 date_separator);
+		result = safe_sprintf(format_string, "D%cM%cY", date_separator,
+		                      date_separator);
 		break;
 	case DosDateFormat::YearMonthDay:
-		result = sprintf(format_string, "Y%cM%cD", date_separator,
-		                 date_separator);
+		result = safe_sprintf(format_string, "Y%cM%cD", date_separator,
+		                      date_separator);
 		break;
 	default: // DosDateFormat::MonthDayYear
-		result = sprintf(format_string, "M%cD%cY", date_separator,
-		                 date_separator);
+		result = safe_sprintf(format_string, "M%cD%cY", date_separator,
+		                      date_separator);
 	}
 	if (result < 0)
 		return return_date_buffer;
@@ -784,58 +771,58 @@ void DOS_Shell::CMD_DIR(char* args)
 		args=const_cast<char*>(line.c_str());
 	}
 
-	bool has_option_wide = ScanCMDBool(args, "W");
+	bool has_option_wide = scan_and_remove_cmdline_switch(args, "W");
 
-	(void)ScanCMDBool(args, "S");
+	(void)scan_and_remove_cmdline_switch(args, "S");
 
-	bool has_option_paging = ScanCMDBool(args, "P");
-	if (ScanCMDBool(args,"WP") || ScanCMDBool(args,"PW")) {
+	bool has_option_paging = scan_and_remove_cmdline_switch(args, "P");
+	if (scan_and_remove_cmdline_switch(args,"WP") || scan_and_remove_cmdline_switch(args,"PW")) {
 		has_option_paging = true;
 		has_option_wide   = true;
 	}
 
-	bool has_option_bare = ScanCMDBool(args, "B");
+	bool has_option_bare = scan_and_remove_cmdline_switch(args, "B");
 
-	bool has_option_all_dirs  = ScanCMDBool(args, "AD");
-	bool has_option_all_files = ScanCMDBool(args, "A-D");
+	bool has_option_all_dirs  = scan_and_remove_cmdline_switch(args, "AD");
+	bool has_option_all_files = scan_and_remove_cmdline_switch(args, "A-D");
 
 	// Sorting flags
 	bool option_reverse          = false;
 	ResultSorting option_sorting = ResultSorting::None;
-	if (ScanCMDBool(args, "ON")) {
+	if (scan_and_remove_cmdline_switch(args, "ON")) {
 		option_sorting = ResultSorting::ByName;
 		option_reverse = false;
 	}
-	if (ScanCMDBool(args, "O-N")) {
+	if (scan_and_remove_cmdline_switch(args, "O-N")) {
 		option_sorting = ResultSorting::ByName;
 		option_reverse = true;
 	}
-	if (ScanCMDBool(args, "OD")) {
+	if (scan_and_remove_cmdline_switch(args, "OD")) {
 		option_sorting = ResultSorting::ByDateTime;
 		option_reverse = false;
 	}
-	if (ScanCMDBool(args,"O-D")) {
+	if (scan_and_remove_cmdline_switch(args,"O-D")) {
 		option_sorting = ResultSorting::ByDateTime;
 		option_reverse = true;
 	}
-	if (ScanCMDBool(args, "OE")) {
+	if (scan_and_remove_cmdline_switch(args, "OE")) {
 		option_sorting = ResultSorting::ByExtension;
 		option_reverse = false;
 	}
-	if (ScanCMDBool(args,"O-E")) {
+	if (scan_and_remove_cmdline_switch(args,"O-E")) {
 		option_sorting = ResultSorting::ByExtension;
 		option_reverse = true;
 	}
-	if (ScanCMDBool(args, "OS")) {
+	if (scan_and_remove_cmdline_switch(args, "OS")) {
 		option_sorting = ResultSorting::BySize;
 		option_reverse = false;
 	}
-	if (ScanCMDBool(args,"O-S")) {
+	if (scan_and_remove_cmdline_switch(args,"O-S")) {
 		option_sorting = ResultSorting::BySize;
 		option_reverse = true;
 	}
 
-	const char* rem = ScanCMDRemain(args);
+	const char* rem = scan_remaining_cmdline_switch(args);
 	if (rem) {
 		WriteOut(MSG_Get("SHELL_ILLEGAL_SWITCH"), rem);
 		return;
@@ -1046,15 +1033,15 @@ void DOS_Shell::CMD_COPY(char* args)
 	DOS_DTA::Result search_result = {};
 	std::vector<copysource> sources;
 	// ignore /b and /t switches: always copy binary
-	while (ScanCMDBool(args,"B")) ;
-	while (ScanCMDBool(args,"T")) ; //Shouldn't this be A ?
-	while (ScanCMDBool(args,"A")) ;
+	while (scan_and_remove_cmdline_switch(args,"B")) ;
+	while (scan_and_remove_cmdline_switch(args,"T")) ; //Shouldn't this be A ?
+	while (scan_and_remove_cmdline_switch(args,"A")) ;
 
-	(void)ScanCMDBool(args, "Y");
-	(void)ScanCMDBool(args, "-Y");
-	(void)ScanCMDBool(args, "V");
+	(void)scan_and_remove_cmdline_switch(args, "Y");
+	(void)scan_and_remove_cmdline_switch(args, "-Y");
+	(void)scan_and_remove_cmdline_switch(args, "V");
 
-	char* rem = ScanCMDRemain(args);
+	char* rem = scan_remaining_cmdline_switch(args);
 	if (rem) {
 		WriteOut(MSG_Get("SHELL_ILLEGAL_SWITCH"),rem);
 		dos.dta(save_dta);
@@ -1397,8 +1384,8 @@ void DOS_Shell::CMD_ATTRIB(char *args)
 	HELP("ATTRIB");
 	StripSpaces(args);
 
-	bool optS = ScanCMDBool(args, "S");
-	char *rem = ScanCMDRemain(args);
+	bool optS = scan_and_remove_cmdline_switch(args, "S");
+	char *rem = scan_remaining_cmdline_switch(args);
 	if (rem) {
 		WriteOut(MSG_Get("SHELL_ILLEGAL_SWITCH"), rem);
 		return;
@@ -1711,7 +1698,7 @@ void DOS_Shell::CMD_DATE(char *args)
 		LOG_WARNING("SHELL: Incorrect date format");
 		return;
 	}
-	if (ScanCMDBool(args, "?")) {
+	if (scan_and_remove_cmdline_switch(args, "?")) {
 		MoreOutputStrings output(*this);
 		output.AddString(MSG_Get("SHELL_CMD_DATE_HELP"));
 		output.AddString("\n");
@@ -1721,7 +1708,7 @@ void DOS_Shell::CMD_DATE(char *args)
 		output.Display();
 		return;
 	}
-	if (ScanCMDBool(args, "H")) {
+	if (scan_and_remove_cmdline_switch(args, "H")) {
 		// synchronize date with host
 		const time_t curtime = time(nullptr);
 		struct tm datetime;
@@ -1772,7 +1759,9 @@ void DOS_Shell::CMD_DATE(char *args)
 	reg_ah = 0x2a; // get system date
 	CALLBACK_RunRealInt(0x21);
 
-	const char *datestring = MSG_Get("SHELL_CMD_DATE_DAYS");
+	const auto date_string = MSG_Get("SHELL_CMD_DATE_DAYS");
+	const char* datestring = date_string.c_str();
+
 	uint32_t length;
 	char day[6] = {0};
 	if (sscanf(datestring, "%u", &length) && (length < 5) &&
@@ -1781,7 +1770,7 @@ void DOS_Shell::CMD_DATE(char *args)
 		for (uint32_t i = 0; i < length; i++)
 			day[i] = datestring[reg_al * length + 1 + i];
 	}
-	bool dateonly = ScanCMDBool(args, "T");
+	bool dateonly = scan_and_remove_cmdline_switch(args, "T");
 	if (!dateonly) {
 		WriteOut(MSG_Get("SHELL_CMD_DATE_NOW"));
 		WriteOut("%s ", day);
@@ -1793,20 +1782,26 @@ void DOS_Shell::CMD_DATE(char *args)
 	}
 }
 
-void DOS_Shell::CMD_TIME(char * args) {
-	char format[9], example[9];
+void DOS_Shell::CMD_TIME(char* args)
+{
 	const char time_separator = DOS_GetLocaleTimeSeparator();
-	sprintf(format, "hh%cmm%css", time_separator, time_separator);
-	sprintf(example, "13%c14%c15", time_separator, time_separator);
-	if (ScanCMDBool(args, "?")) {
+
+	const auto format = format_str("hh%cmm%css", time_separator, time_separator);
+
+	if (scan_and_remove_cmdline_switch(args, "?")) {
 		MoreOutputStrings output(*this);
 		output.AddString(MSG_Get("SHELL_CMD_TIME_HELP"));
 		output.AddString("\n");
-		output.AddString(MSG_Get("SHELL_CMD_TIME_HELP_LONG"), format, example);
+
+		const auto example = format_str("13%c14%c15", time_separator, time_separator);
+
+		output.AddString(MSG_Get("SHELL_CMD_TIME_HELP_LONG"),
+		                 format.c_str(),
+		                 example.c_str());
 		output.Display();
 		return;
 	}
-	if (ScanCMDBool(args, "H")) {
+	if (scan_and_remove_cmdline_switch(args, "H")) {
 		// synchronize time with host
 		const time_t curtime = time(nullptr);
 		struct tm datetime;
@@ -1839,7 +1834,7 @@ void DOS_Shell::CMD_TIME(char * args) {
 		}
 		return;
 	}
-	bool timeonly = ScanCMDBool(args, "T");
+	bool timeonly = scan_and_remove_cmdline_switch(args, "T");
 
 	reg_ah = 0x2c; // get system time
 	CALLBACK_RunRealInt(0x21);
@@ -1855,7 +1850,7 @@ void DOS_Shell::CMD_TIME(char * args) {
 	} else {
 		WriteOut(MSG_Get("SHELL_CMD_TIME_NOW"));
 		WriteOut("%s\n", format_time(reg_ch, reg_cl, reg_dh, reg_dl, true));
-		WriteOut(MSG_Get("SHELL_CMD_TIME_SETHLP"), format);
+		WriteOut(MSG_Get("SHELL_CMD_TIME_SETHLP"), format.c_str());
 	}
 }
 
@@ -1958,17 +1953,17 @@ void DOS_Shell::CMD_LOADHIGH(char *args){
 void MAPPER_AutoType(std::vector<std::string> &sequence,
                      const uint32_t wait_ms,
                      const uint32_t pacing_ms);
-void MAPPER_AutoTypeStopImmediately();
+void MAPPER_StopAutoTyping();
 void DOS_21Handler();
 
 void DOS_Shell::CMD_CHOICE(char * args){
 	HELP("CHOICE");
 
 	// Parse "/n"; does the user want to show choices or not?
-	const bool should_show_choices = !ScanCMDBool(args, "N");
+	const bool should_show_choices = !scan_and_remove_cmdline_switch(args, "N");
 
 	// Parse "/s"; does the user want choices to be case-sensitive?
-	const bool always_capitalize = !ScanCMDBool(args, "S");
+	const bool always_capitalize = !scan_and_remove_cmdline_switch(args, "S");
 
 	// Prepare the command line for use with regular expressions
 	assert(args);
@@ -2056,9 +2051,10 @@ void DOS_Shell::CMD_CHOICE(char * args){
 		if (always_capitalize)
 			choice = static_cast<char>(toupper(choice));
 		if (using_auto_type)
-			MAPPER_AutoTypeStopImmediately();
-		if (shutdown_requested)
+			MAPPER_StopAutoTyping();
+		if (DOSBOX_IsShutdownRequested()) {
 			break;
+		}
 		if (choice == ctrl_c)
 			break;
 	}
@@ -2309,10 +2305,10 @@ void DOS_Shell::CMD_MOVE(char* args)
 
 	// TODO: Add support for these flags along with the COPYCMD environment
 	// variable (overwrite prompts) Also currently ignored by CMD_COPY
-	(void)ScanCMDBool(args, "Y");
-	(void)ScanCMDBool(args, "-Y");
+	(void)scan_and_remove_cmdline_switch(args, "Y");
+	(void)scan_and_remove_cmdline_switch(args, "-Y");
 
-	char* rem = ScanCMDRemain(args);
+	char* rem = scan_remaining_cmdline_switch(args);
 	if (rem) {
 		WriteOut(MSG_Get("SHELL_ILLEGAL_SWITCH"), rem);
 		return;
@@ -2656,7 +2652,7 @@ void DOS_Shell::CMD_FOR(char* args)
 			}
 
 			auto files = search_files(parameter);
-			expanded_parameters.insert(
+			expanded_parameters.insert( //-V823
 			        expanded_parameters.end(),
 			        std::make_move_iterator(files.begin()),
 			        std::make_move_iterator(files.end()));

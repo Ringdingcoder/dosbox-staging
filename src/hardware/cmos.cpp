@@ -1,33 +1,19 @@
-/*
- *  Copyright (C) 2002-2021  The DOSBox Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2025-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "dosbox.h"
 
 #include <cmath>
 #include <ctime>
+#include <memory>
 
-#include "bios_disk.h"
-#include "cross.h"
-#include "inout.h"
-#include "mem.h"
-#include "pic.h"
-#include "setup.h"
-#include "timer.h"
+#include "hardware/memory.h"
+#include "hardware/pic.h"
+#include "hardware/port.h"
+#include "hardware/timer.h"
+#include "ints/bios_disk.h"
+#include "misc/cross.h"
 
 static struct {
 	uint8_t regs[0x40];
@@ -337,13 +323,13 @@ void CMOS_SetRegister(Bitu regNr, uint8_t val) {
 	cmos.regs[regNr] = val;
 }
 
-
-class CMOS final : public Module_base{
+class CMOS {
 private:
 	IO_ReadHandleObject ReadHandler[2];
 	IO_WriteHandleObject WriteHandler[2];
 public:
-	CMOS(Section* configuration):Module_base(configuration){
+	CMOS()
+	{
 		constexpr io_port_t port_0x70 = 0x70;
 		constexpr io_port_t port_0x71 = 0x71;
 
@@ -375,18 +361,14 @@ public:
 	}
 };
 
-static CMOS* test;
+static std::unique_ptr<CMOS> cmos_module = {};
 
-void CMOS_Destroy(Section* /*sec*/){
-	delete test;
+void CMOS_Init()
+{
+	cmos_module = std::make_unique<CMOS>();
 }
 
-void CMOS_Init(Section* sec)
+void CMOS_Destroy()
 {
-	assert(sec);
-
-	test = new CMOS(sec);
-
-	constexpr auto changeable_at_runtime = false;
-	sec->AddDestroyFunction(&CMOS_Destroy, changeable_at_runtime);
+	cmos_module = {};
 }

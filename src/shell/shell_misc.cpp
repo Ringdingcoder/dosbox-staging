@@ -1,34 +1,20 @@
-/*
- *  Copyright (C) 2020-2024  The DOSBox Staging Team
- *  Copyright (C) 2002-2021  The DOSBox Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2020-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
-#include "shell.h"
+#include "shell/shell.h"
 
 #include <algorithm>
 #include <cstring>
 #include <memory>
 
-#include "../ints/int10.h"
-#include "callback.h"
+#include "cpu/callback.h"
+#include "gui/clipboard.h"
 #include "file_reader.h"
-#include "keyboard.h"
-#include "regs.h"
-#include "unicode.h"
+#include "ints/int10.h"
+#include "hardware/input/keyboard.h"
+#include "cpu/registers.h"
+#include "misc/unicode.h"
 
 [[nodiscard]] static std::vector<std::string> get_completions(std::string_view command);
 static void run_binary_executable(std::string_view fullname, std::string_view args);
@@ -67,11 +53,11 @@ void DOS_Shell::ShowPrompt()
 	// DOS_GetCurrentDir doesn't always return something.
 	// (if drive is messed up)
 	DOS_GetCurrentDir(0, dir);
-	InjectMissingNewline();
+	CONSOLE_InjectMissingNewline();
 	WriteOut("%c:\\%s>", drive, dir);
 
 	// prevents excessive newline if cmd prints nothing
-	ResetLastWrittenChar('\n');
+	CONSOLE_ResetLastWrittenChar('\n');
 }
 
 void DOS_Shell::InputCommand(char* line)
@@ -80,14 +66,13 @@ void DOS_Shell::InputCommand(char* line)
 
 	history->Append(command, get_utf8_code_page());
 
-	const auto* const dos_section = dynamic_cast<Section_prop*>(
-	        control->GetSection("dos"));
+	const auto dos_section = get_section("dos");
 	if (dos_section == nullptr) {
 		assert(false);
 		return;
 	}
 
-	const std::string expand_shell_variable_pref = dos_section->Get_string(
+	const std::string expand_shell_variable_pref = dos_section->GetString(
 	        "expand_shell_variable");
 
 	const auto expand_shell_pref_has_bool = parse_bool_setting(
@@ -129,7 +114,7 @@ std::string DOS_Shell::ReadCommand()
 
 	CommandPrompt prompt;
 
-	while (!shutdown_requested) {
+	while (!DOSBOX_IsShutdownRequested()) {
 		assert(history_index < history_clone.size());
 		assert(completion.empty() || completion_index < completion.size());
 		assert(command.empty() || cursor_position <= command.size());
@@ -150,7 +135,9 @@ std::string DOS_Shell::ReadCommand()
 		}
 
 		constexpr decltype(data) ExtendedKey = 0x00;
-		constexpr decltype(data) Escape      = 0x1B;
+		constexpr decltype(data) ControlV    = 0x16;
+		constexpr decltype(data) Escape      = 0x1b;
+
 		switch (data) {
 		case ExtendedKey: {
 			DOS_ReadFile(input_handle, &data, &byte_count);
@@ -263,6 +250,44 @@ std::string DOS_Shell::ReadCommand()
 		case '\n': break;
 		case '\r': prompt.Newline(); return command;
 
+		case ControlV:
+			if (CLIPBOARD_HasText()) {
+				auto clipboard = CLIPBOARD_PasteText();
+				// Extract the first non-empty line
+				const auto lines = split(clipboard, "\n\r");
+				clipboard.clear();
+				for (const auto& line : lines) {
+					if (!line.empty()) {
+						clipboard = line;
+						break;
+					}
+				}
+				// Get the content up to the first control
+				// character
+				for (auto it = clipboard.begin();
+				     it != clipboard.end();
+				     ++it) {
+					if (is_extended_printable_ascii(*it)) {
+						continue;
+					}
+					const auto length = it - clipboard.begin();
+					clipboard = clipboard.substr(0, length);
+					break;
+				}
+				// Check if content is suitable for pasting
+				if (clipboard.empty()) {
+					break;
+				}
+				if (command.size() + clipboard.size() >
+				    CommandPrompt::MaxCommandSize()) {
+					break;
+				}
+				// Paste the clipboard content
+				command.insert(cursor_position, clipboard);
+				cursor_position += clipboard.size();
+			}
+			break;
+
 		case Escape:
 			command += "\\";
 			prompt.Update(command, cursor_position);
@@ -334,7 +359,7 @@ static std::vector<std::string> get_completions(const std::string_view command)
 
 	dos.dta(save_dta);
 
-	files.insert(files.end(),
+	files.insert(files.end(), //-V823
 	             std::make_move_iterator(non_executables.begin()),
 	             std::make_move_iterator(non_executables.end()));
 	return files;
@@ -445,6 +470,23 @@ void CommandPrompt::SetCursor(const std::string::size_type index)
 	                   position_zero.page);
 }
 
+// Only for use in ExecuteProgram()
+// Not suitable for generic use as it only handles 3 letter file extensions.
+// It also doesn't look at space padding, which never happens here.
+// Space padding matters when dealing with internal DOS data strctures which we are not doing.
+static std::string_view get_executable_extension(const std::string_view filename)
+{
+	constexpr size_t ExtensionSize = 4;
+	if (filename.size() <= ExtensionSize) {
+		return "";
+	}
+	const auto dot_position = filename.size() - ExtensionSize;
+	if (filename[dot_position] != '.') {
+		return "";
+	}
+	return filename.substr(dot_position);
+}
+
 bool DOS_Shell::ExecuteProgram(std::string_view name, std::string_view args)
 {
 	if (name.size() > 1 && (std::isalpha(name[0]) != 0) &&
@@ -457,14 +499,8 @@ bool DOS_Shell::ExecuteProgram(std::string_view name, std::string_view args)
 		return true;
 	}
 
-	const auto fullname                                = Which(name);
-	constexpr decltype(fullname.size()) extension_size = 4;
-
-	if (fullname.empty() || fullname.size() <= extension_size) {
-		return false;
-	}
-
-	auto extension = fullname.substr(fullname.size() - extension_size);
+	const auto fullname  = ResolvePath(name);
+	const auto extension = get_executable_extension(fullname);
 
 	if (iequals(extension, ".BAT")) {
 		const auto current_echo = batchfiles.empty()
@@ -495,9 +531,9 @@ bool DOS_Shell::ExecuteProgram(std::string_view name, std::string_view args)
 	return false;
 }
 
-std::string DOS_Shell::Which(const std::string_view name) const
+std::string DOS_Shell::ResolvePath(const std::string_view name) const
 {
-	static constexpr auto extensions = {"", ".COM", ".EXE", ".BAT"};
+	static constexpr auto Extensions = {".COM", ".EXE", ".BAT"};
 
 	std::vector<std::string> prefixes = {""};
 
@@ -512,16 +548,29 @@ std::string DOS_Shell::Which(const std::string_view name) const
 			}
 		}
 
-		prefixes.insert(prefixes.end(),
+		prefixes.insert(prefixes.end(), //-V823
 		                std::make_move_iterator(path_directories.begin()),
 		                std::make_move_iterator(path_directories.end()));
 	}
 
+	const bool has_extension = !get_executable_extension(name).empty();
+
 	for (const auto& prefix : prefixes) {
-		for (const auto& extension : extensions) {
-			std::string file = prefix + std::string(name) + extension;
+		if (has_extension) {
+			// User typed in something with an extension.
+			// Don't try to add a 2nd extension.
+			const std::string file = prefix + std::string(name);
 			if (DOS_FileExists(file.c_str())) {
 				return file;
+			}
+		} else {
+			// User typed in a command with no extension. Ex "DOOM".
+			// Try "DOOM.COM", "DOOM.EXE", "DOOM.BAT" in that order.
+			for (const auto& extension : Extensions) {
+				const std::string file = prefix + std::string(name) + extension;
+				if (DOS_FileExists(file.c_str())) {
+					return file;
+				}
 			}
 		}
 	}

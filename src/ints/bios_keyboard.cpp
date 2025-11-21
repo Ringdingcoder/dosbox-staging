@@ -1,30 +1,16 @@
-/*
- *  Copyright (C) 2019-2023  The DOSBox Staging Team
- *  Copyright (C) 2002-2021  The DOSBox Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2019-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
-#include "bios.h"
+#include "ints/bios.h"
 
-#include "callback.h"
-#include "mem.h"
-#include "keyboard.h"
-#include "regs.h"
-#include "inout.h"
-#include "dos_inc.h"
+#include "cpu/callback.h"
+#include "cpu/cpu.h"
+#include "cpu/registers.h"
+#include "dos/dos.h"
+#include "hardware/input/keyboard.h"
+#include "hardware/memory.h"
+#include "hardware/port.h"
 
 static callback_number_t call_int16 = 0;
 static callback_number_t call_irq1  = 0;
@@ -181,7 +167,7 @@ static const KeyCodes& get_key_codes_for(const uint8_t scan_code)
 bool BIOS_AddKeyToBuffer(uint16_t code) {
 	if (mem_readb(BIOS_KEYBOARD_FLAGS2)&8) return true;
 	uint16_t start,end,head,tail,ttail;
-	if (machine==MCH_PCJR) {
+	if (is_machine_pcjr()) {
 		/* should be done for cga and others as well, to be tested */
 		start=0x1e;
 		end=0x3e;
@@ -209,7 +195,7 @@ static void add_key(uint16_t code) {
 
 static bool get_key(uint16_t &code) {
 	uint16_t start,end,head,tail,thead;
-	if (machine==MCH_PCJR) {
+	if (is_machine_pcjr()) {
 		/* should be done for cga and others as well, to be tested */
 		start=0x1e;
 		end=0x3e;
@@ -366,7 +352,8 @@ static Bitu IRQ1_Handler(void) {
 				// Interrupts screen output by BIOS until another key is pressed
 				// This is seemingly accurate behavior as tested in 86box
 				// https://en.wikipedia.org/wiki/Break_key
-				while (!shutdown_requested && (mem_readb(BIOS_KEYBOARD_FLAGS2) & 8)) {
+				while (!DOSBOX_IsShutdownRequested() &&
+				       (mem_readb(BIOS_KEYBOARD_FLAGS2) & 8)) {
 					CALLBACK_Idle();
 				}
 				reg_ip+=5;	// skip out 20,20
@@ -542,7 +529,10 @@ static Bitu INT16_Handler(void) {
 			reg_ax=temp;
 		} else {
 			/* enter small idle loop to allow for irqs to happen */
-			reg_ip+=1;
+			if (CPU_ShouldHltOnIdle()) {
+				CPU_HLT(reg_eip);
+			}
+			reg_ip += 1;
 		}
 		break;
 	case 0x10: /* GET KEYSTROKE (enhanced keyboards only) */
@@ -554,7 +544,10 @@ static Bitu INT16_Handler(void) {
 			reg_ax=temp;
 		} else {
 			/* enter small idle loop to allow for irqs to happen */
-			reg_ip+=1;
+			if (CPU_ShouldHltOnIdle()) {
+				CPU_HLT(reg_eip);
+			}
+			reg_ip += 1;
 		}
 		break;
 	case 0x01: /* CHECK FOR KEYSTROKE */
@@ -628,10 +621,6 @@ static Bitu INT16_Handler(void) {
 	return CBRET_NONE;
 }
 
-//Keyboard initialisation. src/gui/sdlmain.cpp
-extern bool startup_state_numlock;
-extern bool startup_state_capslock;
-
 static void InitBiosSegment(void) {
 	/* Setup the variables for keyboard in the bios data segment */
 	mem_writew(BIOS_KEYBOARD_BUFFER_START,0x1e);
@@ -660,7 +649,7 @@ void BIOS_SetupKeyboard(void) {
 	CALLBACK_Setup(call_irq1,&IRQ1_Handler,CB_IRQ1,RealToPhysical(BIOS_DEFAULT_IRQ1_LOCATION),"IRQ 1 Keyboard");
 	RealSetVec(0x09,BIOS_DEFAULT_IRQ1_LOCATION);
 
-	if (machine==MCH_PCJR) {
+	if (is_machine_pcjr()) {
 		call_irq6=CALLBACK_Allocate();
 		CALLBACK_Setup(call_irq6,nullptr,CB_IRQ6_PCJR,"PCJr kb irq");
 		RealSetVec(0x0e,CALLBACK_RealPointer(call_irq6));

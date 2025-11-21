@@ -1,31 +1,16 @@
-/*
- *  Copyright (C) 2022-2024  The DOSBox Staging Team
- *  Copyright (C) 2002-2021  The DOSBox Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2022-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
-#include "bios.h"
+#include "ints/bios.h"
 
-#include "callback.h"
-#include "checks.h"
+#include "cpu/callback.h"
+#include "utils/checks.h"
 #include "dosbox.h"
-#include "inout.h"
-#include "pci_bus.h"
-#include "regs.h"
-#include "support.h"
+#include "hardware/port.h"
+#include "hardware/pci_bus.h"
+#include "cpu/registers.h"
+#include "misc/support.h"
 
 CHECK_NARROWING();
 

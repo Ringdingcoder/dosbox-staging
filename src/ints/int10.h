@@ -1,31 +1,18 @@
-/*
- *  Copyright (C) 2002-2021  The DOSBox Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #ifndef DOSBOX_INT10_H
 #define DOSBOX_INT10_H
 
 #include "dosbox.h"
 
+#include <optional>
 #include <vector>
 
-#include "bit_view.h"
-#include "mem.h"
-#include "vga.h"
+#include "config/setup.h"
+#include "utils/bit_view.h"
+#include "hardware/video/vga.h"
+#include "hardware/memory.h"
 
 // forward declarations
 class Rgb666;
@@ -88,7 +75,8 @@ constexpr uint16_t VgaFlagsRecOffset = 0x89;
 // Ref: http://www.techhelpmanual.com/74-egasaveptrrec.html
 #define BIOSMEM_VS_POINTER    0xa8
 
-constexpr uint16_t MaxEgaBiosModeNumber = 0x10;
+constexpr uint16_t MaxEgaBiosModeNumber  = 0x10;
+constexpr uint16_t LastNonSvgaModeNumber = 0x13;
 
 constexpr uint16_t MinVesaBiosModeNumber = 0x100;
 constexpr uint16_t MaxVesaBiosModeNumber = 0x7ff;
@@ -169,9 +157,9 @@ union BiosVgaFlagsRec {
 #define VGAMEM_CTEXT 0xB800
 #define VGAMEM_MTEXT 0xB000
 
-#define BIOS_NCOLS uint16_t ncols=real_readw(BIOSMEM_SEG,BIOSMEM_NB_COLS);
-#define BIOS_NROWS uint16_t nrows=IS_EGAVGA_ARCH?((uint16_t)real_readb(BIOSMEM_SEG,BIOSMEM_NB_ROWS)+1):25;
-#define BIOS_CHEIGHT uint8_t cheight=IS_EGAVGA_ARCH?real_readb(BIOSMEM_SEG,BIOSMEM_CHAR_HEIGHT):8;
+#define BIOS_NCOLS uint16_t ncols = real_readw(BIOSMEM_SEG, BIOSMEM_NB_COLS);
+#define BIOS_NROWS uint16_t nrows = is_machine_ega_or_better() ? ((uint16_t) real_readb(BIOSMEM_SEG,BIOSMEM_NB_ROWS) + 1) : 25;
+#define BIOS_CHEIGHT uint8_t cheight = is_machine_ega_or_better() ? real_readb(BIOSMEM_SEG,BIOSMEM_CHAR_HEIGHT) : 8;
 
 uint16_t INT10_GetTextColumns();
 uint16_t INT10_GetTextRows();
@@ -331,8 +319,11 @@ inline uint8_t CURSOR_POS_ROW(const uint8_t page)
 	return real_readb(BIOSMEM_SEG, BIOSMEM_CURSOR_POS + cursor_offset);
 }
 
+void INT10_Init();
+
 void INT10_SetupPalette();
 
+std::optional<const VideoModeBlock> INT10_FindSvgaVideoMode(uint16_t mode);
 bool INT10_SetVideoMode(uint16_t mode);
 void INT10_SetCurMode(void);
 bool INT10_VideoModeChangeInProgress();
@@ -375,9 +366,10 @@ void INT10_WriteString(uint8_t row, uint8_t col, uint8_t flag, uint8_t attr,
 void INT10_PutPixel(uint16_t x,uint16_t y,uint8_t page,uint8_t color);
 void INT10_GetPixel(uint16_t x,uint16_t y,uint8_t page,uint8_t * color);
 
-// Font funtions
-void INT10_LoadFont(const PhysPt _font, const bool reload, const int count,
-                    const int offset, const int map, const int height);
+// Font functions
+void INT10_LoadFont(const PhysPt font_data, const bool reload,
+                    const int num_chars, const int first_char,
+                    const int font_block, const int char_height);
 
 void INT10_ReloadFont();
 

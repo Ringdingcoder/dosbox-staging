@@ -1,34 +1,26 @@
-/*
- *  Copyright (C) 2019-2020  The DOSBox Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2019-2020 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #ifndef DOSBOX_DOS_MSCDEX_H
 #define DOSBOX_DOS_MSCDEX_H
 
 #include "dosbox.h"
+
+#include <cstdint>
+#include <memory>
+
 #include "cdrom.h"
 
-int   MSCDEX_AddDrive(char driveLetter, const char *physicalPath, uint8_t &subUnit);
-int   MSCDEX_RemoveDrive(char driveLetter);
-bool  MSCDEX_HasDrive(char driveLetter);
-void  MSCDEX_ReplaceDrive(std::unique_ptr<CDROM_Interface> cdrom, uint8_t subUnit);
+int MSCDEX_AddDrive(char driveLetter, const char* physicalPath, uint8_t& subUnit);
+int MSCDEX_RemoveDrive(char driveLetter);
+bool MSCDEX_HasDrive(char driveLetter);
+void MSCDEX_ReplaceDrive(std::unique_ptr<CDROM_Interface> cdrom, uint8_t subUnit);
 uint8_t MSCDEX_GetSubUnit(char driveLetter);
-bool  MSCDEX_GetVolumeName(uint8_t subUnit, char *name);
-bool  MSCDEX_HasMediaChanged(uint8_t subUnit);
+bool MSCDEX_GetVolumeName(uint8_t subUnit, char* name);
+bool MSCDEX_HasMediaChanged(uint8_t subUnit);
+
+void MSCDEX_Init();
+void MSCDEX_Destroy();
 
 #endif // DOSBOX_DOS_MSCDEX_H
 

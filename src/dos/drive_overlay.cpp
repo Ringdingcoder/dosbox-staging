@@ -1,22 +1,7 @@
-/*
- *  Copyright (C) 2002-2021  The DOSBox Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
-#include "drives.h"
+#include "dos/drives.h"
 #include "drive_local.h"
 
 #include <algorithm>
@@ -29,13 +14,13 @@
 #include <string>
 #include <vector>
 
-#include "dos_inc.h"
-#include "string_utils.h"
-#include "cross.h"
-#include "inout.h"
-#include "timer.h"
-#include "fs_utils.h"
-#include "std_filesystem.h"
+#include "dos.h"
+#include "hardware/port.h"
+#include "hardware/timer.h"
+#include "misc/cross.h"
+#include "misc/std_filesystem.h"
+#include "utils/fs_utils.h"
+#include "utils/string_utils.h"
 
 #define OVERLAY_DIR 1
 bool logoverlay = false;
@@ -89,8 +74,8 @@ bool Overlay_Drive::RemoveDir(const char * dir) {
 		safe_strcpy(odir, overlaydir);
 		safe_strcat(odir, dir);
 		CROSS_FILENAME(odir);
-		int temp = rmdir(odir);
-		if (temp == 0) {
+		const auto result_ok = remove_dir(odir);
+		if (result_ok) {
 			remove_DOSdir_from_cache(dir);
 			char newdir[CROSS_LEN];
 			safe_strcpy(newdir, basedir);
@@ -99,7 +84,7 @@ bool Overlay_Drive::RemoveDir(const char * dir) {
 			dirCache.DeleteEntry(newdir,true);
 			update_cache(false);
 		}
-		return (temp == 0);
+		return result_ok;
 	} else {
 		uint16_t olderror = dos.errorcode; // FindFirst/Next always set
 		                                   // an errorcode, while RemoveDir
@@ -691,7 +676,7 @@ void Overlay_Drive::update_cache(bool read_directory_contents) {
 	std::vector<std::string>::iterator i;
 	std::string::size_type const prefix_lengh = special_prefix.length();
 	if (read_directory_contents) {
-		dir_information* dirp = open_directory(overlaydir);
+		DirInformation* dirp = open_directory(overlaydir);
 		if (dirp == nullptr) return;
 		// Read complete directory
 		char dir_name[CROSS_LEN];
@@ -872,7 +857,9 @@ again:
 		DOS_SetError(DOSERR_NO_MORE_FILES);
 		return false;
 	}
-	if(!WildFileCmp(dir_ent, search_pattern)) goto again;
+	if (!wild_file_cmp(dir_ent, search_pattern)) {
+		goto again;
+	}
 
 	safe_strcpy(full_name, srchInfo[id].srch_dir);
 	safe_strcat(full_name, dir_ent);
@@ -980,7 +967,7 @@ bool Overlay_Drive::FileUnlink(const char * name) {
 	safe_strcat(overlayname, name);
 	CROSS_FILENAME(overlayname);
 	//	char *fullname = dirCache.GetExpandNameAndNormaliseCase(newname);
-	if (unlink(overlayname)) {
+	if (!delete_file(overlayname)) {
 		//Unlink failed for some reason try finding it.
 		struct stat buffer;
 		if(stat(overlayname,&buffer)) {
@@ -1091,7 +1078,9 @@ void Overlay_Drive::add_special_file_to_disk(const char* dosname, const char* op
 		Sync_leading_dirs(dosname);
 		f = fopen(overlayname,"wb+");
 	}
-	if (!f) E_Exit("Failed creation of %s",overlayname);
+	if (!f) {
+		LOG_ERR("DOS: Failed to create overlay file '%s'", overlayname);
+	}
 	char buf[5] = {'e','m','p','t','y'};
 	fwrite(buf,5,1,f);
 	fclose(f);
@@ -1103,7 +1092,9 @@ void Overlay_Drive::remove_special_file_from_disk(const char* dosname, const cha
 	safe_strcpy(overlayname, overlaydir);
 	safe_strcat(overlayname, name.c_str());
 	CROSS_FILENAME(overlayname);
-	if(unlink(overlayname) != 0) E_Exit("Failed removal of %s",overlayname);
+	if (!delete_file(overlayname)) {
+		LOG_ERR("DOS: Failed to remove overlay file '%s'", overlayname);
+	}
 }
 
 std::string Overlay_Drive::create_filename_of_special_operation(const char* dosname, const char* operation) {

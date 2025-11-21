@@ -1,25 +1,10 @@
-/*
- *  Copyright (C) 2002-2021  The DOSBox Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "int10.h"
 
-#include "mem.h"
-#include "inout.h"
+#include "hardware/memory.h"
+#include "hardware/port.h"
 
 #define ACTL_MAX_REG   0x14
 
@@ -29,21 +14,24 @@ static inline void ResetACTL(void) {
 
 static inline void WriteTandyACTL(uint8_t creg,uint8_t val) {
 	IO_Write(VGAREG_TDY_ADDRESS,creg);
-	if (machine==MCH_TANDY) IO_Write(VGAREG_TDY_DATA,val);
-	else IO_Write(VGAREG_PCJR_DATA,val);
+	if (is_machine_tandy()) {
+		IO_Write(VGAREG_TDY_DATA,val);
+	} else {
+		IO_Write(VGAREG_PCJR_DATA,val);
+	}
 }
 
 void INT10_SetSinglePaletteRegister(uint8_t reg, uint8_t val)
 {
 	switch (machine) {
-	case MCH_PCJR:
+	case MachineType::Pcjr:
 		reg&=0xf;
 		IO_Read(VGAREG_TDY_RESET);
 		WriteTandyACTL(reg+0x10,val);
 		IO_Write(0x3da,0x0); // palette back on
 		break;
 
-	case MCH_TANDY:
+	case MachineType::Tandy:
 		// TODO waits for vertical retrace
 		switch(vga.mode) {
 		case M_TANDY2:
@@ -77,10 +65,11 @@ void INT10_SetSinglePaletteRegister(uint8_t reg, uint8_t val)
 		IO_Write(0x3da,0x0); // palette back on
 		break;
 
-	case MCH_EGA:
-	case MCH_VGA:
-		if (!IS_VGA_ARCH) reg&=0x1f;
-		if(reg<=ACTL_MAX_REG) {
+	case MachineType::Ega:
+		reg &= 0x1f;
+		[[fallthrough]];
+	case MachineType::Vga:
+		if(reg <= ACTL_MAX_REG) {
 			ResetACTL();
 			IO_Write(VGAREG_ACTL_ADDRESS,reg);
 			IO_Write(VGAREG_ACTL_WRITE_DATA,val);
@@ -88,8 +77,9 @@ void INT10_SetSinglePaletteRegister(uint8_t reg, uint8_t val)
 		IO_Write(VGAREG_ACTL_ADDRESS,32);		//Enable output and protect palette
 		break;
 
-	case MCH_HERC:
-	case MCH_CGA:
+	case MachineType::Hercules:
+	case MachineType::CgaMono:
+	case MachineType::CgaColor:
 		break;
 
 	default: assertm(false, "Invalid MachineType value");
@@ -99,23 +89,24 @@ void INT10_SetSinglePaletteRegister(uint8_t reg, uint8_t val)
 void INT10_SetOverscanBorderColor(uint8_t val)
 {
 	switch (machine) {
-	case MCH_PCJR:
-	case MCH_TANDY:
+	case MachineType::Pcjr:
+	case MachineType::Tandy:
 		IO_Read(VGAREG_TDY_RESET);
 		WriteTandyACTL(0x02,val);
 		IO_Write(VGAREG_TDY_ADDRESS, 0); // enable the screen
 		break;
 
-	case MCH_EGA:
-	case MCH_VGA:
+	case MachineType::Ega:
+	case MachineType::Vga:
 		ResetACTL();
 		IO_Write(VGAREG_ACTL_ADDRESS,0x11);
 		IO_Write(VGAREG_ACTL_WRITE_DATA,val);
 		IO_Write(VGAREG_ACTL_ADDRESS,32);		//Enable output and protect palette
 		break;
 
-	case MCH_HERC:
-	case MCH_CGA:
+	case MachineType::Hercules:
+	case MachineType::CgaMono:
+	case MachineType::CgaColor:
 		break;
 
 	default: assertm(false, "Invalid MachineType value");
@@ -125,8 +116,8 @@ void INT10_SetOverscanBorderColor(uint8_t val)
 void INT10_SetAllPaletteRegisters(PhysPt data)
 {
 	switch (machine) {
-	case MCH_PCJR:
-	case MCH_TANDY:
+	case MachineType::Pcjr:
+	case MachineType::Tandy:
 		IO_Read(VGAREG_TDY_RESET);
 		// First the colors
 		for(uint8_t i=0;i<0x10;i++) {
@@ -137,8 +128,8 @@ void INT10_SetAllPaletteRegisters(PhysPt data)
 		WriteTandyACTL(0x02,mem_readb(data));
 		break;
 
-	case MCH_EGA:
-	case MCH_VGA:
+	case MachineType::Ega:
+	case MachineType::Vga:
 		ResetACTL();
 		// First the colors
 		for(uint8_t i=0;i<0x10;i++) {
@@ -152,19 +143,23 @@ void INT10_SetAllPaletteRegisters(PhysPt data)
 		IO_Write(VGAREG_ACTL_ADDRESS,32);		//Enable output and protect palette
 		break;
 
-	case MCH_HERC:
-	case MCH_CGA:
+	case MachineType::Hercules:
+	case MachineType::CgaMono:
+	case MachineType::CgaColor:
 		break;
 
 	default: assertm(false, "Invalid MachineType value");
 	}
 }
 
-void INT10_ToggleBlinkingBit(uint8_t state) {
-	if(IS_VGA_ARCH) {
+void INT10_ToggleBlinkingBit(uint8_t state)
+{
+	if (is_machine_vga_or_better()) {
 		uint8_t value;
 	//	state&=0x01;
-		if ((state>1) && (svgaCard==SVGA_S3Trio)) return;
+		if ((state > 1) && (svga_type == SvgaType::S3)) {
+			return;
+		}
 		ResetACTL();
 		
 		IO_Write(VGAREG_ACTL_ADDRESS,0x10);
@@ -341,12 +336,13 @@ void INT10_SetBackgroundBorder(uint8_t val)
 	real_writeb(BIOSMEM_SEG,BIOSMEM_CURRENT_PAL,color_select);
 
 	switch (machine) {
-	case MCH_CGA:
+	case MachineType::CgaMono:
+	case MachineType::CgaColor:
 		// only write the color select register
-		IO_Write(0x3d9,color_select);
+		IO_Write(0x3d9, color_select);
 		break;
 
-	case MCH_TANDY:
+	case MachineType::Tandy:
 		// TODO handle val == 0x1x, wait for retrace
 		switch(CurMode->mode) {
 		default: // modes 0-5: write to color select and border
@@ -372,7 +368,7 @@ void INT10_SetBackgroundBorder(uint8_t val)
 		}
 		break;
 
-	case MCH_PCJR:
+	case MachineType::Pcjr:
 		IO_Read(VGAREG_TDY_RESET); // reset the flipflop
 		if (vga.mode!=M_TANDY_TEXT) {
 			IO_Write(VGAREG_TDY_ADDRESS, 0x10);
@@ -382,8 +378,8 @@ void INT10_SetBackgroundBorder(uint8_t val)
 		IO_Write(VGAREG_PCJR_DATA, color_select&0xf);
 		break;
 
-	case MCH_EGA:
-	case MCH_VGA:
+	case MachineType::Ega:
+	case MachineType::Vga:
 		val = ((val << 1) & 0x10) | (val & 0x7);
 		/* Always set the overscan color */
 		INT10_SetSinglePaletteRegister( 0x11, val );
@@ -399,7 +395,7 @@ void INT10_SetBackgroundBorder(uint8_t val)
 		INT10_SetSinglePaletteRegister( 3, val );
 		break;
 
-	case MCH_HERC:
+	case MachineType::Hercules:
 		break;
 
 	default: assertm(false, "Invalid MachineType value");
@@ -410,9 +406,9 @@ void INT10_SetColorSelect(uint8_t val) {
 	uint8_t temp=real_readb(BIOSMEM_SEG,BIOSMEM_CURRENT_PAL);
 	temp=(temp & 0xdf) | ((val & 1) ? 0x20 : 0x0);
 	real_writeb(BIOSMEM_SEG,BIOSMEM_CURRENT_PAL,temp);
-	if (machine == MCH_CGA || machine==MCH_TANDY)
+	if (is_machine_cga() || is_machine_tandy())
 		IO_Write(0x3d9,temp);
-	else if (machine == MCH_PCJR) {
+	else if (is_machine_pcjr()) {
 		IO_Read(VGAREG_TDY_RESET); // reset the flipflop
 		switch (CurMode->mode) {
 		case 4: // CGA 4-color mode
@@ -437,7 +433,7 @@ void INT10_SetColorSelect(uint8_t val) {
 		}
 		IO_Write(VGAREG_TDY_ADDRESS, 0); // enable palette
 	}
-	else if (IS_EGAVGA_ARCH) {
+	else if (is_machine_ega_or_better()) {
 		if (CurMode->mode <= 3) //Maybe even skip the total function!
 			return;
 		val = (temp & 0x10) | 2 | val;

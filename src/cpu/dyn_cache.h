@@ -1,34 +1,15 @@
-/*
- *  SPDX-License-Identifier: GPL-2.0-or-later
- *
- *  Copyright (C) 2020-2024  The DOSBox Staging Team
- *  Copyright (C) 2002-2021  The DOSBox Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2020-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
-#include <array>
 #include <cassert>
 #include <cerrno>
 #include <new>
 #include <type_traits>
 
-#include "mem_unaligned.h"
-#include "object_pool.h"
-#include "paging.h"
-#include "types.h"
+#include "utils/mem_unaligned.h"
+#include "cpu/paging.h"
+#include "misc/types.h"
 
 #if defined(HAVE_MMAP)
 #include <sys/mman.h>
@@ -156,32 +137,6 @@ static uint8_t* cache_code_link_blocks = {};
 static std::vector<CacheBlock> cache_blocks(CACHE_BLOCKS);
 static CacheBlock link_blocks[2] = {}; // default linking (specially marked)
 
-// Use an object pool to manage the invalidation maps
-class InvalidationMapPool {
-private:
-	static constexpr size_t NumMapBytes = 4096;
-
-	using InvalidationMap = std::array<uint8_t, NumMapBytes>;
-
-	ObjectPool<InvalidationMap> pool = {};
-
-public:
-	constexpr uint8_t* Acquire()
-	{
-		auto invalidation_map = pool.Acquire();
-		invalidation_map->fill(0);
-		return invalidation_map->data();
-	}
-
-	void Release(uint8_t* ptr)
-	{
-		pool.Release(reinterpret_cast<InvalidationMap*>(ptr));
-	}
-};
-
-// Single object pool for all the invalidation maps
-InvalidationMapPool invalidation_map_pool = {};
-
 // the CodePageHandler class provides access to the contained
 // cache blocks and intercepts writes to the code for special treatment
 class CodePageHandler final : public PageHandler {
@@ -210,7 +165,7 @@ public:
 		memset(&hash_map,0,sizeof(hash_map));
 		memset(&write_map,0,sizeof(write_map));
 		if (invalidation_map) {
-			invalidation_map_pool.Release(invalidation_map);
+			delete [] invalidation_map;
 			invalidation_map = nullptr;
 		}
 	}
@@ -251,6 +206,17 @@ public:
 		return is_current_block;
 	}
 
+	uint8_t *alloc_invalidation_map() const
+	{
+		constexpr size_t map_size = 4096;
+		uint8_t *map = new (std::nothrow) uint8_t[map_size];
+		if (!map) {
+			E_Exit("failed to allocate invalidation_map");
+		}
+		memset(map, 0, map_size);
+		return map;
+	}
+
 	// the following functions will clean all cache blocks that are invalid
 	// now due to the write
 
@@ -276,7 +242,7 @@ public:
 				           // active_count is zero
 			return;
 		} else if (!invalidation_map) {
-			invalidation_map = invalidation_map_pool.Acquire();
+			invalidation_map = alloc_invalidation_map();
 		}
 		invalidation_map[addr]++;
 		InvalidateRange(addr,addr);
@@ -304,7 +270,7 @@ public:
 				           // active_count is zero
 			return;
 		} else if (!invalidation_map) {
-			invalidation_map = invalidation_map_pool.Acquire();
+			invalidation_map = alloc_invalidation_map();
 		}
 		host_addw(&invalidation_map[addr], 0x0101);
 		InvalidateRange(addr,addr+1);
@@ -332,7 +298,7 @@ public:
 				           // active_count is zero
 			return;
 		} else if (!invalidation_map) {
-			invalidation_map = invalidation_map_pool.Acquire();
+			invalidation_map = alloc_invalidation_map();
 		}
 		host_addd(&invalidation_map[addr], 0x01010101);
 		InvalidateRange(addr,addr+3);
@@ -359,7 +325,7 @@ public:
 			}
 		} else {
 			if (!invalidation_map)
-				invalidation_map = invalidation_map_pool.Acquire();
+				invalidation_map = alloc_invalidation_map();
 
 			invalidation_map[addr]++;
 			if (InvalidateRange(addr,addr)) {
@@ -392,7 +358,7 @@ public:
 			}
 		} else {
 			if (!invalidation_map)
-				invalidation_map = invalidation_map_pool.Acquire();
+				invalidation_map = alloc_invalidation_map();
 
 			host_addw(&invalidation_map[addr], 0x0101);
 			if (InvalidateRange(addr,addr+1)) {
@@ -425,7 +391,7 @@ public:
 			}
 		} else {
 			if (!invalidation_map)
-				invalidation_map = invalidation_map_pool.Acquire();
+				invalidation_map = alloc_invalidation_map();
 
 			host_addd(&invalidation_map[addr], 0x01010101);
 			if (InvalidateRange(addr,addr+3)) {
@@ -874,33 +840,33 @@ static void cache_block_before_close();
 static void cache_block_closing(const uint8_t *block_start, Bitu block_size);
 #endif
 
-static constexpr size_t cache_code_size = CACHE_TOTAL + CACHE_MAXSIZE + host_pagesize - 1 + host_pagesize;
+static constexpr size_t cache_code_size = CACHE_TOTAL + CACHE_MAXSIZE + HostPageSize - 1 + HostPageSize;
 constexpr bool is_64bit_platform = sizeof(void *) == 8;
 
 static inline void dyn_mem_adjust(void *&ptr, size_t &size)
 {
-#if (PAGESIZE == 65536)
+#if (HostPageSize == 65536)
 	// Use different code on 64K page systems (currently just ppc64le).
 	// The other code will sometimes underrun our pointer into unmapped
 	// memory and mprotect() will then fail.
 	const uintptr_t p = reinterpret_cast<uintptr_t>(ptr);
-	const auto align_adjust = p % host_pagesize;
+	const auto align_adjust = p % HostPageSize;
 	const auto p_aligned = p - align_adjust;
-	assert((p_aligned % host_pagesize) == 0);
+	assert((p_aligned % HostPageSize) == 0);
 
 	const auto new_size = size + align_adjust;
-	const auto new_size_adjust = new_size % host_pagesize;
-	if (new_size <= host_pagesize) {
-		size = host_pagesize;
+	const auto new_size_adjust = new_size % HostPageSize;
+	if (new_size <= HostPageSize) {
+		size = HostPageSize;
 	} else if (new_size_adjust) {
-		size = (new_size - new_size_adjust) + host_pagesize;
-		assert((size % host_pagesize) == 0);
+		size = (new_size - new_size_adjust) + HostPageSize;
+		assert((size % HostPageSize) == 0);
 	}
 #else
 	// Align to page boundary and adjust size. The -1/+1 voodoo
 	// is required to avoid segfaults on 32-bit builds.
 	const auto p = reinterpret_cast<uintptr_t>(ptr) - 1;
-	const auto align_adjust = p % host_pagesize;
+	const auto align_adjust = p % HostPageSize;
 	const auto p_aligned = p - align_adjust;
 	size += align_adjust + 1;
 #endif
@@ -1032,10 +998,10 @@ static void cache_init(bool enable) {
 			// align the cache at a page boundary
 			cache_code = reinterpret_cast<uint8_t *>(
 			    (reinterpret_cast<uintptr_t>(cache_code_start_ptr) +
-			    static_cast<size_t>(host_pagesize) - 1) & ~(static_cast<size_t>(host_pagesize) - 1));
+			    static_cast<size_t>(HostPageSize) - 1) & ~(static_cast<size_t>(HostPageSize) - 1));
 
 			cache_code_link_blocks=cache_code;
-			cache_code=cache_code+host_pagesize;
+			cache_code=cache_code+HostPageSize;
 			CacheBlock *block = cache_getblock();
 			cache.block.first=block;
 			cache.block.active=block;
@@ -1073,14 +1039,14 @@ static void cache_init(bool enable) {
 		cache.pos = &cache_code_link_blocks[0];
 		using generate_run_code_f = decltype(&generate_run_code);
 		core_dynrec.runcode = (generate_run_code_f)cache.pos;
-		dyn_run_code(); // writes up to host_pagesize - 64 bytes
+		dyn_run_code(); // writes up to HostPageSize - 64 bytes
 
 		cache_block_before_close();
 		cache_block_closing(cache_code_link_blocks,
 		                    cache.pos - cache_code_link_blocks);
 
-		close_link_block_num_at_code_pos(0, host_pagesize - 64);
-		close_link_block_num_at_code_pos(1, host_pagesize - 32);
+		close_link_block_num_at_code_pos(0, HostPageSize - 64);
+		close_link_block_num_at_code_pos(1, HostPageSize - 32);
 #endif
 
 		dyn_mem_execute(cache_addr, cache_bytes);

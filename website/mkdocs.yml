@@ -42,7 +42,7 @@ markdown_extensions:
       user: dosbox-staging
       repo: dosbox-staging
   - pymdownx.emoji:
-      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_index:     !!python/name:material.extensions.emoji.twemoji
       emoji_generator: !!python/name:material.extensions.emoji.to_svg
   - pymdownx.highlight:
       anchor_linenums: true
@@ -73,6 +73,7 @@ plugins:
           'getting-started/index.md': 'getting-started/introduction.md'
 
           # Redirect RC release notes to the final notes
+          'releases/release-notes/0.82.0-rc.md': 'releases/release-notes/0.82.0.md'
           'releases/release-notes/0.81.0-rc.md': 'releases/release-notes/0.81.0.md'
 
           # Redirects for the old "downloads" pages
@@ -107,6 +108,8 @@ nav:
     - Linux: releases/linux.md
 
     - Release notes:
+      - 0.82.1: releases/release-notes/0.82.1.md
+      - 0.82.0: releases/release-notes/0.82.0.md
       - 0.81.2: releases/release-notes/0.81.2.md
       - 0.81.1: releases/release-notes/0.81.1.md
       - 0.81.0: releases/release-notes/0.81.0.md

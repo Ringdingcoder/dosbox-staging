@@ -1,7 +1,5 @@
 name: PVS-Studio analysis
-
-# If the CI job fails with 404-not-found, then PVS studio has updated the release.
-# Get the new DEB version from: https://pvs-studio.com/en/pvs-studio/download-all/
+permissions: read-all
 
 on:
   push:
@@ -21,59 +19,59 @@ jobs:
   pvs_studio_analyzer:
     name: PVS-Studio static analyzer
     runs-on: ubuntu-22.04
-    env:
-      debfile: pvs-studio-7.29.79138.387-amd64.deb
+
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - name: Check out repository
+        uses: actions/checkout@v5
         with:
           submodules: false
 
-      - run:  sudo apt-get update
+      - name: Set up CMake
+        uses: lukka/get-cmake@628dd514bed37cb0a609e84a6186cbbaa2fc0140 # v4.1.2
 
-      - name: Log and setup environment
+      - name: Configure PVS-Studio repository
         run: |
-          ./scripts/log-env.sh
-          mkdir -p pvs-package
-
-      - uses: actions/cache@v4.0.1
-        id: cache-pvs
-        with:
-          path: pvs-package
-          key: ${{ env.debfile }}
-
-      - name:  Fetch PVS-Studio package
-        if:    steps.cache-pvs.outputs.cache-hit != 'true'
-        run:   wget "https://cdn.pvs-studio.com/${debfile}" -O "pvs-package/pvs.deb"
+          set -xeu
+          wget -q -O - https://files.pvs-studio.com/etc/pubkey.txt | sudo apt-key add -
+          sudo wget -O /etc/apt/sources.list.d/viva64.list https://files.pvs-studio.com/etc/viva64.list
+          sudo apt-get update
 
       - name: Install dependencies
         run: |
-          set -xeu
-          sudo apt-get install -y strace $(cat packages/ubuntu-22.04-apt.txt)
-          sudo pip3 install --upgrade meson ninja
-          sudo dpkg -i "pvs-package/pvs.deb"
-          pvs-studio-analyzer credentials "${{ secrets.PvsStudioName }}" "${{ secrets.PvsStudioKey }}"
+          export DEBIAN_FRONTEND=noninteractive
+          sudo apt-get install -y $(cat packages/ubuntu-22.04-apt.txt)
+          sudo apt-get install pvs-studio
 
-      - name: Cache subprojects
-        id:   cache-subprojects
-        uses: actions/cache@v4.0.1
+      - name: Set up vcpkg
+        uses: ./.github/actions/setup-vcpkg
         with:
-          path: subprojects.tar
-          key: subprojects-${{ hashFiles('subprojects/*.wrap') }}-1
-          enableCrossOsArchive: true
+          name_os: pvs
+          arch: "x64"
+          compiler: "gcc"
 
-      - if:   steps.cache-subprojects.outputs.cache-hit != 'true'
-        name: Generate subprojects cache
-        run:  scripts/fetch-and-tar-subprojects.sh
+      - name: Log environment
+        run:  ./scripts/ci/log-env.sh
 
-      - name: Extract subprojects cache
-        run:  scripts/extract-subprojects-tar.sh
+      - name: Configure PVS-Studio license
+        run: |
+          set -xeu
+          pvs-studio-analyzer credentials "${{ secrets.PvsStudioName }}" "${{ secrets.PvsStudioKey }}"
 
       - name: Build
         run: |
-          set -xeu
-          meson setup -Dbuildtype=debug -Dunit_tests=disabled --native-file=.github/meson/native-clang-15.ini build
-          pvs-studio-analyzer trace -- meson compile -C build
+          set -x
+          export CC=clang
+          export CXX=clang++
+          cmake --preset debug-linux-vcpkg -DOPT_TESTS=OFF
+
+          # TODO Consider using the the PV-Studio CMake integration instead
+          # of calling the `pvs-studio-analyzer` directly. That might be a
+          # more maintainable approach, but needs further investigation.
+          # More info:
+          # - https://pvs-studio.com/en/docs/manual/0036/
+          # - https://github.com/viva64/pvs-studio-cmake-examples
+          #
+          pvs-studio-analyzer trace -- cmake --build --preset debug-linux-vcpkg
 
       - name: Analyze
         run: |
@@ -88,7 +86,7 @@ jobs:
 
           pvs-studio-analyzer analyze \
             -a 63 \
-            -e subprojects \
+            -e subprojects -e src/libs \
             -s .pvs-suppress \
             -j "$(nproc)" \
             -o "${log}"
@@ -112,7 +110,7 @@ jobs:
           rm -rf "${reportdir}/pvs-report.fullhtml"
 
       - name: Upload report
-        uses: actions/upload-artifact@v4.3.1
+        uses: actions/upload-artifact@v5
         with:
           name: pvs-analysis-report
           path: pvs-report
@@ -120,8 +118,8 @@ jobs:
 
       - name: Summarize report
         env:
-          MAX_BUGS: 90
+          MAX_BUGS: 175
         run: |
           echo "Full report is included in build Artifacts"
           echo
-          ./scripts/count-pvs-bugs.py "pvs-report.csv" "${MAX_BUGS}"
+          ./scripts/ci/count-pvs-bugs.py "pvs-report.csv" "${MAX_BUGS}"

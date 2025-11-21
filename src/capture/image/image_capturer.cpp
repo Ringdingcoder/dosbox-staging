@@ -1,33 +1,15 @@
-/*
- *  SPDX-License-Identifier: GPL-2.0-or-later
- *
- *  Copyright (C) 2023-2024  The DOSBox Staging Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2023-2025 The DOSBox Staging Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "image_capturer.h"
 
 #include <cassert>
 #include <string>
 
-#include "std_filesystem.h"
-
-#include "checks.h"
-#include "setup.h"
-#include "string_utils.h"
+#include "config/setup.h"
+#include "misc/std_filesystem.h"
+#include "utils/checks.h"
+#include "utils/string_utils.h"
 
 CHECK_NARROWING();
 
@@ -61,7 +43,7 @@ void ImageCapturer::ConfigureGroupedMode(const std::string& prefs)
 	grouped_mode.wants_rendered = false;
 
 	const auto formats = split_with_empties(prefs, ' ');
-	if (formats.size() == 0) {
+	if (formats.empty()) {
 		LOG_WARNING(
 		        "CAPTURE: 'default_image_capture_formats' not specified, "
 		        "using '%s'",
@@ -159,7 +141,7 @@ void ImageCapturer::MaybeCaptureImage(const RenderedImage& image)
 		if (grouped_mode.wants_rendered) {
 			do_rendered = true;
 			// If rendered capture is wanted, the state will be
-			// cleared in the CapturePostRenderImagecallback...
+			// cleared in the CapturePostRenderImage() callback...
 		} else {
 			// ...otherwise we clear it now
 			state.grouped = CaptureState::Off;

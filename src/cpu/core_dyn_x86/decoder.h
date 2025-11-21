@@ -1,25 +1,10 @@
-/*
- *  Copyright (C) 2021-2024  The DOSBox Staging Team
- *  Copyright (C) 2002-2021  The DOSBox Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2021-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
-#include "compiler.h"
+#include "misc/compiler.h"
 
-#include "inout.h"
+#include "hardware/port.h"
 
 #define X86_INLINED_MEMACCESS
 #define X86_DYNREC_MMX_ENABLED
@@ -356,7 +341,7 @@ static void dyn_check_bool_exception_al(void) {
 	++used_save_info;
 }
 
-#include "pic.h"
+#include "hardware/pic.h"
 
 static void dyn_check_irqrequest(void) {
 	gen_load_host(&PIC_IRQCheck,DREG(TMPB),4);
@@ -2424,7 +2409,7 @@ restart_prefix:
 
 			default:
 #if DYN_LOG
-				LOG_MSG("Unhandled dual opcode 0F%02X",dual_code);
+				LOG_MSG("Unhandled dual opcode 0F%02" PRIXPTR, dual_code);
 #endif
 				goto illegalopcode;
 			}
@@ -2697,7 +2682,7 @@ restart_prefix:
 		case 0xca:dyn_ret_far(decode_fetchw());goto finish_block;
 		case 0xcb:dyn_ret_far(0);goto finish_block;
 		/* Interrupt */
-#if !(C_DEBUG)
+#if !(C_DEBUGGER)
 		case 0xcd:dyn_interrupt(decode_fetchb());goto finish_block;
 #endif
 		/* IRET */
@@ -2947,7 +2932,7 @@ restart_prefix:
 				dyn_set_eip_end();
 				dyn_reduce_cycles();
 				dyn_save_critical_regs();
-				gen_return(BR_CallBack);
+				gen_return(BR_Callback);
 				dyn_closeblock();
 				goto finish_block;
 			}
@@ -3006,7 +2991,7 @@ restart_prefix:
 			break;
 		default:
 #if DYN_LOG
-//			LOG_MSG("Dynamic unhandled opcode %X",opcode);
+//			LOG_MSG("Dynamic unhandled opcode %" PRIXPTR, opcode);
 #endif
 			goto illegalopcode;
 		}

@@ -1,4 +1,5 @@
 name: Lint scripts & Markdown
+permissions: read-all
 
 on: [push, pull_request, workflow_call]
 
@@ -12,8 +13,8 @@ jobs:
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - name: Check out repository
+        uses: actions/checkout@v5
         with:
           submodules: false
 
@@ -21,7 +22,7 @@ jobs:
         run:  sudo apt-get update
 
       - name: Run shellcheck
-        run:  ./scripts/verify-bash.sh
+        run:  ./scripts/linting/verify-bash.sh
 
       - name: Install pylint
         run: |
@@ -29,7 +30,7 @@ jobs:
           sudo pip3 install pylint beautifulsoup4 html5lib
 
       - name: Run pylint
-        run:  ./scripts/verify-python.sh
+        run:  ./scripts/linting/verify-python.sh
 
       - name: Install markdownlint
         run: |
@@ -38,10 +39,10 @@ jobs:
           sudo gem install mdl
 
       - name: Run markdownlint
-        run:  ./scripts/verify-markdown.sh
+        run:  ./scripts/linting/verify-markdown.sh
 
       - name: Install appstream-util
         run:  sudo apt-get install appstream-util
 
       - name: Verify metainfo.xml
-        run:  appstream-util validate-relax --nonet contrib/linux/dosbox-staging.metainfo.xml
+        run:  appstream-util validate-relax --nonet extras/linux/org.dosbox_staging.dosbox_staging.metainfo.xml

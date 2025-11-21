@@ -1,38 +1,22 @@
-/*
- *  SPDX-License-Identifier: GPL-2.0-or-later
- *
- *  Copyright (C) 2022-2024  The DOSBox Staging Team
- *  Copyright (C) 2002-2022  The DOSBox Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2022-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2002-2022 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "keyboard.h"
-#include "dosbox.h"
+
+#include "private/intel8042.h"
+#include "private/intel8255.h"
 
 #include <array>
 
-#include "bitops.h"
-#include "checks.h"
-#include "control.h"
-#include "cpu.h"
-#include "intel8042.h"
-#include "intel8255.h"
-#include "pic.h"
-#include "support.h"
-#include "timer.h"
+#include "config/config.h"
+#include "cpu/cpu.h"
+#include "dosbox.h"
+#include "hardware/pic.h"
+#include "hardware/timer.h"
+#include "misc/support.h"
+#include "utils/bitops.h"
+#include "utils/checks.h"
 
 CHECK_NARROWING();
 
@@ -730,7 +714,7 @@ void KEYBOARD_ClrBuffer()
 // Initialization
 // ***************************************************************************
 
-void KEYBOARD_Init(Section* /*sec*/)
+void KEYBOARD_Init()
 {
 	I8042_Init();
 	I8255_Init();

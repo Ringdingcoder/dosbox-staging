@@ -1,24 +1,7 @@
-/*
- *  SPDX-License-Identifier: GPL-2.0-or-later
- *
- *  Copyright (C) 2020-2022  The DOSBox Staging Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2020-2025 The DOSBox Staging Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
-#include "support.h"
+#include "misc/support.h"
 
 #include <cstdint>
 #include <gtest/gtest.h>
@@ -181,7 +164,7 @@ void test_randomizer(const T min_value, const T max_value)
 	bool found_near_max = false;
 
 	// Create a random value generator
-	const auto generate_random_value = CreateRandomizer<T>(min_value, max_value);
+	const auto generate_random_value = create_randomizer<T>(min_value, max_value);
 
 	constexpr auto max_iterations = 1000;
 
@@ -211,7 +194,7 @@ void test_randomizer(const T min_value, const T max_value)
 	ASSERT_TRUE(found_near_max);
 }
 
-TEST(CreateRandomizer, RangeOfLetters)
+TEST(create_randomizer, RangeOfLetters)
 {
 	// Ensure we're dealing with the standard ASCII character values
 	ASSERT_EQ('A', 65);
@@ -220,7 +203,7 @@ TEST(CreateRandomizer, RangeOfLetters)
 	test_randomizer<int16_t>('A', 'z');
 }
 
-TEST(CreateRandomizer, RangeOfFloats)
+TEST(create_randomizer, RangeOfFloats)
 {
 	// positive range
 	test_randomizer(1000.0f, 2000.0f);

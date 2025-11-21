@@ -1,35 +1,20 @@
-/*
- *  Copyright (C) 2021-2024  The DOSBox Staging Team
- *  Copyright (C) 2002-2021  The DOSBox Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2021-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
-#include "drives.h"
+#include "dos/drives.h"
 
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
 
-#include "cross.h"
-#include "dos_inc.h"
-#include "fs_utils.h"
-#include "shell.h"
-#include "string_utils.h"
-#include "support.h"
+#include "dos.h"
+#include "misc/cross.h"
+#include "misc/support.h"
+#include "shell/shell.h"
+#include "utils/fs_utils.h"
+#include "utils/string_utils.h"
 
 constexpr auto default_date = DOS_PackDate(2002, 10, 1);
 constexpr auto default_time = DOS_PackTime(12, 34, 56);
@@ -44,7 +29,7 @@ unsigned int vfile_pos = 1;
 uint16_t fztime = 0;
 uint16_t fzdate = 0;
 char sfn[DOS_NAMELENGTH_ASCII];
-void Add_VFiles(const bool add_autoexec);
+void Add_VFiles();
 extern DOS_Shell *first_shell;
 
 class VFILE_Block;
@@ -206,18 +191,21 @@ void VFILE_Register(const char *name,
 	first_file = new_file;
 }
 
-void VFILE_Register(const char *name, const std::vector<uint8_t> &blob, const char *dir)
+void VFILE_Register(const char *name, const std::vector<uint8_t> &data, const char *dir)
 {
-	VFILE_Register(name, blob.data(), check_cast<uint32_t>(blob.size()), dir);
+	VFILE_Register(name, data.data(), check_cast<uint32_t>(data.size()), dir);
 }
 
-void VFILE_Update(const char* name, std::vector<uint8_t> blob, const char* dir)
+bool VFILE_Update(const char* name, const std::vector<uint8_t> &data, const char* dir)
 {
 	auto vfile = find_vfile_by_name_and_dir(name, dir);
 
 	if (vfile) {
-		vfile->data = std::make_shared<std::vector<uint8_t>>(std::move(blob));
+		vfile->data = std::make_shared<std::vector<uint8_t>>(data);
+		return true;
 	}
+
+	return false;
 }
 
 void VFILE_Remove(const char* name, const char* dir)
@@ -240,14 +228,14 @@ void VFILE_GetPathZDrive(std::string &path, const std::string &dirname)
 	struct stat cstat;
 	int result = stat(path.c_str(), &cstat);
 	if (result == -1 || !(cstat.st_mode & S_IFDIR)) {
-		path = GetExecutablePath().string();
+		path = get_executable_path().string();
 		if (path.length()) {
 			path += dirname;
 			result = stat(path.c_str(), &cstat);
 		}
 		if (!path.length() || result == -1 || (cstat.st_mode & S_IFDIR) == 0) {
 			path.clear();
-			path = (GetConfigDir() / dirname).string();
+			path   = (get_config_dir() / dirname).string();
 			result = stat(path.c_str(), &cstat);
 			if (result == -1 || (cstat.st_mode & S_IFDIR) == 0)
 				path.clear();
@@ -304,7 +292,7 @@ void VFILE_RegisterZDrive(const std_fs::path &z_drive_path)
 			parent = dir_indicator;
 		}
 		// Load the file's data, if it's a file.
-		const auto blob = is_file ? LoadResourceBlob(it->path(), ResourceImportance::Optional)
+		const auto blob = is_file ? load_resource_blob(it->path(), ResourceImportance::Optional)
 		                          : std::vector<uint8_t>();
 
 		// Set global time values for the entry about to be registered
@@ -509,12 +497,12 @@ bool Virtual_Drive::FindFirst(const char *_dir, DOS_DTA &dta, bool fcb_findfirst
 		dta.SetResult(GetLabel(), 0, 0, 0, FatAttributeFlags::Volume);
 		return true;
 	} else if (attr.volume && !fcb_findfirst) {
-		if (WildFileCmp(GetLabel(), pattern)) {
+		if (wild_file_cmp(GetLabel(), pattern)) {
 			dta.SetResult(GetLabel(), 0, 0, 0, FatAttributeFlags::Volume);
 			return true;
 		}
 	} else if (attr.directory && position > 0) {
-		if (WildFileCmp(".", pattern)) {
+		if (wild_file_cmp(".", pattern)) {
 			dta.SetResult(".",
 			              0,
 			              default_date,
@@ -533,7 +521,7 @@ vfile_block_t find_vfile_by_atribute_pattern_and_pos(vfile_block_t head_file,
 {
 	return find_vfile_by_predicate(head_file, [pos, attr, pattern](vfile_block_t vfile) {
 		return pos == vfile->position && (attr.directory || !vfile->isdir) &&
-		       WildFileCmp(vfile->name.c_str(), pattern);
+		       wild_file_cmp(vfile->name.c_str(), pattern);
 	});
 }
 
@@ -544,7 +532,7 @@ bool Virtual_Drive::FindNext(DOS_DTA& dta)
 	dta.GetSearchParams(attr, pattern);
 	unsigned int pos = dta.GetDirID();
 	if (search_file == parent_dir) {
-		bool cmp = WildFileCmp("..", pattern);
+		bool cmp = wild_file_cmp("..", pattern);
 		if (cmp)
 			dta.SetResult("..",
 			              0,
@@ -672,7 +660,7 @@ void Virtual_Drive::EmptyCache()
 		first_file = first_file->next;
 	}
 	vfile_pos = 1;
-	PROGRAMS_Destroy(nullptr);
+	PROGRAMS_Destroy();
 	vfilenames = {Filename{"", ""}};
-	Add_VFiles(first_shell != nullptr);
+	Add_VFiles();
 }

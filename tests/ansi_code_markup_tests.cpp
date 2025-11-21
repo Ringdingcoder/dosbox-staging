@@ -1,24 +1,7 @@
-/*
- *  SPDX-License-Identifier: GPL-2.0-or-later
- *
- *  Copyright (C) 2022-2023  The DOSBox Staging Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2022-2025 The DOSBox Staging Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
-#include "ansi_code_markup.h"
+#include "misc/ansi_code_markup.h"
 
 #include <gtest/gtest.h>
 
@@ -293,7 +276,6 @@ TEST(ConvertAnsiMarkup, StartupMessage)
 	        "\xBA                                                                    \xBA\n"
 	        "\xBA To adjust the emulated CPU speed, use [color=light-red]%s+F11[color=white] and \033[31m%s+F12[color=white].%s%s       \xBA\n"
 	        "\xBA To activate the keymapper [color=light-red]%s+F1[color=white].%s                                 \xBA\n"
-	        "\xBA For more information read the [color=light-cyan]README[color=white] file in the DOSBox directory. \xBA\n"
 	        "\xBA                                                                    \xBA\n";
 
     std::string orig_msg = "\033[44m\xC9\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD"
@@ -306,8 +288,19 @@ TEST(ConvertAnsiMarkup, StartupMessage)
 	        "\xBA                                                                    \xBA\n"
 	        "\xBA To adjust the emulated CPU speed, use \033[31;1m%s+F11\033[37;1m and \033[31m%s+F12\033[37;1m.%s%s       \xBA\n"
 	        "\xBA To activate the keymapper \033[31;1m%s+F1\033[37;1m.%s                                 \xBA\n"
-	        "\xBA For more information read the \033[36;1mREADME\033[37;1m file in the DOSBox directory. \xBA\n"
 	        "\xBA                                                                    \xBA\n";
     EXPECT_EQ(convert_ansi_markup(new_msg), orig_msg);
 }
+}
+
+TEST(StripAnsiMarkup, ColorUppercaseTag)
+{
+    const auto str = "[COLOR=red]this colour is red";
+    EXPECT_EQ(strip_ansi_markup(str), "this colour is red");
+}
+
+TEST(StripAnsiMarkup, MixedMarkupExistingAnsi)
+{
+    const auto str = "This is \033[31mred text with no markup. [color=blue]And this blue text with markup.";
+    EXPECT_EQ(strip_ansi_markup(str), "This is \033[31mred text with no markup. And this blue text with markup.");
 }

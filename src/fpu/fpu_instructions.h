@@ -1,26 +1,11 @@
-/*
- *  Copyright (C) 2002-2021  The DOSBox Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #ifndef DOSBOX_FPU_H
-#include "fpu.h"
+#include "fpu/fpu.h"
 #endif
 
-#include "math_utils.h"
+#include "utils/math_utils.h"
 
 static constexpr uint16_t PrecisionModeMask = 0x0300;
 
@@ -41,10 +26,6 @@ static void FPU_FINIT(void) {
 	fpu.tags[6] = TAG_Empty;
 	fpu.tags[7] = TAG_Empty;
 	fpu.tags[8] = TAG_Valid; // is only used by us
-
-	for (auto& reg_memcpy : fpu.regs_memcpy) {
-		reg_memcpy.reset();
-	}
 }
 
 static void FPU_FCLEX(void){
@@ -75,7 +56,6 @@ static void FPU_PREP_PUSH(void){
 	}
 #endif
 	fpu.tags[TOP] = TAG_Valid;
-	fpu.regs_memcpy[TOP].reset();
 }
 
 static void FPU_PUSH(double in){
@@ -104,8 +84,7 @@ static void FPU_FPOP(void){
 #endif
 	}
 #endif
-	fpu.tags[TOP]=TAG_Empty;
-	fpu.regs_memcpy[TOP].reset();
+	fpu.tags[TOP] = TAG_Empty;
 	//maybe set zero in it as well
 	TOP = ((TOP+1)&7);
 //	LOG(LOG_FPU,LOG_ERROR)("popped from %d  %g off the stack",top,fpu.regs[top].d);
@@ -230,26 +209,19 @@ static void FPU_FLD_I32(PhysPt addr,Bitu store_to) {
 	fpu.regs[store_to].d = static_cast<Real64>(blah);
 }
 
-static void FPU_FLD_I64(PhysPt addr,Bitu store_to) {
-	constexpr int64_t int53_min = -(1LL << 53);
-	constexpr int64_t int53_max = (1LL << 53) - 1;
+static void FPU_FLD_I64(PhysPt addr, Bitu store_to)
+{
+	const int64_t val = mem_readq(addr);
 
-	FPU_Reg temp_reg;
-	temp_reg.ll = mem_readq(addr);
-
-	fpu.regs[store_to].d = static_cast<Real64>(temp_reg.ll);
 	// This is a fix for vertical bars that appear in some games that
-	// use FILD/FIST as a fast 64-bit integer memcpy, such as Carmageddon,
-	// Motor Mash, and demos like Sunflower and Multikolor.
-
-	// If the value won't fit in the 53-bit mantissa of a double, save the
-	// value into the regs_memcpy register to indicate that the integer
-	// value should be read out by the FPU_FST_I64 function instead.
-	if (temp_reg.ll > int53_max || temp_reg.ll < int53_min) {
-		fpu.regs_memcpy[store_to] = temp_reg.ll;
-	} else {
-		fpu.regs_memcpy[store_to].reset();
-	}
+	// use FILD/FIST as a fast 64-bit memcpy, such as Carmageddon,
+	// Motor Mash, and demos like Sunflower and Multikolor. Native x87
+	// registers are 80-bit with a 64-bit mantissa, but a C++
+	// double only has a 53-bit mantissa, so store the full 64-bit
+	// integer value in regs_memcpy to be used by the FPU_FST_I64()
+	// function.
+	fpu.regs[store_to].d      = static_cast<Real64>(val);
+	fpu.regs_memcpy[store_to] = val;
 }
 
 static void FPU_FBLD(PhysPt addr,Bitu store_to) {
@@ -318,20 +290,20 @@ static void FPU_FST_I32(PhysPt addr) {
 
 static void FPU_FST_I64(PhysPt addr)
 {
-	FPU_Reg temp_reg;
-	// If the value was loaded with the FILD/FIST 64-bit memcpy trick,
-	// read the 64-bit integer value instead.
-	if (fpu.regs_memcpy[TOP].has_value()) {
-		temp_reg.ll = fpu.regs_memcpy[TOP].value();
-	} else {
-		double val  = FROUND(fpu.regs[TOP].d);
-		temp_reg.ll = (val <= static_cast<double>(INT64_MAX) &&
-		               val >= static_cast<double>(INT64_MIN))
-		                    ? static_cast<int64_t>(val)
-		                    : LONGTYPE(0x8000000000000000);
+	constexpr double MaxInt64Value = 9223372036854775808.0;
+
+	// Handle the 64-bit memcpy trick. See comment in FPU_FLD_I64().
+	auto val_i       = fpu.regs_memcpy[TOP];
+	const auto val_d = fpu.regs[TOP].d;
+
+	if (val_d != static_cast<Real64>(val_i)) {
+		const auto rounded = FROUND(val_d);
+		val_i = (rounded < MaxInt64Value && rounded >= -MaxInt64Value)
+		              ? static_cast<int64_t>(rounded)
+		              : LONGTYPE(0x8000000000000000);
 	}
 
-	mem_writeq(addr, temp_reg.ll);
+	mem_writeq(addr, val_i);
 }
 
 static void FPU_FBST(PhysPt addr) {
@@ -679,8 +651,7 @@ static void FPU_FLDLN2(void){
 static void FPU_FLDZ(void){
 	FPU_PREP_PUSH();
 	fpu.regs[TOP].d = 0.0;
-	fpu.tags[TOP] = TAG_Zero;
-	fpu.regs_memcpy[TOP].reset();
+	fpu.tags[TOP]   = TAG_Zero;
 }
 
 

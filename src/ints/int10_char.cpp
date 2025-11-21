@@ -1,32 +1,17 @@
-/*
- *  Copyright (C) 2021-2024  The DOSBox Staging Team
- *  Copyright (C) 2002-2021  The DOSBox Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2021-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 /* Character displaying moving functions */
 
 #include "int10.h"
 
-#include "bios.h"
-#include "callback.h"
-#include "inout.h"
-#include "mem.h"
-#include "pic.h"
-#include "regs.h"
+#include "ints/bios.h"
+#include "cpu/callback.h"
+#include "hardware/port.h"
+#include "hardware/memory.h"
+#include "hardware/pic.h"
+#include "cpu/registers.h"
 
 static void CGA2_CopyRow(uint8_t cleft,uint8_t cright,uint8_t rold,uint8_t rnew,PhysPt base) {
 	BIOS_CHEIGHT;
@@ -198,10 +183,11 @@ uint16_t INT10_GetTextColumns()
 
 uint16_t INT10_GetTextRows()
 {
-	if (IS_EGAVGA_ARCH)
+	if (is_machine_ega_or_better()) {
 		return real_readb(BIOSMEM_SEG, BIOSMEM_NB_ROWS) + 1;
-	else
+	} else {
 		return 25;
+	}
 }
 
 void INT10_ScrollWindow(uint8_t rul,uint8_t cul,uint8_t rlr,uint8_t clr,int8_t nlines,uint8_t attr,uint8_t page) {
@@ -220,7 +206,7 @@ void INT10_ScrollWindow(uint8_t rul,uint8_t cul,uint8_t rlr,uint8_t clr,int8_t n
 	if (page==0xff) base+=real_readw(BIOSMEM_SEG,BIOSMEM_CURRENT_START);
 	else base+=page*real_readw(BIOSMEM_SEG,BIOSMEM_PAGE_SIZE);
 
-	if (machine == MCH_PCJR) {
+	if (is_machine_pcjr()) {
 		if (real_readb(BIOSMEM_SEG, BIOSMEM_CURRENT_MODE) >= 9) {
 			// PCJr cannot handle these modes at 0xb800
 			// See INT10_PutPixel M_TANDY16
@@ -264,8 +250,8 @@ void INT10_ScrollWindow(uint8_t rul,uint8_t cul,uint8_t rlr,uint8_t clr,int8_t n
 		case M_VGA:		
 			VGA_CopyRow(cul,clr,start,start+nlines,base);break;
 		case M_LIN4:
-			if ((machine==MCH_VGA) && (svgaCard==SVGA_TsengET4K) &&
-					(CurMode->swidth<=800)) {
+			if ((svga_type == SvgaType::TsengEt4k) &&
+			    (CurMode->swidth <= 800)) {
 				// the ET4000 BIOS supports text output in 800x600 SVGA
 				EGA16_CopyRow(cul,clr,start,start+nlines,base);break;
 			}
@@ -297,8 +283,8 @@ filling:
 		case M_VGA:		
 			VGA_FillRow(cul,clr,start,base,attr);break;
 		case M_LIN4:
-			if ((machine==MCH_VGA) && (svgaCard==SVGA_TsengET4K) &&
-					(CurMode->swidth<=800)) {
+			if ((svga_type == SvgaType::TsengEt4k) &&
+			    (CurMode->swidth <= 800)) {
 				EGA16_FillRow(cul,clr,start,base,attr);break;
 			}
 			// fall-through
@@ -313,12 +299,14 @@ void INT10_SetActivePage(uint8_t page) {
 	uint16_t mem_address;
 	if (page>7) LOG(LOG_INT10,LOG_ERROR)("INT10_SetActivePage page %d",page);
 
-	if (IS_EGAVGA_ARCH && (svgaCard==SVGA_S3Trio)) page &= 7;
+	if (svga_type == SvgaType::S3) {
+		page &= 7;
+	}
 
 	mem_address=page*real_readw(BIOSMEM_SEG,BIOSMEM_PAGE_SIZE);
 	/* Write the new page start */
 	real_writew(BIOSMEM_SEG,BIOSMEM_CURRENT_START,mem_address);
-	if (IS_EGAVGA_ARCH) {
+	if (is_machine_ega_or_better()) {
 		if (CurMode->mode<8) mem_address>>=1;
 		// rare alternative: if (CurMode->type==M_TEXT)  mem_address>>=1;
 	} else {
@@ -339,11 +327,13 @@ void INT10_SetActivePage(uint8_t page) {
 	INT10_SetCursorPos(cur_row,cur_col,page);
 }
 
-void INT10_SetCursorShape(uint8_t first,uint8_t last) {
+void INT10_SetCursorShape(uint8_t first, uint8_t last)
+{
 	real_writew(BIOSMEM_SEG,BIOSMEM_CURSOR_TYPE,last|(first<<8));
-	if (machine==MCH_CGA || IS_TANDY_ARCH) goto dowrite;
+	if (is_machine_cga() || is_machine_pcjr_or_tandy()) goto dowrite;
 	/* Skip CGA cursor emulation if EGA/VGA system is active */
-	if (machine==MCH_HERC || !(real_readb(BIOSMEM_SEG,BIOSMEM_VIDEO_CTL) & 0x8)) {
+	if (is_machine_hercules() ||
+	    !(real_readb(BIOSMEM_SEG,BIOSMEM_VIDEO_CTL) & 0x8)) {
 		/* Check for CGA type 01, invisible */
 		if ((first & 0x60) == 0x20) {
 			first=0x1e;
@@ -351,10 +341,11 @@ void INT10_SetCursorShape(uint8_t first,uint8_t last) {
 			goto dowrite;
 		}
 		/* Check if we need to convert CGA Bios cursor values */
-		if (machine==MCH_HERC || !(real_readb(BIOSMEM_SEG,BIOSMEM_VIDEO_CTL) & 0x1)) { // set by int10 fun12 sub34
+		if (is_machine_hercules() ||
+		    !(real_readb(BIOSMEM_SEG,BIOSMEM_VIDEO_CTL) & 0x1)) { // set by int10 fun12 sub34
 //			if (CurMode->mode>0x3) goto dowrite;	//Only mode 0-3 are text modes on cga
 			if ((first & 0xe0) || (last & 0xe0)) goto dowrite;
-			uint8_t cheight=((machine==MCH_HERC)?14:real_readb(BIOSMEM_SEG,BIOSMEM_CHAR_HEIGHT))-1;
+			uint8_t cheight = (is_machine_hercules() ? 14 : real_readb(BIOSMEM_SEG, BIOSMEM_CHAR_HEIGHT)) - 1;
 			/* Creative routine i based of the original ibmvga bios */
 
 			if (last<first) {
@@ -459,16 +450,17 @@ void ReadCharAttr(uint16_t col,uint16_t row,uint8_t page,uint16_t * result) {
 	case M_TANDY16:
 		split_chr = true;
 		switch (machine) {
-		case MCH_CGA:
-		case MCH_HERC:
-			fontdata=RealMake(0xf000,0xfa6e);
+		case MachineType::Hercules:
+		case MachineType::CgaMono:
+		case MachineType::CgaColor:
+			fontdata = RealMake(0xf000, 0xfa6e);
 			break;
-		case MCH_PCJR:
-		case MCH_TANDY:
-			fontdata=RealGetVec(0x44);
+		case MachineType::Pcjr:
+		case MachineType::Tandy:
+			fontdata = RealGetVec(0x44);
 			break;
 		default:
-			fontdata=RealGetVec(0x43);
+			fontdata = RealGetVec(0x43);
 			break;
 		}
 		break;
@@ -547,22 +539,23 @@ void WriteChar(uint16_t col,uint16_t row,uint8_t page,uint8_t chr,uint8_t attr,b
 	case M_CGA4:
 	case M_CGA2:
 	case M_TANDY16:
-		if (chr>=128) {
-			chr-=128;
-			fontdata=RealGetVec(0x1f);
+		if (chr >= 128) {
+			chr -= 128;
+			fontdata = RealGetVec(0x1f);
 			break;
 		}
 		switch (machine) {
-		case MCH_CGA:
-		case MCH_HERC:
-			fontdata=RealMake(0xf000,0xfa6e);
+		case MachineType::Hercules:
+		case MachineType::CgaMono:
+		case MachineType::CgaColor:
+			fontdata = RealMake(0xf000, 0xfa6e);
 			break;
-		case MCH_PCJR:
-		case MCH_TANDY:
-			fontdata=RealGetVec(0x44);
+		case MachineType::Pcjr:
+		case MachineType::Tandy:
+			fontdata = RealGetVec(0x44);
 			break;
 		default:
-			fontdata=RealGetVec(0x43);
+			fontdata = RealGetVec(0x43);
 			break;
 		}
 		break;
@@ -683,8 +676,8 @@ void write_char(const uint8_t chr, const uint8_t attr, uint8_t page,
 	if (CurMode->type!=M_TEXT) {
 		showattr=true; //Use attr in graphics mode always
 		switch (machine) {
-			case MCH_EGA:
-			case MCH_VGA:
+			case MachineType::Ega:
+			case MachineType::Vga:
 				switch (CurMode->type) {
 				case M_VGA:
 				case M_LIN8:
@@ -697,14 +690,15 @@ void write_char(const uint8_t chr, const uint8_t attr, uint8_t page,
 				}
 				break;
 
-			case MCH_CGA:
-			case MCH_PCJR:
-				page=0;
-				pospage=0;
+		        case MachineType::CgaMono:
+		        case MachineType::CgaColor:
+			case MachineType::Pcjr:
+				page    = 0;
+				pospage = 0;
 				break;
 
-			case MCH_HERC:
-			case MCH_TANDY:
+			case MachineType::Hercules:
+			case MachineType::Tandy:
 				break;
 
 			default: assertm(false, "Invalid MachineType value");

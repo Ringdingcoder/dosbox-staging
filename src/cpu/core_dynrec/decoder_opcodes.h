@@ -1,20 +1,5 @@
-/*
- *  Copyright (C) 2002-2021  The DOSBox Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 /*
 	The functions in this file are called almost exclusively by	decoder.h,
@@ -27,8 +12,8 @@
 	according to the instruction.
 */
 
-#include "compiler.h"
-#include "../string_ops.h"
+#include "misc/compiler.h"
+#include "cpu/string_ops.h"
 
 static void dyn_dop_ebgb(DualOps op) {
 	dyn_get_modrm();
@@ -820,7 +805,7 @@ static bool dyn_grp4_eb(void) {
 		gen_mov_direct_dword(&core_dynrec.callback,decode_fetchw());
 		dyn_set_eip_end();
 		dyn_reduce_cycles();
-		dyn_return(BR_CallBack);
+		dyn_return(BR_Callback);
 		dyn_closeblock();
 		return true;
 	default:

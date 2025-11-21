@@ -1,40 +1,26 @@
-/*
- *  Copyright (C) 2023-2024  The DOSBox Staging Team
- *  Copyright (C) 2002-2021  The DOSBox Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2023-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "dosbox.h"
-
-#include "bios.h"
-#include "bitops.h"
-#include "callback.h"
-#include "checks.h"
-#include "cpu.h"
-#include "dos_inc.h"
-#include "inout.h"
-#include "math_utils.h"
-#include "mem.h"
-#include "regs.h"
-#include "setup.h"
-#include "support.h"
 
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
+
+#include "config/setup.h"
+#include "cpu/callback.h"
+#include "cpu/cpu.h"
+#include "cpu/registers.h"
+#include "dos/dos.h"
+#include "hardware/memory.h"
+#include "hardware/port.h"
+#include "ints/bios.h"
+#include "misc/support.h"
+#include "utils/bitops.h"
+#include "utils/checks.h"
+#include "utils/math_utils.h"
 
 CHECK_NARROWING();
 
@@ -727,25 +713,23 @@ static Bitu XMS_Handler()
 // Module object
 // ***************************************************************************
 
-Bitu GetEMSType(Section_prop* section);
+Bitu GetEMSType(SectionProp& section);
 
-class XMS final : public Module_base {
+class XMS {
 private:
 	CALLBACK_HandlerObject callbackhandler;
 
 public:
-	XMS(Section* configuration);
-	~XMS() override;
+	XMS(SectionProp& section);
+	~XMS();
 };
 
-XMS::XMS(Section* configuration) : Module_base(configuration), callbackhandler{}
+XMS::XMS(SectionProp& section) : callbackhandler{}
 {
-	Section_prop* section = static_cast<Section_prop*>(configuration);
-
 	umb = {};
 	a20 = {};
 
-	if (!section->Get_bool("xms")) {
+	if (!section.GetBool("xms")) {
 		return;
 	}
 
@@ -794,9 +778,9 @@ XMS::XMS(Section* configuration) : Module_base(configuration), callbackhandler{}
 	xms.handles[0].is_free = false;
 
 	// Set up UMB chain
-	umb.is_available = section->Get_bool("umb");
+	umb.is_available         = section.GetBool("umb");
 	const bool ems_available = GetEMSType(section) > 0;
-	DOS_BuildUMBChain(section->Get_bool("umb"), ems_available);
+	DOS_BuildUMBChain(section.GetBool("umb"), ems_available);
 
 	// TODO: If implementing CP/M compatibility, mirror the JMP
 	//       instruction in HMA
@@ -836,21 +820,15 @@ XMS::~XMS()
 // Lifecycle
 // ***************************************************************************
 
-static std::unique_ptr<XMS> instance = {};
+static std::unique_ptr<XMS> xms_module = {};
 
-static void XMS_ShutDown(Section* /* sec */)
+void XMS_Init(SectionProp& section)
 {
-	instance = {};
+	xms_module = std::make_unique<XMS>(section);
 }
 
-void XMS_Init(Section* sec)
+void XMS_Destroy()
 {
-	assert(sec);
-
-	if (!instance) {
-		instance = std::make_unique<XMS>(sec);
-	}
-
-	constexpr auto changeable_at_runtime = true;
-	sec->AddDestroyFunction(&XMS_ShutDown, changeable_at_runtime);
+	xms_module = {};
 }
+

@@ -1,41 +1,37 @@
-/*
- *  Copyright (C) 2020-2024  The DOSBox Staging Team
- *  Copyright (C) 2002-2021  The DOSBox Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2020-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
-#include "dos_inc.h"
+#include "dos.h"
 
+#include <array>
 #include <cctype>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
-#include <array>
+#include <functional>
+#include <memory>
+#include <optional>
 
-#include "bios.h"
-#include "callback.h"
-#include "dos_locale.h"
-#include "drives.h"
-#include "mem.h"
-#include "program_mount_common.h"
-#include "regs.h"
-#include "serialport.h"
-#include "setup.h"
-#include "string_utils.h"
-#include "support.h"
+#include "config/setup.h"
+#include "cpu/callback.h"
+#include "cpu/registers.h"
+#include "dos/cdrom_image.h"
+#include "dos/dos_files.h"
+#include "dos/dos_locale.h"
+#include "dos/dos_mscdex.h"
+#include "dos/dos_windows.h"
+#include "dos/drives.h"
+#include "hardware/memory.h"
+#include "hardware/pic.h"
+#include "hardware/serialport/serialport.h"
+#include "ints/bios.h"
+#include "ints/ems.h"
+#include "ints/xms.h"
+#include "misc/support.h"
+#include "programs/mount_common.h"
+#include "utils/ascii.h"
+#include "utils/string_utils.h"
 
 #if defined(WIN32)
 #include <winsock2.h> // for gethostname
@@ -48,7 +44,19 @@ unsigned int result_errorcode = 0;
 
 static bool is_guest_booted = false;
 
+struct DiskSettings {
+	DiskSpeed hdd_disk_speed   = DiskSpeed::Maximum;
+	DiskSpeed fdd_disk_speed   = DiskSpeed::Maximum;
+	DiskSpeed cdrom_disk_speed = DiskSpeed::Maximum;
+};
+
+static struct DiskSettings disk_settings = {};
+
 extern void DOS_ClearLaunchedProgramNames();
+
+constexpr auto EstimatedFileCreationIoOverheadInBytes = 2048;
+constexpr auto EstimatedFileOpenIoOverheadInBytes     = 1024;
+constexpr auto EstimatedFileCloseIoOverheadInBytes    = 512;
 
 void DOS_NotifyBooting()
 {
@@ -125,10 +133,265 @@ static uint16_t DOS_GetAmount(void) {
 #ifdef DATA_TRANSFERS_TAKE_CYCLES
 
 #ifndef DOSBOX_CPU_H
-#include "cpu.h"
+#include "cpu/cpu.h"
 #endif
-static inline void modify_cycles(Bits value) {
-	if((4*value+5) < CPU_Cycles) {
+
+void DOS_SetDiskSpeed(DiskSpeed disk_speed, DiskType disk_type)
+{
+	switch (disk_type) {
+	case DiskType::Floppy: disk_settings.fdd_disk_speed = disk_speed; break;
+	case DiskType::HardDisk:
+		disk_settings.hdd_disk_speed = disk_speed;
+		break;
+	case DiskType::CdRom:
+		disk_settings.cdrom_disk_speed = disk_speed;
+		break;
+	default:
+		LOG_WARNING("DOS: Unknown disk type %d", static_cast<int>(disk_type));
+		return;
+	}
+}
+
+static std::optional<std::function<void()>> io_callback_floppy;
+static std::optional<std::function<void()>> io_callback_harddisk;
+static std::optional<std::function<void()>> io_callback_cdrom;
+
+void DOS_RegisterIoCallback(std::function<void()> callback, DiskType disk_type)
+{
+	switch (disk_type) {
+	case DiskType::Floppy: io_callback_floppy = std::move(callback); break;
+	case DiskType::HardDisk:
+		io_callback_harddisk = std::move(callback);
+		break;
+	case DiskType::CdRom: io_callback_cdrom = std::move(callback); break;
+	default:
+		LOG_WARNING("DOS: Unknown disk type %d", static_cast<int>(disk_type));
+		return;
+	}
+}
+
+// TODO: Unregister should work on particular callbacks instead of all of a
+// given disk type
+void DOS_UnregisterIoCallback(DiskType disk_type)
+{
+	switch (disk_type) {
+	case DiskType::Floppy: io_callback_floppy.reset(); break;
+	case DiskType::HardDisk: io_callback_harddisk.reset(); break;
+	case DiskType::CdRom: io_callback_cdrom.reset(); break;
+	default: break;
+	}
+}
+
+// Call any registered callbacks in the supplied callback vector
+void DOS_ExecuteRegisteredCallbacks(DiskType disk_type)
+{
+	switch (disk_type) {
+	case DiskType::Floppy:
+		if (io_callback_floppy.has_value()) {
+			(*io_callback_floppy)();
+		}
+		break;
+	case DiskType::HardDisk:
+		if (io_callback_harddisk.has_value()) {
+			(*io_callback_harddisk)();
+		}
+		break;
+	case DiskType::CdRom:
+		if (io_callback_cdrom.has_value()) {
+			(*io_callback_cdrom)();
+		}
+		break;
+	default:
+		LOG_WARNING("DOS: Unknown disk type %d", static_cast<int>(disk_type));
+		return;
+	}
+}
+
+// Add a delay as configured for the relevant disk type, and call any
+// registered callbacks.
+
+void DOS_PerformDiskIoDelay(uint16_t data_transferred_bytes, DiskType disk_type)
+{
+	DOS_ExecuteRegisteredCallbacks(disk_type);
+	switch (disk_type) {
+	case DiskType::Floppy:
+		DOS_PerformFloppyIoDelay(data_transferred_bytes);
+		break;
+	case DiskType::HardDisk:
+		DOS_PerformHardDiskIoDelay(data_transferred_bytes);
+		break;
+	case DiskType::CdRom:
+		DOS_PerformCdRomIoDelay(data_transferred_bytes);
+		break;
+	default:
+		LOG_WARNING("DOS: Unknown disk type %d", static_cast<int>(disk_type));
+		return;
+	}
+}
+
+DiskType DOS_GetDiskTypeFromMediaByte(uint8_t media_byte)
+{
+	switch (media_byte) {
+	case 0xF0:
+		// 3.5" 1.44MB floppy
+		return DiskType::Floppy;
+	case 0xF9:
+		// 5.25" 1.2MB floppy or 3.5" 720KB floppy
+		return DiskType::Floppy;
+	case 0xFD:
+		// 5.25" 360KB floppy
+		return DiskType::Floppy;
+	case 0xFF:
+		// 5.25" 320KB floppy
+		return DiskType::Floppy;
+	case 0xFC:
+		// 5.25" 180KB floppy
+		return DiskType::Floppy;
+	case 0xFE:
+		// 5.25" 160KB floppy
+		return DiskType::Floppy;
+	case 0xF8: return DiskType::HardDisk;
+	default: return DiskType::HardDisk;
+	}
+}
+
+void DOS_ExecuteRegisteredCallbacksByHandle(uint16_t reg_handle)
+{
+	uint8_t handle = RealHandle(reg_handle);
+
+	if (handle != 0xff && Files[handle]) {
+		uint8_t drive = Files[handle]->GetDrive();
+		if (drive >= Drives.size()) {
+			return;
+		}
+		DOS_ExecuteRegisteredCallbacks(DOS_GetDiskTypeFromMediaByte(
+		        Drives[drive]->GetMediaByte()));
+	}
+}
+
+static void DOS_PerformDiskIoDelayByHandle(uint16_t data_transferred_bytes,
+                                           uint16_t reg_handle)
+{
+	uint8_t handle = RealHandle(reg_handle);
+	if (handle != 0xff && Files[handle]) {
+		uint8_t drive = Files[handle]->GetDrive();
+		if (drive >= Drives.size()) {
+			return;
+		}
+		DOS_PerformDiskIoDelay(data_transferred_bytes,
+		                       DOS_GetDiskTypeFromMediaByte(
+		                               Drives[drive]->GetMediaByte()));
+	}
+}
+
+void DOS_PerformHardDiskIoDelay(uint16_t data_transferred_bytes)
+{
+	constexpr auto HardDiskSpeedFastKbPerSec   = 15000;
+	constexpr auto HardDiskSpeedMediumKbPerSec = 2500;
+	constexpr auto HardDiskSpeedSlowKbPerSec   = 600;
+	double scalar;
+
+	switch (disk_settings.hdd_disk_speed) {
+	case DiskSpeed::Fast:
+		scalar = static_cast<double>(data_transferred_bytes) /
+		         (HardDiskSpeedFastKbPerSec * BytesPerKilobyte);
+		break;
+	case DiskSpeed::Medium:
+		scalar = static_cast<double>(data_transferred_bytes) /
+		         (HardDiskSpeedMediumKbPerSec * BytesPerKilobyte);
+		break;
+	case DiskSpeed::Slow:
+		scalar = static_cast<double>(data_transferred_bytes) /
+		         (HardDiskSpeedSlowKbPerSec * BytesPerKilobyte);
+		break;
+	default: return;
+	}
+
+	double endtime = PIC_FullIndex() + (scalar * MicrosInMillisecond);
+
+	// MS-DOS will most likely enable interrupts in the course of
+	// performing disk I/O
+	CPU_STI();
+
+	do {
+		DOS_ExecuteRegisteredCallbacks(DiskType::HardDisk);
+		CALLBACK_Idle();
+	} while (PIC_FullIndex() < endtime);
+}
+
+void DOS_PerformFloppyIoDelay(uint16_t data_transferred_bytes)
+{
+	constexpr auto FloppyDiskSpeedFastKbPerSec   = 120;
+	constexpr auto FloppyDiskSpeedMediumKbPerSec = 60;
+	constexpr auto FloppyDiskSpeedSlowKbPerSec   = 30;
+	double scalar;
+
+	switch (disk_settings.fdd_disk_speed) {
+	case DiskSpeed::Fast:
+		scalar = static_cast<double>(data_transferred_bytes) /
+		         (FloppyDiskSpeedFastKbPerSec * BytesPerKilobyte);
+		break;
+	case DiskSpeed::Medium:
+		scalar = static_cast<double>(data_transferred_bytes) /
+		         (FloppyDiskSpeedMediumKbPerSec * BytesPerKilobyte);
+		break;
+	case DiskSpeed::Slow:
+		scalar = static_cast<double>(data_transferred_bytes) /
+		         (FloppyDiskSpeedSlowKbPerSec * BytesPerKilobyte);
+		break;
+	default: return;
+	}
+
+	double endtime = PIC_FullIndex() + (scalar * MicrosInMillisecond);
+
+	// MS-DOS will most likely enable interrupts in the course of
+	// performing disk I/O
+	CPU_STI();
+
+	do {
+		DOS_ExecuteRegisteredCallbacks(DiskType::Floppy);
+		CALLBACK_Idle();
+	} while (PIC_FullIndex() < endtime);
+}
+
+void DOS_PerformCdRomIoDelay(uint16_t data_transferred_bytes)
+{
+	constexpr auto CdRomSpeedFastKbPerSec   = 1200;
+	constexpr auto CdRomSpeedMediumKbPerSec = 300;
+	constexpr auto CdRomSpeedSlowKbPerSec   = 150;
+	double scalar;
+
+	switch (disk_settings.cdrom_disk_speed) {
+	case DiskSpeed::Fast:
+		scalar = static_cast<double>(data_transferred_bytes) /
+		         (CdRomSpeedFastKbPerSec * BytesPerKilobyte);
+		break;
+	case DiskSpeed::Medium:
+		scalar = static_cast<double>(data_transferred_bytes) /
+		         (CdRomSpeedMediumKbPerSec * BytesPerKilobyte);
+		break;
+	case DiskSpeed::Slow:
+		scalar = static_cast<double>(data_transferred_bytes) /
+		         (CdRomSpeedSlowKbPerSec * BytesPerKilobyte);
+		break;
+	default: return;
+	}
+
+	double endtime = PIC_FullIndex() + (scalar * MicrosInMillisecond);
+
+	// MS-DOS will most likely enable interrupts in the course of
+	// performing disk I/O
+	CPU_STI();
+
+	do {
+		DOS_ExecuteRegisteredCallbacks(DiskType::CdRom);
+		CALLBACK_Idle();
+	} while (PIC_FullIndex() < endtime);
+}
+
+static inline void modify_cycles(Bits value)
+{
+	if ((4 * value + 5) < CPU_Cycles) {
 		CPU_Cycles -= 4*value;
 		CPU_IODelayRemoved += 4*value;
 	} else {
@@ -144,7 +407,7 @@ static inline void modify_cycles(Bits /* value */) {
 #define DOS_OVERHEAD 1
 #ifdef DOS_OVERHEAD
 #ifndef DOSBOX_CPU_H
-#include "cpu.h"
+#include "cpu/cpu.h"
 #endif
 
 static inline void overhead() {
@@ -284,11 +547,13 @@ static Bitu DOS_21Handler(void) {
 			for(;;) {
 				DOS_ReadFile(STDIN,&c,&n);
 				// gracefully exit potentially endless loop
-				if (shutdown_requested) {
-					break;
-				}
-				if (n == 0)				// End of file
-					E_Exit("DOS:0x0a:Redirected input reached EOF");
+			        if (DOSBOX_IsShutdownRequested()) {
+				        break;
+			        }
+			        if (n == 0) {
+						// End of file
+						E_Exit("DOS:0x0a:Redirected input reached EOF");
+					}
 				if (c == 10)			// Line feed
 					continue;
 				if (c == 8) {			// Backspace
@@ -333,10 +598,10 @@ static Bitu DOS_21Handler(void) {
 					DOS_ReadFile(STDIN,&c,&n);
 
 					// gracefully exit potentially endless loop
-					if (shutdown_requested) {
-						break;
-					}
-				}
+				        if (DOSBOX_IsShutdownRequested()) {
+					        break;
+				        }
+			        }
 			}
 			switch (reg_al) {
 			case 0x1:
@@ -726,6 +991,9 @@ static Bitu DOS_21Handler(void) {
 	case 0x3c:		/* CREATE Create of truncate file */
 		MEM_StrCopy(SegPhys(ds)+reg_dx,name1,DOSNAMEBUF);
 		if (DOS_CreateFile(name1, reg_cl, &reg_ax)) {
+			DOS_ExecuteRegisteredCallbacksByHandle(reg_bx);
+			DOS_PerformDiskIoDelayByHandle(EstimatedFileCreationIoOverheadInBytes,
+			                               reg_bx);
 			CALLBACK_SCF(false);
 		} else {
 			reg_ax=dos.errorcode;
@@ -735,6 +1003,9 @@ static Bitu DOS_21Handler(void) {
 	case 0x3d:		/* OPEN Open existing file */
 		MEM_StrCopy(SegPhys(ds)+reg_dx,name1,DOSNAMEBUF);
 		if (DOS_OpenFile(name1,reg_al,&reg_ax)) {
+			DOS_ExecuteRegisteredCallbacksByHandle(reg_bx);
+			DOS_PerformDiskIoDelayByHandle(EstimatedFileOpenIoOverheadInBytes,
+			                               reg_bx);
 			CALLBACK_SCF(false);
 		} else {
 			reg_ax=dos.errorcode;
@@ -744,6 +1015,9 @@ static Bitu DOS_21Handler(void) {
 	case 0x3e:		/* CLOSE Close file */
 		if (DOS_CloseFile(reg_bx,false,&reg_al)) {
 			/* al destroyed with pre-close refcount from sft */
+			DOS_ExecuteRegisteredCallbacksByHandle(reg_bx);
+			DOS_PerformDiskIoDelayByHandle(EstimatedFileCloseIoOverheadInBytes,
+			                               reg_bx);
 			CALLBACK_SCF(false);
 		} else {
 			reg_ax=dos.errorcode;
@@ -755,7 +1029,8 @@ static Bitu DOS_21Handler(void) {
 			uint16_t toread=DOS_GetAmount();
 			dos.echo=true;
 			if (DOS_ReadFile(reg_bx,dos_copybuf,&toread)) {
-				MEM_BlockWrite(SegPhys(ds)+reg_dx,dos_copybuf,toread);
+			        DOS_PerformDiskIoDelayByHandle(toread, reg_bx);
+			        MEM_BlockWrite(SegPhys(ds)+reg_dx,dos_copybuf,toread);
 				reg_ax=toread;
 				CALLBACK_SCF(false);
 			} else {
@@ -771,8 +1046,10 @@ static Bitu DOS_21Handler(void) {
 			uint16_t towrite=DOS_GetAmount();
 			MEM_BlockRead(SegPhys(ds)+reg_dx,dos_copybuf,towrite);
 			if (DOS_WriteFile(reg_bx,dos_copybuf,&towrite)) {
-				reg_ax=towrite;
-	   			CALLBACK_SCF(false);
+			        DOS_ExecuteRegisteredCallbacksByHandle(reg_bx);
+			        DOS_PerformDiskIoDelayByHandle(towrite, reg_bx);
+			        reg_ax = towrite;
+			        CALLBACK_SCF(false);
 			} else {
 				reg_ax=dos.errorcode;
 				CALLBACK_SCF(true);
@@ -1404,13 +1681,11 @@ static Bitu DOS_26Handler(void) {
     return CBRET_NONE;
 }
 
-constexpr uint8_t code_ctrl_c = 0x03;
-constexpr uint8_t code_esc    = 0x1b;
-
 bool DOS_IsCancelRequest()
 {
-	if (shutdown_requested)
+	if (DOSBOX_IsShutdownRequested()) {
 		return true;
+	}
 
 	CALLBACK_Idle();
 	while (!(Files[STDIN]->GetInformation() & (1 << 6))) {
@@ -1420,14 +1695,14 @@ bool DOS_IsCancelRequest()
 		DOS_ReadFile(STDIN, &code, &count);
 
 		// Check if user requested to cancel
-		if (shutdown_requested || count == 0 ||
-			code == 'q' || code == 'Q' ||
-		    code == code_ctrl_c || code == code_esc)
+		if (DOSBOX_IsShutdownRequested() || count == 0 || code == 'q' ||
+		    code == 'Q' || code == Ascii::CtrlC || code == Ascii::Escape) {
 			return true;
+		}
 	}
 
 	// Return control if no key pressed
-	return shutdown_requested;
+	return DOSBOX_IsShutdownRequested();
 }
 
 DOS_Version DOS_ParseVersion(const char *word, const char *args)
@@ -1473,12 +1748,13 @@ DOS_Version DOS_ParseVersion(const char *word, const char *args)
 	return new_version;
 }
 
-class DOS:public Module_base{
+class DOS {
 private:
 	CALLBACK_HandlerObject callback[7];
 public:
-	DOS(Section* configuration):Module_base(configuration){
-		callback[0].Install(DOS_20Handler,CB_IRET,"DOS Int 20");
+	DOS(Section* sec)
+	{
+		callback[0].Install(DOS_20Handler, CB_IRET, "DOS Int 20");
 		callback[0].Set_RealVec(0x20);
 
 		callback[1].Install(DOS_21Handler,CB_INT21,"DOS Int 21");
@@ -1525,14 +1801,16 @@ public:
 		dos.direct_output=false;
 		dos.internal_output=false;
 
-		const Section_prop* section = static_cast<Section_prop*>(configuration);
-		std::string args = section->Get_string("ver");
+		const SectionProp* section = static_cast<SectionProp*>(sec);
+		std::string args = section->GetString("ver");
 		std::string word = strip_word(args);
 		const auto new_version = DOS_ParseVersion(word.c_str(), args.c_str());
 		if (new_version.major || new_version.minor) {
 			dos.version.major = new_version.major;
 			dos.version.minor = new_version.minor;
 		}
+
+		DOS_AddMultiplexHandler(WINDOWS_Int2F_Handler);
 	}
 
 	// Shutdown the DOS OS constructs leaving only the BIOS and hardware
@@ -1555,16 +1833,176 @@ public:
 	}
 };
 
-static DOS* test;
+static std::unique_ptr<DOS> dos_module = {};
 
-void DOS_ShutDown(Section* /*sec*/) {
-	delete test;
+void DOS_Init()
+{
+	auto section = get_section("dos");
+	assert(section);
+
+	dos_module = std::make_unique<DOS>(section);
+
+	XMS_Init(*section);
+	EMS_Init(*section);
+
+	DOS_Files_Init(*section);
+	DOS_Locale_Init(*section);
+
+	MSCDEX_Init();
+	DRIVES_Init();
+	CDROM_Image_Init();
 }
 
-void DOS_Init(Section* sec)
+void DOS_Destroy()
 {
-	assert(sec);
-	test = new DOS(sec);
+	CDROM_Image_Destroy();
+	MSCDEX_Destroy();
 
-	sec->AddDestroyFunction(&DOS_ShutDown);
+	DOS_Locale_Destroy();
+
+	EMS_Destroy();
+	XMS_Destroy();
+
+	dos_module = {};
+}
+
+static void notify_dos_setting_updated(SectionProp& section,
+                                       [[maybe_unused]] const std::string& prop_name)
+{
+	DOS_Locale_Destroy();
+	DOS_Locale_Init(section);
+
+	DOS_Files_Init(section);
+
+	EMS_Destroy();
+	EMS_Init(section);
+
+	XMS_Destroy();
+	XMS_Init(section);
+
+	// The MSCDEX, DRIVES, and CDROM_Image modules are only initalised
+	// once at startup.
+}
+
+void DOS_NotifySettingUpdated(const std::string& prop_name)
+{
+	auto section = get_section("dos");
+	assert(section);
+
+	notify_dos_setting_updated(*section, prop_name);
+}
+
+static void init_dos_settings(SectionProp& section)
+{
+
+	using enum Property::Changeable::Value;
+
+	// All the general DOS Related stuff, on real machines mostly located in
+	// CONFIG.SYS
+
+	auto pbool = section.AddBool("xms", WhenIdle, true);
+	pbool->SetHelp("Enable XMS support ('on' by default).");
+
+	auto pstring = section.AddString("ems", WhenIdle, "true");
+	pstring->SetValues({"true", "emsboard", "emm386", "off"});
+	pstring->SetHelp(
+	        "Enable EMS support ('on' by default). Enabled provides the best compatibility\n"
+	        "but certain applications may run better with other choices, or require EMS\n"
+	        "support to be disabled to work at all.");
+
+	pbool = section.AddBool("umb", WhenIdle, true);
+	pbool->SetHelp("Enable UMB support ('on' by default).");
+
+	pstring = section.AddString("pcjr_memory_config", OnlyAtStart, "expanded");
+	pstring->SetValues({"expanded", "standard"});
+	pstring->SetHelp(
+	        "PCjr memory layout ('expanded' by default).\n"
+	        "  expanded:  640 KB total memory with applications residing above 128 KB.\n"
+	        "             Compatible with most games.\n"
+	        "  standard:  128 KB total memory with applications residing below 96 KB.\n"
+	        "             Required for some older games (e.g., Jumpman, Troll).");
+
+	pstring = section.AddString("ver", WhenIdle, "5.0");
+	pstring->SetHelp(
+	        "Set DOS version (5.0 by default). Specify in major.minor format.\n"
+	        "A single number is treated as the major version.\n"
+	        "Common settings are 3.3, 5.0, 6.22, and 7.1.");
+
+	// DOS locale settings
+
+	pstring = section.AddString("locale_period", WhenIdle, "native");
+	pstring->SetHelp(
+	        "Set locale epoch ('native' by default).\n"
+	        "  historic:  If data is available for the given country, mimic old DOS behavior\n"
+	        "             when displaying time, dates, or numbers.\n"
+	        "  modern:    Follow current day practices for user experience more consistent\n"
+	        "             with typical host systems.\n"
+	        "  native:    Re-use current host OS settings, regardless of the country set;\n"
+	        "             use 'modern' data to fill-in the gaps when the DOS locale system\n"
+	        "             is too limited to follow the desktop settings.");
+	pstring->SetValues({"historic", "modern", "native"});
+
+	pstring = section.AddString("country", WhenIdle, "auto");
+	pstring->SetHelp(
+	        "Set DOS country code ('auto' by default).\n"
+	        "This affects country-specific information such as date, time, and decimal\n"
+	        "formats. If set to 'auto', selects the country code reflecting the host\n"
+	        "OS settings.\n"
+	        "The list of country codes can be displayed using '--list-countries'\n"
+	        "command-line argument.");
+
+	pstring = section.AddString("keyboardlayout", Deprecated, "");
+	pstring->SetHelp("Renamed to 'keyboard_layout'.");
+
+	pstring = section.AddString("keyboard_layout", OnlyAtStart, "auto");
+	pstring->SetHelp(
+	        "Keyboard layout code ('auto' by default).\n"
+	        "The list of supported keyboard layout codes can be displayed using the\n"
+	        "'--list-layouts' command-line argument, e.g., 'uk' is the British English\n"
+	        "layout. The layout can be followed by the code page number, e.g., 'uk 850'\n"
+	        "selects a Western European screen font.\n"
+	        "Set to 'auto' to guess the values from the host OS settings.\n"
+	        "After startup, use the 'KEYB' command to manage keyboard layouts and code pages\n"
+	        "(run 'HELP KEYB' for details).");
+
+	// COMMAND.COM settings
+
+	pstring = section.AddString("expand_shell_variable", WhenIdle, "auto");
+	pstring->SetValues({"auto", "on", "off"});
+	pstring->SetHelp(
+	        "Enable expanding environment variables such as %%PATH%% in the DOS command shell\n"
+	        "(auto by default, enabled if DOS version >= 7.0).\n"
+	        "FreeDOS and MS-DOS 7/8 COMMAND.COM supports this behavior.");
+
+	pstring = section.AddPath("shell_history_file", OnlyAtStart, "shell_history.txt");
+
+	pstring->SetHelp(
+	        "File containing persistent command line history ('shell_history.txt'\n"
+	        "by default). Setting it to empty disables persistent shell history.");
+
+	// Misc DOS command settings
+
+	pstring = section.AddPath("setver_table_file", OnlyAtStart, "");
+	pstring->SetHelp(
+	        "File containing the list of applications and assigned DOS versions, in a\n"
+	        "tab-separated format, used by SETVER.EXE as a persistent storage\n"
+	        "(empty by default).");
+
+	pbool = section.AddBool("file_locking", WhenIdle, true);
+	pbool->SetHelp(
+	        "Enable file locking (SHARE.EXE emulation; 'on' by default).\n"
+	        "This is required for some Windows 3.1x applications to work properly.\n"
+	        "It generally does not cause problems for DOS games except in rare cases\n"
+	        "(e.g., Astral Blur demo). If you experience crashes related to file\n"
+	        "permissions, you can try disabling this.");
+}
+
+void DOS_AddConfigSection([[maybe_unused]] const ConfigPtr& conf)
+{
+	assert(conf);
+
+	auto section = control->AddSection("dos");
+	section->AddUpdateHandler(notify_dos_setting_updated);
+
+	init_dos_settings(*section);
 }

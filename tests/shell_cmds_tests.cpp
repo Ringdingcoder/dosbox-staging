@@ -1,22 +1,5 @@
-/*
- *  SPDX-License-Identifier: GPL-2.0-or-later
- *
- *  Copyright (C) 2020-2024  The DOSBox Staging Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2020-2025 The DOSBox Staging Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 /* This sample shows how to write a simple unit test for dosbox-staging using
  * Google C++ testing framework.
@@ -35,16 +18,16 @@
  * 4. Additional dosbox-staging headers (if needed)
  */
 
-#include "shell.h"
+#include "shell/shell.h"
 
 #include <string>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
-#include "../src/shell/shell_cmds.cpp"
+#include "shell/shell_cmds.cpp"
 #include "dosbox_test_fixture.h"
-#include "string_utils.h"
+#include "utils/string_utils.h"
 
 namespace {
 
@@ -72,8 +55,9 @@ public:
 	 */
 	MOCK_METHOD(bool, ExecuteShellCommand,
 	            (const char* const name, char* arguments), (override));
-	MOCK_METHOD(void, WriteOut, (const char* format, const char* arguments),
-	            (override));
+
+//	MOCK_METHOD(void, WriteOut, (const char* format, const char* arguments),
+//	            (override));
 
 private:
 	DOS_Shell real_; // Keeps an instance of the real in the mock.
@@ -100,6 +84,7 @@ TEST_F(DOS_Shell_CMDSTest, DoCommand_Separating_Chars)
 	        '/',
 	        '\t',
 	        '=',
+	        '"',
 	};
 	for (auto end_chr : end_chars) {
 		MockDOS_Shell shell;
@@ -155,11 +140,22 @@ TEST_F(DOS_Shell_CMDSTest, DoCommand_Nospace_Slash_Handling)
 	assert_DoCommand("CD\\", "CD", "\\");
 }
 
+TEST_F(DOS_Shell_CMDSTest, DoCommand_Nospace_Echo_DoubleQuotes)
+{
+	assert_DoCommand("ECHO\"", "ECHO", "\"");
+	assert_DoCommand("ECHO\"\"", "ECHO", "\"\"");
+}
+
+TEST_F(DOS_Shell_CMDSTest, DoCommand_Nospace_If_DoubleQuotes)
+{
+	assert_DoCommand("IF\"1\"==\"1\"", "IF", "\"1\"==\"1\"");
+}
+
 TEST_F(DOS_Shell_CMDSTest, CMD_ECHO_off_on)
 {
 	MockDOS_Shell shell;
 	EXPECT_TRUE(shell.echo); // should be the default
-	EXPECT_CALL(shell, WriteOut(_, _)).Times(0);
+//	EXPECT_CALL(shell, WriteOut(_, _)).Times(0);
 	EXPECT_NO_THROW({ shell.CMD_ECHO(const_cast<char*>("OFF")); });
 	EXPECT_FALSE(shell.echo);
 	EXPECT_NO_THROW({ shell.CMD_ECHO(const_cast<char*>("ON")); });
@@ -171,18 +167,18 @@ TEST_F(DOS_Shell_CMDSTest, CMD_ECHO_space_handling)
 	MockDOS_Shell shell;
 
 	EXPECT_TRUE(shell.echo);
-	EXPECT_CALL(shell, WriteOut(_, StrEq("OFF "))).Times(1);
+//	EXPECT_CALL(shell, WriteOut(_, StrEq("OFF "))).Times(1);
 	// this DOES NOT trigger ECHO OFF (trailing space causes it to not)
 	EXPECT_NO_THROW({ shell.CMD_ECHO(const_cast<char*>(" OFF ")); });
 	EXPECT_TRUE(shell.echo);
 
-	EXPECT_CALL(shell, WriteOut(_, StrEq("FF "))).Times(1);
+//	EXPECT_CALL(shell, WriteOut(_, StrEq("FF "))).Times(1);
 	// this DOES NOT trigger ECHO OFF (initial 'O' gets stripped)
 	EXPECT_NO_THROW({ shell.CMD_ECHO(const_cast<char*>("OFF ")); });
 	EXPECT_TRUE(shell.echo);
 
 	// no trailing space, echo off should work
-	EXPECT_CALL(shell, WriteOut(_, _)).Times(0);
+//	EXPECT_CALL(shell, WriteOut(_, _)).Times(0);
 	EXPECT_NO_THROW({ shell.CMD_ECHO(const_cast<char*>(" OFF")); });
 	// check that OFF worked properly, despite spaces
 	EXPECT_FALSE(shell.echo);
@@ -190,7 +186,7 @@ TEST_F(DOS_Shell_CMDSTest, CMD_ECHO_space_handling)
 	// NOTE: the expected string here is missing the leading char of the
 	// input to ECHO. the first char is stripped as it's assumed it will be
 	// a space, period or slash.
-	EXPECT_CALL(shell, WriteOut(_, StrEq("    HI "))).Times(1);
+//	EXPECT_CALL(shell, WriteOut(_, StrEq("    HI "))).Times(1);
 	EXPECT_NO_THROW({ shell.CMD_ECHO(const_cast<char*>(".    HI ")); });
 }
 

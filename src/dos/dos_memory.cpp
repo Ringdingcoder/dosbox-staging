@@ -1,28 +1,13 @@
-/*
- *  Copyright (C) 2002-2021  The DOSBox Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "dosbox.h"
 
-#include "control.h"
-#include "dos_inc.h"
-#include "dos_memory.h"
-#include "mem.h"
-#include "support.h"
+#include "config/config.h"
+#include "dos.h"
+#include "dos/dos_memory.h"
+#include "hardware/memory.h"
+#include "misc/support.h"
 
 #include <string_view>
 
@@ -389,8 +374,9 @@ bool DOS_FreeMemory(uint16_t segment) {
 }
 
 
-void DOS_BuildUMBChain(bool umb_active,bool ems_active) {
-	if (umb_active  && (!IS_TANDY_ARCH)) {
+void DOS_BuildUMBChain(bool umb_active, bool ems_active)
+{
+	if (umb_active && !is_machine_pcjr_or_tandy()) {
 		uint16_t first_umb_seg = 0xd000;
 		uint16_t first_umb_size = 0x2000;
 		if(ems_active) first_umb_size = 0x1000;
@@ -512,14 +498,14 @@ void DOS_SetupMemory(void) {
 	mcb_sizes+=17;
 	tempmcb2.SetType(middle_mcb_type);
 
-	if (machine==MCH_TANDY) {
+	if (is_machine_tandy()) {
 		/* memory up to 608k available, the rest (to 640k) is used by
 			the tandy graphics system's variable mapping of 0xb800 */
 		DOS_MCB free_block((uint16_t)DOS_MEM_START+mcb_sizes);
 		free_block.SetPSPSeg(MCB_FREE);
 		free_block.SetType(ending_mcb_type);
 		free_block.SetSize(0x9BFF - DOS_MEM_START - mcb_sizes);
-	} else if (machine==MCH_PCJR) {
+	} else if (is_machine_pcjr()) {
 		const auto pcjr_start = DOS_MEM_START + mcb_sizes;
 		constexpr auto mcb_entry_size = 1;
 
@@ -527,9 +513,9 @@ void DOS_SetupMemory(void) {
 		constexpr auto video_memory_start =
 			kilobytes_to_segment(PcjrStandardMemorySizeKb - PcjrVideoMemorySizeKb);
 
-		const Section_prop* section = static_cast<Section_prop*>(control->GetSection("dos"));
+		const auto section = get_section("dos");
 		assert(section);
-		const std::string pcjr_memory_config = section->Get_string("pcjr_memory_config");
+		const std::string pcjr_memory_config = section->GetString("pcjr_memory_config");
 		if (pcjr_memory_config == "expanded") {
 			// With expanded memory, reserve the lower memory up to video memory.
 			// This makes application memory contiguous in order to prevent crashes.

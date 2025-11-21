@@ -1,33 +1,18 @@
-/*
- *  SPDX-License-Identifier: GPL-2.0-or-later
- *
- *  Copyright (C) 2023-2024  The DOSBox Staging Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2023-2025 The DOSBox Staging Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
-#include "checks.h"
-#include "dosbox.h"
-#include "inout.h"
-#include "mouse.h"
-#include "pci_bus.h"
-#include "setup.h"
-#include "support.h"
+#include "virtualbox.h"
 
 #include <map>
 #include <set>
+
+#include "config/setup.h"
+#include "dosbox.h"
+#include "hardware/input/mouse.h"
+#include "hardware/pci_bus.h"
+#include "hardware/port.h"
+#include "misc/support.h"
+#include "utils/checks.h"
 
 CHECK_NARROWING();
 
@@ -266,8 +251,8 @@ struct VirtualBox_MousePointer_1_01 {
 static void warn_unsupported_request(const VBoxRequestType request_type)
 {
 	static std::set<VBoxRequestType> already_warned = {};
-	if (already_warned.find(request_type) != already_warned.end()) {
-		LOG_WARNING("VIRTUALBOX: unimplemented request #%d",
+	if (already_warned.contains(request_type)) {
+		LOG_WARNING("VIRTUALBOX: Unimplemented request #%d",
 		            enum_val(request_type));
 		already_warned.insert(request_type);
 	}
@@ -277,9 +262,8 @@ static void warn_unsupported_struct_version(const RequestHeader& header)
 {
 	static std::map<VBoxRequestType, std::set<uint32_t>> already_warned = {};
 	auto& already_warned_set = already_warned[header.request_type];
-	if (already_warned_set.find(header.struct_version) !=
-	    already_warned_set.end()) {
-		LOG_WARNING("VIRTUALBOX: unimplemented request #%d structure v%d.%02d",
+	if (already_warned_set.contains(header.struct_version)) {
+		LOG_WARNING("VIRTUALBOX: Unimplemented request #%d structure v%d.%02d",
 		            enum_val(header.request_type),
 		            header.struct_version >> 16,
 		            header.struct_version & 0xffff);
@@ -485,7 +469,7 @@ static void handle_report_guest_info(const RequestHeader& header,
 		const VirtualBox_GuestInfo_1_01 payload(struct_pointer);
 
 		if (payload.interface_version != ver_1_04) {
-			LOG_WARNING("VIRTUALBOX: unimplemented protocol v%d.%02d",
+			LOG_WARNING("VIRTUALBOX: Unimplemented protocol v%d.%02d",
 			            payload.interface_version >> 16,
 			            payload.interface_version & 0xffff);
 			client_disconnect();
@@ -606,7 +590,7 @@ Bits PCI_VirtualBoxDevice::ParseWriteRegister([[maybe_unused]] uint8_t regnum,
 }
 
 // ***************************************************************************
-// Lifecycle
+// External notifications
 // ***************************************************************************
 
 void VIRTUALBOX_NotifyBooting()
@@ -614,20 +598,14 @@ void VIRTUALBOX_NotifyBooting()
 	client_disconnect();
 }
 
-void VIRTUALBOX_Destroy(Section*)
-{
-	if (is_interface_enabled) {
-		client_disconnect();
-		PCI_RemoveDevice(PCI_VirtualBoxDevice::vendor,
-		                 PCI_VirtualBoxDevice::device);
-		IO_FreeWriteHandler(port_num_virtualbox, io_width_t::dword);
-		is_interface_enabled = false;
-	}
-}
+// ***************************************************************************
+// Lifecycle
+// ***************************************************************************
 
-void VIRTUALBOX_Init(Section* sec)
+void VIRTUALBOX_Init()
 {
 	has_feature_mouse = MOUSEVMM_IsSupported(MouseVmmProtocol::VirtualBox);
+
 	if (has_feature_mouse) {
 		state.mouse_features.SetInitialValue();
 	}
@@ -641,11 +619,26 @@ void VIRTUALBOX_Init(Section* sec)
 	//   https://github.com/JHRobotics/softgpu
 
 	is_interface_enabled = has_feature_mouse;
+
 	if (is_interface_enabled) {
-		sec->AddDestroyFunction(&VIRTUALBOX_Destroy, false);
 		PCI_AddDevice(new PCI_VirtualBoxDevice());
+
 		IO_RegisterWriteHandler(port_num_virtualbox,
 		                        port_write_virtualbox,
 		                        io_width_t::dword);
+	}
+}
+
+void VIRTUALBOX_Destroy()
+{
+	if (is_interface_enabled) {
+		client_disconnect();
+
+		PCI_RemoveDevice(PCI_VirtualBoxDevice::vendor,
+		                 PCI_VirtualBoxDevice::device);
+
+		IO_FreeWriteHandler(port_num_virtualbox, io_width_t::dword);
+
+		is_interface_enabled = false;
 	}
 }

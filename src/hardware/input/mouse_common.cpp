@@ -1,27 +1,13 @@
-/*
- *  Copyright (C) 2022-2023  The DOSBox Staging Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2022-2025 The DOSBox Staging Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
-#include "mouse_common.h"
+#include "private/mouse_common.h"
 
 #include <algorithm>
 
-#include "checks.h"
-#include "pic.h"
+#include "utils/checks.h"
+#include "utils/math_utils.h"
+#include "hardware/pic.h"
 
 CHECK_NARROWING();
 
@@ -88,16 +74,61 @@ uint8_t MOUSE_GetDelayFromRateHz(const uint16_t rate_hz)
 
 float MOUSE_ClampRelativeMovement(const float rel)
 {
+	constexpr float Max = 2048.0f;
+	constexpr float Min = -Max;
 	// Enforce sane upper limit of relative mouse movement
-	return std::clamp(rel, -2048.0f, 2048.0f);
+	return std::clamp(rel, Min, Max);
+}
+
+float MOUSE_ClampWheelMovement(const float rel)
+{
+	// Chosen so that the result always fits into int8_t
+	constexpr float Max = 127.0f;
+	constexpr float Min = -Max;
+	// Enforce sane upper limit of relative mouse wheel
+	return std::clamp(rel, Min, Max);
 }
 
 uint16_t MOUSE_ClampRateHz(const uint16_t rate_hz)
 {
-	constexpr uint16_t rate_min = 10;
-	constexpr uint16_t rate_max = 500;
+	constexpr uint16_t MinRate = 10;
+	constexpr uint16_t MaxRate = 500;
 
-	return std::clamp(rate_hz, rate_min, rate_max);
+	return std::clamp(rate_hz, MinRate, MaxRate);
+}
+
+bool MOUSE_HasAccumulatedInt(const float delta)
+{
+	// Value is above 0.5 for +1/-1 flip-flopping protection
+	constexpr float Threshold = 0.6f;
+
+	return std::fabs(delta) >= Threshold;
+}
+
+int8_t MOUSE_ConsumeInt8(float& delta, const bool skip_delta_update)
+{
+	if (!MOUSE_HasAccumulatedInt(delta)) {
+		return 0;
+	}
+
+	const auto consumed = std::round(delta);
+	if (!skip_delta_update) {
+		delta -= consumed;
+	}
+	return clamp_to_int8(consumed);
+}
+
+int16_t MOUSE_ConsumeInt16(float& delta, const bool skip_delta_update)
+{
+	if (!MOUSE_HasAccumulatedInt(delta)) {
+		return 0;
+	}
+
+	const auto consumed = std::round(delta);
+	if (!skip_delta_update) {
+		delta -= consumed;
+	}
+	return clamp_to_int16(consumed);
 }
 
 // ***************************************************************************
@@ -180,4 +211,9 @@ MouseButtons12S &MouseButtons12S::operator=(const MouseButtons12S &other)
 {
 	_data = other._data;
 	return *this;
+}
+
+bool MouseButtons12S::operator==(const MouseButtons12S other) const
+{
+	return _data == other._data;
 }

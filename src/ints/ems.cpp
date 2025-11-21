@@ -1,40 +1,26 @@
-/*
- *  Copyright (C) 2020-2023  The DOSBox Staging Team
- *  Copyright (C) 2002-2021  The DOSBox Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2020-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "dosbox.h"
 
 #include <algorithm>
 #include <cstring>
 #include <cstdlib>
+#include <memory>
 
-#include "callback.h"
-#include "mem.h"
-#include "paging.h"
-#include "bios.h"
-#include "keyboard.h"
-#include "regs.h"
-#include "inout.h"
-#include "dos_inc.h"
-#include "setup.h"
-#include "support.h"
-#include "cpu.h"
-#include "dma.h"
+#include "config/setup.h"
+#include "cpu/callback.h"
+#include "cpu/cpu.h"
+#include "cpu/paging.h"
+#include "cpu/registers.h"
+#include "dos/dos.h"
+#include "hardware/dma.h"
+#include "hardware/input/keyboard.h"
+#include "hardware/memory.h"
+#include "hardware/port.h"
+#include "ints/bios.h"
+#include "misc/support.h"
 
 #define EMM_PAGEFRAME	0xE000
 #define EMM_PAGEFRAME4K	((EMM_PAGEFRAME*16)/4096)
@@ -599,7 +585,7 @@ static uint8_t GetSetHandleName(void) {
 		break;
 	case 0x01:	/* Set Handle Name */
 		if (handle>=EMM_MAX_HANDLES || emm_handles[handle].pages==NULL_HANDLE) return EMM_INVALID_HANDLE;
-		MEM_BlockRead(SegPhys(es)+reg_di,emm_handles[handle].name,8);
+		MEM_BlockRead(SegPhys(ds)+reg_si,emm_handles[handle].name,8);
 		break;
 	default:
 		LOG(LOG_MISC,LOG_ERROR)("EMS:Call %2X Subfunction %2X not supported",reg_ah,reg_al);
@@ -975,7 +961,7 @@ static Bitu INT67_Handler(void) {
 				break;
 				}
 			case 0x02:		/* VCPI Maximum Physical Address */
-				reg_edx=((MEM_TotalPages()*dos_pagesize)-1)&0xfffff000;
+				reg_edx=((MEM_TotalPages()*DosPageSize)-1)&0xfffff000;
 				reg_ah=EMM_NO_ERROR;
 				break;
 			case 0x03:		/* VCPI Get Number of Free Pages */
@@ -1369,9 +1355,11 @@ static Bitu INT4B_Handler() {
 	return CBRET_NONE;
 }
 
-Bitu GetEMSType(Section_prop * section) {
+Bitu GetEMSType(SectionProp& section)
+{
 	Bitu rtype = 0;
-	const std::string ems_pref = section->Get_string("ems");
+
+	const std::string ems_pref = section.GetString("ems");
 
 	const auto ems_pref_has_bool = parse_bool_setting(ems_pref);
 
@@ -1387,7 +1375,7 @@ Bitu GetEMSType(Section_prop * section) {
 	return rtype;
 }
 
-class EMS final : public Module_base {
+class EMS {
 private:
 	uint16_t ems_baseseg = 0;
 	DOS_Device *emm_device = nullptr;
@@ -1398,11 +1386,7 @@ private:
 	callback_number_t call_int67 = 0;
 
 public:
-	EMS(Section *configuration)
-	        : Module_base(configuration),
-	          call_vdma(),
-	          call_vcpi(),
-	          call_v86mon()
+	EMS(SectionProp& section) : call_vdma(), call_vcpi(), call_v86mon()
 	{
 		ems_type=0;
 
@@ -1413,11 +1397,12 @@ public:
 		vcpi.enabled=false;
 		GEMMIS_seg=0;
 
-		Section_prop * section=static_cast<Section_prop *>(configuration);
-		ems_type=GetEMSType(section);
-		if (ems_type<=0) return;
+		ems_type = GetEMSType(section);
+		if (ems_type <= 0) {
+			return;
+		}
 
-		if (machine==MCH_PCJR) {
+		if (is_machine_pcjr()) {
 			ems_type=0;
 			LOG_MSG("EMS disabled for PCJr machine");
 			return;
@@ -1550,18 +1535,15 @@ public:
 	}
 };
 
-static EMS* test;
+static std::unique_ptr<EMS> ems_module = {};
 
-void EMS_ShutDown(Section* /*sec*/) {
-	delete test;
-}
-
-void EMS_Init(Section* sec)
+void EMS_Init(SectionProp& section)
 {
-	assert(sec);
-
-	test = new EMS(sec);
-
-	constexpr auto changeable_at_runtime = true;
-	sec->AddDestroyFunction(&EMS_ShutDown, changeable_at_runtime);
+	ems_module = std::make_unique<EMS>(section);
 }
+
+void EMS_Destroy()
+{
+	ems_module = {};
+}
+

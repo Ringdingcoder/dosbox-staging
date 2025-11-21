@@ -1,24 +1,7 @@
-/*
- *  SPDX-License-Identifier: GPL-2.0-or-later
- *
- *  Copyright (C) 2020-2022  The DOSBox Staging Team
- *  Copyright (C) 2018-2021  kcgen <kcgen@users.noreply.github.com>
- *  Copyright (C) 2001-2017  Ryan C. Gordon <icculus@icculus.org>
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2020-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2018-2021 kcgen <kcgen@users.noreply.github.com>
+// SPDX-FileCopyrightText:  2001-2017  Ryan C. Gordon <icculus@icculus.org>
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 /*
  *  DOSBox MP3 decoder API implementation
@@ -28,9 +11,9 @@
  *    - dr_mp3:  http://mackron.github.io/dr_mp3.html (website)
  */
 
-#include "config.h"
+#include "dosbox_config.h"
 
-#include "math_utils.h"
+#include "utils/math_utils.h"
 
 #include "mp3_seek_table.h"
 #define DR_MP3_IMPLEMENTATION
@@ -39,8 +22,6 @@
 #include "SDL_sound.h"
 #define __SDL_SOUND_INTERNAL__
 #include "SDL_sound_internal.h"
-
-static constexpr char fast_seek_filename[] = "fastseek.lut";
 
 static size_t mp3_read(void* const pUserData, void* const pBufferOut, const size_t bytesToRead)
 {
@@ -131,7 +112,7 @@ static int32_t MP3_open(Sound_Sample* const sample, const char* const ext)
 
     bool result;
     // Count the MP3's frames
-    const uint64_t num_frames = populate_seek_points(internal->rw, p_mp3, fast_seek_filename, result);
+    const uint64_t num_frames = populate_seek_points(p_mp3, result);
     if (!result) {
         SNDDBG(("MP3: Unable to count the number of PCM frames.\n"));
         MP3_close(sample);

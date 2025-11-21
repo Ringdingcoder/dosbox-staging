@@ -1,23 +1,8 @@
-/*
- *  Copyright (C) 2020-2024  The DOSBox Staging Team
- *  Copyright (C) 2002-2021  The DOSBox Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2020-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
-#include "dos_inc.h"
+#include "dos.h"
 
 #include <array>
 #include <cctype>
@@ -27,15 +12,15 @@
 #include <ctime>
 
 #include "dosbox.h"
-#include "bios.h"
-#include "mem.h"
-#include "regs.h"
-#include "drives.h"
-#include "cross.h"
-#include "string_utils.h"
-#include "support.h"
-#include "pinhacks.h"
-
+#include "ints/bios.h"
+#include "hardware/memory.h"
+#include "cpu/registers.h"
+#include "dos/drives.h"
+#include "misc/cross.h"
+#include "config/setup.h"
+#include "utils/pinhacks.h"
+#include "utils/string_utils.h"
+#include "misc/support.h"
 
 #define DOS_FILESTART 4
 
@@ -49,6 +34,9 @@
 std::array<std::unique_ptr<DOS_File>, DOS_FILES> Files = {};
 
 std::array<std::shared_ptr<DOS_Drive>, DOS_DRIVES> Drives = {};
+
+// Set by "file_locking" config
+static bool emulate_file_locking = true;
 
 enum class FileSharingMode
 {
@@ -166,6 +154,10 @@ static bool file_modes_are_compatible(const FileOpenFlags& new_file, const FileO
 
 static bool file_is_locked(const char *file_name, const uint8_t drive, const uint8_t flags)
 {
+	if (!DOS_IsFileLocking()) {
+		return false;
+	}
+
 	const FileOpenFlags new_file = parse_file_flags(flags);
 
 	for (int i = 0; i < DOS_FILES; ++i) {
@@ -187,6 +179,10 @@ static bool regions_overlap(const uint32_t pos1, const uint32_t len1, const uint
 
 static bool region_is_locked(const int file_handle, const uint32_t pos, const uint32_t len)
 {
+	if (!DOS_IsFileLocking()) {
+		return false;
+	}
+
 	for (int i = 0; i < DOS_FILES; ++i) {
 		// Ignore locks held by the current file handle,
 		// Need to check other handles pointing to the same file.
@@ -739,8 +735,10 @@ bool DOS_CloseFile(uint16_t entry, bool fcb, uint8_t * refcnt) {
 	};
 	Files[handle]->Close();
 
-	DOS_PSP psp(dos.psp());
-	if (!fcb) psp.SetFileHandle(entry,0xff);
+	if (!fcb) {
+		DOS_PSP psp(dos.psp());
+		psp.SetFileHandle(entry, 0xff);
+	}
 
 	Bits refs=Files[handle]->RemoveRef();
 	if (refs<=0) {
@@ -1155,7 +1153,7 @@ bool DOS_CreateTempFile(char * const name,uint16_t * entry) {
 	const auto old_errorcode = dos.errorcode;
 	dos.errorcode = 0;
 
-	static const auto randomize_letter = CreateRandomizer<int16_t>('A', 'Z');
+	static const auto randomize_letter = create_randomizer<int16_t>('A', 'Z');
 	do {
 		uint32_t i;
 		for (i=0;i<8;i++) {
@@ -1213,12 +1211,16 @@ uint8_t FCB_Parsename(uint16_t seg, uint16_t offset, uint8_t parser,
 		// default drive forced, this intentionally invalidates an extended FCB
 		mem_writeb(PhysicalMake(seg,offset),0);
 	}
-	DOS_FCB fcb(seg,offset,false);	// always a non-extended FCB
+
+	// always a non-extended FCB
+	DOS_FCB fcb(seg, offset, false);
+
 	bool hasdrive = false;
-	bool hasname = false;
-	bool hasext = false;
-	Bitu index=0;
-	uint8_t fill=' ';
+	bool hasname  = false;
+	bool hasext   = false;
+	Bitu index    = 0;
+	uint8_t fill  = ' ';
+
 /* First get the old data from the fcb */
 #ifdef _MSC_VER
 #pragma pack (1)
@@ -1278,7 +1280,6 @@ uint8_t FCB_Parsename(uint16_t seg, uint16_t offset, uint8_t parser,
 	if(!isvalid(string[0])) goto savefcb;
 
 	hasname = true;
-	fill = ' ';
 	index = 0;
 	/* Copy the name */	
 	while (true) {
@@ -1821,6 +1822,10 @@ void DOS_SetupFiles()
 
 bool DOS_LockFile(const uint16_t entry, const uint32_t pos, const uint32_t len)
 {
+	if (!DOS_IsFileLocking()) {
+		DOS_SetError(DOSERR_FUNCTION_NUMBER_INVALID);
+		return false;
+	}
 	const auto handle = RealHandle(entry);
 	if (handle >= DOS_FILES) {
 		DOS_SetError(DOSERR_INVALID_HANDLE);
@@ -1843,6 +1848,10 @@ bool DOS_LockFile(const uint16_t entry, const uint32_t pos, const uint32_t len)
 
 bool DOS_UnlockFile(const uint16_t entry, const uint32_t pos, const uint32_t len)
 {
+	if (!DOS_IsFileLocking()) {
+		DOS_SetError(DOSERR_FUNCTION_NUMBER_INVALID);
+		return false;
+	}
 	const auto handle = RealHandle(entry);
 	if (handle >= DOS_FILES) {
 		DOS_SetError(DOSERR_INVALID_HANDLE);
@@ -1852,7 +1861,9 @@ bool DOS_UnlockFile(const uint16_t entry, const uint32_t pos, const uint32_t len
 		DOS_SetError(DOSERR_INVALID_HANDLE);
 		return false;
 	}
-	for (auto it = Files[handle]->region_locks.begin(); it != Files[handle]->region_locks.end(); ++it) {
+
+	const auto last = Files[handle]->region_locks.end();
+	for (auto it = Files[handle]->region_locks.begin(); it != last; ++it) {
 		if (it->pos == pos && it->len == len) {
 			Files[handle]->region_locks.erase(it);
 			return true;
@@ -1873,4 +1884,14 @@ void DOS_ClearDrivesAndFiles()
 	// Clear the shared drive pointers. The actual objects are managed by
 	// the drive manager class.
 	Drives.fill(nullptr);
+}
+
+bool DOS_IsFileLocking()
+{
+	return emulate_file_locking;
+}
+
+void DOS_Files_Init(SectionProp& section)
+{
+	emulate_file_locking = section.GetBool("file_locking");
 }

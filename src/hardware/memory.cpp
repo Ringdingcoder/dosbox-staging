@@ -1,37 +1,25 @@
-/*
- *  Copyright (C) 2023-2024  The DOSBox Staging Team
- *  Copyright (C) 2002-2021  The DOSBox Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2023-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
-#include "mem.h"
+#include "memory.h"
 
 #include <cstring>
+#include <memory>
 
-#include "inout.h"
-#include "paging.h"
-#include "pci_bus.h"
-#include "regs.h"
-#include "setup.h"
-#include "support.h"
+#include "config/setup.h"
+#include "cpu/paging.h"
+#include "cpu/registers.h"
+#include "hardware/pci_bus.h"
+#include "hardware/port.h"
+#include "misc/support.h"
 
-constexpr auto megabyte = 1024 * 1024;
+constexpr auto Megabyte = 1024 * 1024;
+
+constexpr auto PagesPerMegabyte = Megabyte / DosPageSize;
 
 constexpr auto MinMegabytes = static_cast<uint16_t>(1);
-constexpr auto MaxMegabytes = static_cast<uint16_t>(PciMemoryBase / megabyte);
+constexpr auto MaxMegabytes = static_cast<uint16_t>(PciMemoryBase / Megabyte);
 
 constexpr auto SafeMegabytesDos   = 31;
 constexpr auto SafeMegabytesWin95 = 480;
@@ -39,7 +27,7 @@ constexpr auto SafeMegabytesWin98 = 512;
 
 static struct MemoryBlock {
 	struct page_t {
-		uint8_t bytes[dos_pagesize] = {};
+		uint8_t bytes[DosPageSize] = {};
 	};
 	std::vector<page_t> pages           = {};
 	std::vector<PageHandler*> phandlers = {};
@@ -69,7 +57,7 @@ public:
 	}
 	uint8_t readb(PhysPt addr) override
 	{
-#if C_DEBUG
+#if C_DEBUGGER
 		LOG_MSG("Illegal read from %x, CS:IP %8x:%8x",addr,SegValue(cs),reg_eip);
 #else
 		static Bits lcount=0;
@@ -82,7 +70,7 @@ public:
 	}
 	void writeb(PhysPt addr, [[maybe_unused]] uint8_t val) override
 	{
-#if C_DEBUG
+#if C_DEBUGGER
 		LOG_MSG("Illegal write to %x, CS:IP %8x:%8x",addr,SegValue(cs),reg_eip);
 #else
 		static Bits lcount=0;
@@ -158,8 +146,9 @@ PageHandler * MEM_GetPageHandler(Bitu phys_page) {
 		return memory.lfb.handler;
 	}
 
-	constexpr uint32_t pages_in_16mb = {0x01000000u / dos_pagesize};
-	const auto last_page_in_first_16mb = memory.lfb.start_page + pages_in_16mb;
+	constexpr uint32_t PagesIn16Mb = 16 * PagesPerMegabyte;
+
+	const auto last_page_in_first_16mb = memory.lfb.start_page + PagesIn16Mb;
 	const auto sixteen_pages_beyond_first_16mb = last_page_in_first_16mb + 16u;
 
 	if (phys_page >= last_page_in_first_16mb &&
@@ -471,7 +460,7 @@ void MEM_A20_Enable(bool enabled) {
 	if (memory.a20.enabled == enabled) {
 		return;
 	}
-	constexpr uint32_t a20_base_page = megabyte / dos_pagesize;
+	constexpr uint32_t a20_base_page = Megabyte / DosPageSize;
 
 	const uint32_t phys_base_page = enabled ? a20_base_page : 0;
 
@@ -715,19 +704,20 @@ HostPt GetMemBase(void)
 	return MemBase;
 }
 
-class MEMORY final : public Module_base {
+class MEMORY {
 private:
 	IO_ReadHandleObject ReadHandler   = {};
 	IO_WriteHandleObject WriteHandler = {};
 
 public:
-	MEMORY(Section *configuration) : Module_base(configuration)
+	MEMORY(Section* sec)
 	{
 		// Get the users memory size preference
-		const auto section = static_cast<Section_prop*>(configuration);
-		const auto num_megabytes = section->Get_int("memsize");
+		const auto section       = static_cast<SectionProp*>(sec);
+		const auto num_megabytes = section->GetInt("memsize");
 		check_num_megabytes(num_megabytes);
-		const auto num_pages = (num_megabytes * megabyte) / dos_pagesize;
+
+		const auto num_pages = num_megabytes * PagesPerMegabyte;
 
 		// Size the actual memory pages
 		memory.pages.resize(num_pages);
@@ -765,7 +755,7 @@ public:
 		install_rom_page_handlers(pc_rom_range);
 
 		// Setup PCjr Cartridge ROM page handlers between 0xe0000-0xf0000
-		if (machine == MCH_PCJR) {
+		if (is_machine_pcjr()) {
 			constexpr page_range_t pcjr_rom_range = {0xe0, 0xf0};
 			install_rom_page_handlers(pcjr_rom_range);
 		}
@@ -777,18 +767,15 @@ public:
 	}
 };
 
-static MEMORY* test;
+static std::unique_ptr<MEMORY> memory_module = {};
 
-static void MEM_ShutDown([[maybe_unused]] Section *sec)
+void MEM_Init(Section* section)
 {
-	delete test;
+	assert(section);
+	memory_module = std::make_unique<MEMORY>(section);
 }
 
-void MEM_Init(Section* sec)
+void MEM_Destroy()
 {
-	assert(sec);
-
-	/* shutdown function */
-	test = new MEMORY(sec);
-	sec->AddDestroyFunction(&MEM_ShutDown);
+	memory_module = {};
 }

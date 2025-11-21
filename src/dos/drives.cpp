@@ -1,27 +1,13 @@
-/*
- *  Copyright (C) 2002-2021  The DOSBox Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
-#include "drives.h"
+// SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+#include "dos/drives.h"
 
 #include <string_view>
 
-#include "bios_disk.h"
-#include "ide.h"
-#include "string_utils.h"
+#include "ints/bios_disk.h"
+#include "hardware/ide.h"
+#include "utils/string_utils.h"
 
 extern char sfn[DOS_NAMELENGTH_ASCII];
 
@@ -325,7 +311,8 @@ char *DriveManager::GetDrivePosition(int drive)
 	return swap_position;
 }
 
-void DriveManager::Init(Section* /* sec */) {
+void DriveManager::Init()
+{
 	// setup drive_infos structure
 	for(int i = 0; i < DOS_DRIVES; i++) {
 		drive_infos.at(i).current_disk = 0;
@@ -337,6 +324,7 @@ void DriveManager::Init(Section* /* sec */) {
 	//                   "cycledrive", "Cycle Drv");
 }
 
-void DRIVES_Init(Section* sec) {
-	DriveManager::Init(sec);
+void DRIVES_Init()
+{
+	DriveManager::Init();
 }

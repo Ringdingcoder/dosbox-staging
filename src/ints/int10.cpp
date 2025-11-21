@@ -1,31 +1,16 @@
-/*
- *  Copyright (C) 2022-2024  The DOSBox Staging Team
- *  Copyright (C) 2002-2021  The DOSBox Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2022-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 
 #include "dosbox.h"
-#include "mem.h"
-#include "callback.h"
-#include "regs.h"
-#include "inout.h"
+#include "hardware/memory.h"
+#include "cpu/callback.h"
+#include "cpu/registers.h"
+#include "hardware/port.h"
 #include "int10.h"
-#include "mouse.h"
-#include "setup.h"
+#include "hardware/input/mouse.h"
+#include "config/setup.h"
 
 Int10Data int10;
 static callback_number_t call_10 = 0;
@@ -81,7 +66,7 @@ static Bitu INT10_Handler(void) {
 		reg_ax=0;
 		break;
 	case 0x05:								/* Set Active Page */
-		if ((reg_al & 0x80) && IS_TANDY_ARCH) {
+		if ((reg_al & 0x80) && is_machine_pcjr_or_tandy()) {
 			uint8_t crtcpu=real_readb(BIOSMEM_SEG, BIOSMEM_CRTCPU_PAGE);
 			switch (reg_al) {
 			case 0x80:
@@ -98,7 +83,7 @@ static Bitu INT10_Handler(void) {
 				crtcpu=(crtcpu & 0xc0) | (reg_bh & 7) | ((reg_bl & 7) << 3);
 				break;
 			}
-			if (machine==MCH_PCJR) {
+			if (is_machine_pcjr()) {
 				/* always return graphics mapping, even for invalid values of AL */
 				reg_bh=crtcpu & 7;
 				reg_bl=(crtcpu >> 3) & 0x7;
@@ -146,14 +131,19 @@ static Bitu INT10_Handler(void) {
 		INT10_TeletypeOutput(reg_al,reg_bl);
 		break;
 	case 0x0F:								/* Get videomode */
-		reg_bh=real_readb(BIOSMEM_SEG,BIOSMEM_CURRENT_PAGE);
-		reg_al=real_readb(BIOSMEM_SEG,BIOSMEM_CURRENT_MODE);
-		if (IS_EGAVGA_ARCH) reg_al|=real_readb(BIOSMEM_SEG,BIOSMEM_VIDEO_CTL)&0x80;
-		reg_ah=(uint8_t)real_readw(BIOSMEM_SEG,BIOSMEM_NB_COLS);
+		reg_bh = real_readb(BIOSMEM_SEG, BIOSMEM_CURRENT_PAGE);
+		reg_al = real_readb(BIOSMEM_SEG, BIOSMEM_CURRENT_MODE);
+		if (is_machine_ega_or_better()) {
+			reg_al |= real_readb(BIOSMEM_SEG, BIOSMEM_VIDEO_CTL) & 0x80;
+		}
+		reg_ah = (uint8_t) real_readw(BIOSMEM_SEG, BIOSMEM_NB_COLS);
 		break;
 	case 0x10:								/* Palette functions */
-		if (!IS_EGAVGA_ARCH && (reg_al>0x02)) break;
-		else if (!IS_VGA_ARCH && (reg_al>0x03)) break;
+		if (!is_machine_ega_or_better() && (reg_al > 0x02)) {
+			break;
+		} else if (!is_machine_vga_or_better() && (reg_al > 0x03)) {
+			break;
+		}
 		switch (reg_al) {
 		case 0x00:							/* SET SINGLE PALETTE REGISTER */
 			INT10_SetSinglePaletteRegister(reg_bl,reg_bh);
@@ -215,7 +205,7 @@ static Bitu INT10_Handler(void) {
 
 	// Character generator functions
 	case 0x11:
-		if (!IS_EGAVGA_ARCH) {
+		if (!is_machine_ega_or_better()) {
 			break;
 		}
 
@@ -230,50 +220,57 @@ static Bitu INT10_Handler(void) {
 		case 0x00: [[fallthrough]];
 		// Load and activate user font
 		case 0x10: {
-			const auto font_data = SegPhys(es) + reg_bp;
-			const auto reload    = (reg_al == 0x10);
-			const auto count     = reg_cx;
-			const auto offset    = reg_dx;
-			const auto map       = reg_bl & 0x7f;
-			const auto height    = reg_bh;
+			const auto font_data   = SegPhys(es) + reg_bp;
+			const auto reload      = (reg_al == 0x10);
+			const auto num_chars   = reg_cx;
+			const auto first_char  = reg_dx;
+			const auto font_block  = reg_bl;
+			const auto char_height = reg_bh;
 
-			INT10_LoadFont(font_data, reload, count, offset, map, height);
+			INT10_LoadFont(font_data,
+			               reload,
+			               num_chars,
+			               first_char,
+			               font_block,
+			               char_height);
 		} break;
 
 		// Load ROM 8x14 font
 		case 0x01: [[fallthrough]];
 		// Load and activate ROM 8x14 font
 		case 0x11: {
-			const auto reload     = (reg_al == 0x11);
-			constexpr auto Count  = 256;
-			constexpr auto Offset = 0;
-			const auto map        = reg_bl & 0x7f;
-			constexpr auto Height = 14;
+			const auto font_data = RealToPhysical(int10.rom.font_14);
+			const auto reload         = (reg_al == 0x11);
+			constexpr auto NumChars   = 256;
+			constexpr auto FirstChar  = 0;
+			const auto font_block     = reg_bl;
+			constexpr auto CharHeight = 14;
 
-			INT10_LoadFont(RealToPhysical(int10.rom.font_14),
+			INT10_LoadFont(font_data,
 			               reload,
-			               Count,
-			               Offset,
-			               map,
-			               Height);
+			               NumChars,
+			               FirstChar,
+			               font_block,
+			               CharHeight);
 		} break;
 
 		// Load ROM 8x8 font
 		case 0x02: [[fallthrough]];
 		// Load and activate ROM 8x8 font
 		case 0x12: {
-			const auto reload     = (reg_al == 0x12);
-			constexpr auto Count  = 256;
-			constexpr auto Offset = 0;
-			const auto map        = reg_bl & 0x7f;
-			constexpr auto Height = 8;
+			const auto font_data = RealToPhysical(int10.rom.font_8_first);
+			const auto reload         = (reg_al == 0x12);
+			constexpr auto NumChars   = 256;
+			constexpr auto FirstChar  = 0;
+			const auto font_block     = reg_bl;
+			constexpr auto CharHeight = 8;
 
-			INT10_LoadFont(RealToPhysical(int10.rom.font_8_first),
+			INT10_LoadFont(font_data,
 			               reload,
-			               Count,
-			               Offset,
-			               map,
-			               Height);
+			               NumChars,
+			               FirstChar,
+			               font_block,
+			               CharHeight);
 		} break;
 
 		// Set Block Specifier
@@ -286,22 +283,23 @@ static Bitu INT10_Handler(void) {
 		case 0x04:
 		// Load and activate ROM 8x16 font
 		case 0x14: {
-			if (!IS_VGA_ARCH) {
+			if (!is_machine_vga_or_better()) {
 				break;
 			}
 
-			const auto reload     = (reg_al == 0x14);
-			constexpr auto Count  = 256;
-			constexpr auto Offset = 0;
-			const auto map        = reg_bl & 0x7f;
-			constexpr auto Height = 16;
+			const auto font_data = RealToPhysical(int10.rom.font_16);
+			const auto reload         = (reg_al == 0x14);
+			constexpr auto NumChars   = 256;
+			constexpr auto FirstChar  = 0;
+			const auto font_block     = reg_bl;
+			constexpr auto CharHeight = 16;
 
-			INT10_LoadFont(RealToPhysical(int10.rom.font_16),
+			INT10_LoadFont(font_data,
 			               reload,
-			               Count,
-			               Offset,
-			               map,
-			               Height);
+			               NumChars,
+			               FirstChar,
+			               font_block,
+			               CharHeight);
 		} break;
 
 		// Graphics mode calls
@@ -326,7 +324,7 @@ static Bitu INT10_Handler(void) {
 			goto graphics_chars;
 
 		case 0x24:			/* Rom 8x16 set */
-			if (!IS_VGA_ARCH) {
+			if (!is_machine_vga_or_better()) {
 				break;
 			}
 			RealSetVec(0x43,int10.rom.font_16);
@@ -390,7 +388,7 @@ graphics_chars:
 				break;
 
 			case 0x06:	/* font 8x16 */
-				if (!IS_VGA_ARCH) {
+				if (!is_machine_vga_or_better()) {
 					break;
 				}
 				SegSet16(es,RealSegment(int10.rom.font_16));
@@ -398,7 +396,7 @@ graphics_chars:
 				break;
 
 			case 0x07:	/* alpha alternate 9x16 */
-				if (!IS_VGA_ARCH) {
+				if (!is_machine_vga_or_better()) {
 					break;
 				}
 				SegSet16(es,RealSegment(int10.rom.font_16_alternate));
@@ -410,7 +408,7 @@ graphics_chars:
 				break;
 			}
 
-			if ((reg_bh<=7) || (svgaCard==SVGA_TsengET4K)) {
+			if ((reg_bh <= 7) || (svga_type == SvgaType::TsengEt4k)) {
 				reg_cx=real_readw(BIOSMEM_SEG,BIOSMEM_CHAR_HEIGHT);
 				reg_dl=real_readb(BIOSMEM_SEG,BIOSMEM_NB_ROWS);
 			}
@@ -427,7 +425,7 @@ graphics_chars:
 		break;
 
 	case 0x12:								/* alternate function select */
-		if (!IS_EGAVGA_ARCH) {
+		if (!is_machine_ega_or_better()) {
 			break;
 		}
 		switch (reg_bl) {
@@ -443,7 +441,7 @@ graphics_chars:
 
 		case 0x30:							/* Select vertical resolution */
 			{
-				if (!IS_VGA_ARCH) {
+				if (!is_machine_vga_or_better()) {
 					break;
 				}
 
@@ -486,12 +484,15 @@ graphics_chars:
 			}
 		case 0x31:							/* Palette loading on modeset */
 			{
-				if (!IS_VGA_ARCH) {
+				if (!is_machine_vga_or_better()) {
 					break;
 				}
-				if (svgaCard==SVGA_TsengET4K) reg_al&=1;
-				if (reg_al>1) {
-					reg_al=0;		//invalid subfunction
+				if (svga_type == SvgaType::TsengEt4k) {
+					reg_al &= 1;
+				}
+				if (reg_al > 1) {
+					// invalid subfunction
+					reg_al = 0;
 					break;
 				}
 				uint8_t temp = real_readb(BIOSMEM_SEG, BiosDataArea::VgaFlagsRecOffset) & 0xf7;
@@ -501,23 +502,32 @@ graphics_chars:
 				break;
 			}
 		case 0x32:							/* Video addressing */
-			if (!IS_VGA_ARCH) {
+			if (!is_machine_vga_or_better()) {
 				break;
 			}
 			LOG(LOG_INT10,LOG_ERROR)("Function 12:Call %2X not handled",reg_bl);
-			if (svgaCard==SVGA_TsengET4K) reg_al&=1;
-			if (reg_al>1) reg_al=0;		//invalid subfunction
-			else reg_al=0x12;			//fake a success call
+			if (svga_type == SvgaType::TsengEt4k) {
+				reg_al &= 1;
+			}
+			if (reg_al > 1) {
+				// invalid subfunction
+				reg_al = 0;
+			} else {
+				// fake a success call
+				reg_al = 0x12;
+			}
 			break;
 
 		case 0x33: /* SWITCH GRAY-SCALE SUMMING */
 			{
-				if (!IS_VGA_ARCH) {
+				if (!is_machine_vga_or_better()) {
 					break;
 				}
-				if (svgaCard==SVGA_TsengET4K) reg_al&=1;
-				if (reg_al>1) {
-					reg_al=0;
+				if (svga_type == SvgaType::TsengEt4k) {
+					reg_al &= 1;
+				}
+				if (reg_al > 1) {
+					reg_al = 0;
 					break;
 				}
 				uint8_t temp = real_readb(BIOSMEM_SEG, BiosDataArea::VgaFlagsRecOffset) & 0xfd;
@@ -529,12 +539,14 @@ graphics_chars:
 		case 0x34: /* ALTERNATE FUNCTION SELECT (VGA) - CURSOR EMULATION */
 			{
 				// bit 0: 0=enable, 1=disable
-				if (!IS_VGA_ARCH) {
+				if (!is_machine_vga_or_better()) {
 					break;
 				}
-				if (svgaCard==SVGA_TsengET4K) reg_al&=1;
-				if (reg_al>1) {
-					reg_al=0;
+				if (svga_type == SvgaType::TsengEt4k) {
+					reg_al &= 1;
+				}
+				if (reg_al > 1) {
+					reg_al = 0;
 					break;
 				}
 				uint8_t temp = real_readb(BIOSMEM_SEG,BIOSMEM_VIDEO_CTL) & 0xfe;
@@ -543,7 +555,7 @@ graphics_chars:
 				break;
 			}
 		case 0x35:
-			if (!IS_VGA_ARCH) {
+			if (!is_machine_vga_or_better()) {
 				break;
 			}
 			LOG(LOG_INT10,LOG_ERROR)("Function 12:Call %2X not handled",reg_bl);
@@ -551,11 +563,11 @@ graphics_chars:
 			break;
 
 		case 0x36: {						/* VGA Refresh control */
-			if (!IS_VGA_ARCH) {
+			if (!is_machine_vga_or_better()) {
 				break;
 			}
-			if ((svgaCard==SVGA_S3Trio) && (reg_al>1)) {
-				reg_al=0;
+			if ((svga_type == SvgaType::S3) && (reg_al > 1)) {
+				reg_al = 0;
 				break;
 			}
 			IO_Write(0x3c4,0x1);
@@ -572,7 +584,9 @@ graphics_chars:
 		}
 		default:
 			LOG(LOG_INT10,LOG_ERROR)("Function 12:Call %2X not handled",reg_bl);
-			if (machine!=MCH_EGA) reg_al=0;
+			if (!is_machine_ega()) {
+				reg_al = 0;
+			}
 			break;
 		}
 		break;
@@ -582,7 +596,7 @@ graphics_chars:
 		break;
 
 	case 0x1A:								/* Display Combination */
-		if (!IS_VGA_ARCH) {
+		if (!is_machine_vga_or_better()) {
 			break;
 		}
 		if (reg_al<2) {
@@ -592,7 +606,7 @@ graphics_chars:
 		break;
 
 	case 0x1B:								/* functionality State Information */
-		if (!IS_VGA_ARCH) {
+		if (!is_machine_vga_or_better()) {
 			break;
 		}
 		switch (reg_bx) {
@@ -610,7 +624,7 @@ graphics_chars:
 		break;
 
 	case 0x1C:	/* Video Save Area */
-		if (!IS_VGA_ARCH) {
+		if (!is_machine_vga_or_better()) {
 			break;
 		}
 		switch (reg_al) {
@@ -631,14 +645,17 @@ graphics_chars:
 				else reg_al=0;
 				break;
 			default:
-				if (svgaCard==SVGA_TsengET4K) reg_ax=0;
-				else reg_al=0;
+				if (svga_type == SvgaType::TsengEt4k) {
+					reg_ax = 0;
+				} else {
+					reg_al = 0;
+				}
 				break;
 		}
 		break;
 
 	case 0x4f:								/* VESA Calls */
-		if ((!IS_VGA_ARCH) || (svgaCard!=SVGA_S3Trio)) {
+		if (svga_type != SvgaType::S3) {
 			break;
 		}
 		switch (reg_al) {
@@ -847,7 +864,7 @@ graphics_chars:
 static void INT10_Seg40Init(void) {
 	// Set the default MSR
 	real_writeb(BIOSMEM_SEG,BIOSMEM_CURRENT_MSR,0x09);
-	if (IS_EGAVGA_ARCH) {
+	if (is_machine_ega_or_better()) {
 		// Set the default char height
 		real_writeb(BIOSMEM_SEG,BIOSMEM_CHAR_HEIGHT,16);
 		// Clear the screen
@@ -861,9 +878,9 @@ static void INT10_Seg40Init(void) {
 	}
 }
 
-static void INT10_InitVGA(void)
+static void INT10_InitVGA()
 {
-	if (IS_EGAVGA_ARCH) {
+	if (is_machine_ega_or_better()) {
 		// Switch to color mode and enable CPU access 480 lines
 		IO_Write(0x3c2, 0xc3);
 
@@ -871,7 +888,7 @@ static void INT10_InitVGA(void)
 		IO_Write(0x3c4, 0x04);
 		IO_Write(0x3c5, 0x02);
 
-		if (IS_VGA_ARCH) {
+		if (is_machine_vga_or_better()) {
 			// Initialize 256-colour VGA DAC palette to black
 			IO_Write(0x3c8, 0);
 
@@ -886,7 +903,8 @@ static void INT10_InitVGA(void)
 	}
 }
 
-static void SetupTandyBios(void) {
+static void SetupTandyBios()
+{
 	static uint8_t TandyConfig[130]= {
 		0x21, 0x42, 0x49, 0x4f, 0x53, 0x20, 0x52, 0x4f, 0x4d, 0x20, 0x76, 0x65, 0x72,
 		0x73, 0x69, 0x6f, 0x6e, 0x20, 0x30, 0x32, 0x2e, 0x30, 0x30, 0x2e, 0x30, 0x30,
@@ -899,7 +917,8 @@ static void SetupTandyBios(void) {
 		0x41, 0x73, 0x73, 0x6f, 0x63, 0x69, 0x61, 0x74, 0x65, 0x73, 0x20, 0x4c, 0x74,
 		0x64, 0x2e, 0x0d, 0x0a, 0x61, 0x6e, 0x64, 0x20, 0x54, 0x61, 0x6e, 0x64, 0x79
 	};
-	if (machine==MCH_TANDY) {
+
+	if (is_machine_tandy()) {
 		Bitu i;
 		for(i=0;i<130;i++) {
 			phys_writeb(0xf0000+i+0xc000, TandyConfig[i]);
@@ -907,15 +926,22 @@ static void SetupTandyBios(void) {
 	}
 }
 
-void INT10_Init(Section* /*sec*/) {
+void INT10_Init()
+{
 	INT10_SetupPalette();
+
 	INT10_InitVGA();
-	if (IS_TANDY_ARCH) SetupTandyBios();
-	/* Setup the INT 10 vector */
-	call_10=CALLBACK_Allocate();
-	CALLBACK_Setup(call_10,&INT10_Handler,CB_IRET,"Int 10 video");
-	RealSetVec(0x10,CALLBACK_RealPointer(call_10));
-	//Init the 0x40 segment and init the datastructures in the video rom area
+
+	if (is_machine_pcjr_or_tandy()) {
+		SetupTandyBios();
+	}
+
+	// Setup the INT 10 vector
+	call_10 = CALLBACK_Allocate();
+	CALLBACK_Setup(call_10, &INT10_Handler, CB_IRET, "Int 10 video");
+	RealSetVec(0x10, CALLBACK_RealPointer(call_10));
+
+	// Init the 0x40 segment and init the datastructures in the video rom area
 	INT10_SetupRomMemory();
 	INT10_Seg40Init();
 	INT10_SetVideoMode(0x3);

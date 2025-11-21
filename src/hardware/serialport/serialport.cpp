@@ -1,46 +1,29 @@
-/*
- *  Copyright (C) 2022       The DOSBox Staging Team
- *  Copyright (C) 2002-2021  The DOSBox Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
-
-#include "dosbox.h"
+// SPDX-FileCopyrightText:  2022-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
 #include <cctype>
 #include <cstdarg>
 #include <cstring>
+#include <memory>
 #include <tuple>
 
-#include "../../capture/capture.h"
-#include "inout.h"
-#include "pic.h"
-#include "setup.h"
-#include "bios.h"					// SetComPorts(..)
-#include "callback.h"				// CALLBACK_Idle
-#include "string_utils.h"
-
-#include "serialport.h"
 #include "directserial.h"
-#include "serialdummy.h"
-#include "softmodem.h"
 #include "nullmodem.h"
+#include "serialdummy.h"
 #include "serialmouse.h"
+#include "serialport.h"
+#include "softmodem.h"
 
-#include "cpu.h"
+#include "capture/capture.h"
+#include "config/setup.h"
+#include "cpu/callback.h"
+#include "cpu/cpu.h"
+#include "hardware/pic.h"
+#include "hardware/port.h"
+#include "ints/bios.h"
+#include "utils/string_utils.h"
 
 #define LOG_SER(x) log_ser
 
@@ -1184,7 +1167,7 @@ bool CSerial::getUintFromString(const char *name, uint32_t &data, CommandLine *c
 {
 	bool result = false;
 	std::string tmpstring;
-	if (cmd->FindStringBegin(name, tmpstring, false))
+	if (cmd->FindStringCaseInsensitiveBegin(name, tmpstring, false))
 		result = (sscanf(tmpstring.c_str(), "%" PRIu32, &data) == 1);
 	return result;
 }
@@ -1290,14 +1273,15 @@ uint32_t CSerial::GetPortBaudRate() const {
 	return SerialMaxBaudRate / baud_divider;
 }
 
-class SERIALPORTS final : public Module_base {
+class SerialPorts {
 public:
-	SERIALPORTS (Section * configuration):Module_base (configuration) {
+	SerialPorts(Section* sec)
+	{
 		uint16_t biosParameter[SERIAL_MAX_PORTS] = {0};
-		Section_prop *section = static_cast <Section_prop*>(configuration);
+		SectionProp* section = static_cast<SectionProp*>(sec);
 
 #if C_MODEM
-		const Prop_path *pbFilename = section->Get_path("phonebookfile");
+		const PropPath *pbFilename = section->GetPath("phonebookfile");
 		MODEM_ReadPhonebook(pbFilename->realpath);
 #endif
 
@@ -1306,8 +1290,8 @@ public:
 			// get the configuration property
 			s_property[6] = '1' + static_cast<char>(i);
 			PropMultiVal* p = section->GetMultiVal(s_property);
-			std::string type = p->GetSection()->Get_string("type");
-			CommandLine cmd("", p->GetSection()->Get_string("parameters"));
+			std::string type = p->GetSection()->GetString("type");
+			CommandLine cmd("", p->GetSection()->GetString("parameters"));
 			
 			// detect the type
 			if (type=="dummy") {
@@ -1368,7 +1352,7 @@ public:
 		BIOS_SetComPorts (biosParameter);
 	}
 
-	~SERIALPORTS()
+	~SerialPorts()
 	{
 		for (uint8_t i = 0; i < SERIAL_MAX_PORTS; ++i) {
 			if (serialports[i]) {
@@ -1382,22 +1366,88 @@ public:
 	}
 };
 
-static SERIALPORTS *testSerialPortsBaseclass = nullptr;
+static std::unique_ptr<SerialPorts> serial_ports = {};
 
-void SERIAL_Destroy(Section *sec)
+void SERIAL_Init()
 {
-	(void)sec; // unused, but required for API compliance
-	delete testSerialPortsBaseclass;
-	testSerialPortsBaseclass = nullptr;
+	auto section = get_section("serial");
+	assert(section);
+
+	serial_ports = std::make_unique<SerialPorts>(section);
 }
 
-void SERIAL_Init (Section* sec)
+void SERIAL_Destroy()
 {
-	assert(sec);
+	serial_ports = {};
+}
 
-	delete testSerialPortsBaseclass;
-	testSerialPortsBaseclass = new SERIALPORTS(sec);
+static void notify_serial_setting_updated([[maybe_unused]] SectionProp& section,
+                                          [[maybe_unused]] const std::string& prop_name)
+{
+	SERIAL_Destroy();
+	SERIAL_Init();
+}
 
-	constexpr auto changeable_at_runtime = true;
-	sec->AddDestroyFunction(&SERIAL_Destroy, changeable_at_runtime);
+static void add_serial_config_settings(SectionProp& section)
+{
+	using enum Property::Changeable::Value;
+
+	const std::vector<std::string> serials = {
+	        "dummy", "disabled", "mouse", "modem", "nullmodem", "direct"};
+
+	auto pmulti_remain = section.AddMultiValRemain("serial1", WhenIdle, " ");
+	auto pstring = pmulti_remain->GetSection()->AddString("type", WhenIdle, "dummy");
+	pmulti_remain->SetValue("dummy");
+	pstring->SetValues(serials);
+	pmulti_remain->GetSection()->AddString("parameters", WhenIdle, "");
+	pmulti_remain->SetHelp(
+	        "Set type of device connected to the COM1 port.\n"
+	        "Can be disabled, dummy, mouse, modem, nullmodem, direct ('dummy' by default).\n"
+	        "Additional parameters must be on the same line in the form of\n"
+	        "parameter:value. The optional 'irq' parameter is common for all types.\n"
+	        "  - for 'mouse':      model (optional; overrides the 'com_mouse_model' setting).\n"
+	        "  - for 'direct':     realport (required), rxdelay (optional).\n"
+	        "                      (e.g., realport:COM1, realport:ttyS0).\n"
+	        "  - for 'modem':      listenport, sock, bps (all optional).\n"
+	        "  - for 'nullmodem':  server, rxdelay, txdelay, telnet, usedtr,\n"
+	        "                      transparent, port, inhsocket, sock (all optional).\n"
+	        "The 'sock' parameter specifies the protocol to use at both sides of the\n"
+	        "connection. Valid values are 0 for TCP, and 1 for ENet reliable UDP.\n"
+	        "Example: serial1=modem listenport:5000 sock:1");
+
+	pmulti_remain = section.AddMultiValRemain("serial2", WhenIdle, " ");
+	pstring = pmulti_remain->GetSection()->AddString("type", WhenIdle, "dummy");
+	pmulti_remain->SetValue("dummy");
+	pstring->SetValues(serials);
+	pmulti_remain->GetSection()->AddString("parameters", WhenIdle, "");
+	pmulti_remain->SetHelp("See 'serial1' ('dummy' by default).");
+
+	pmulti_remain = section.AddMultiValRemain("serial3", WhenIdle, " ");
+	pstring = pmulti_remain->GetSection()->AddString("type", WhenIdle, "disabled");
+	pmulti_remain->SetValue("disabled");
+	pstring->SetValues(serials);
+	pmulti_remain->GetSection()->AddString("parameters", WhenIdle, "");
+	pmulti_remain->SetHelp("See 'serial1' ('disabled' by default).");
+
+	pmulti_remain = section.AddMultiValRemain("serial4", WhenIdle, " ");
+	pstring = pmulti_remain->GetSection()->AddString("type", WhenIdle, "disabled");
+	pmulti_remain->SetValue("disabled");
+	pstring->SetValues(serials);
+	pmulti_remain->GetSection()->AddString("parameters", WhenIdle, "");
+	pmulti_remain->SetHelp("See 'serial1' ('disabled' by default).");
+
+	pstring = section.AddPath("phonebookfile", OnlyAtStart, "phonebook.txt");
+	pstring->SetHelp(
+	        "File used to map fake phone numbers to addresses\n"
+	        "('phonebook.txt' by default).");
+}
+
+void SERIAL_AddConfigSection(const ConfigPtr& conf)
+{
+	assert(conf);
+
+	auto section = conf->AddSection("serial");
+	section->AddUpdateHandler(notify_serial_setting_updated);
+
+	add_serial_config_settings(*section);
 }

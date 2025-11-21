@@ -1,20 +1,5 @@
-/*
- *  Copyright (C) 2002-2021  The DOSBox Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #ifndef DOSBOX_SERIALMODEM_H
 #define DOSBOX_SERIALMODEM_H
@@ -218,7 +203,7 @@ public:
 	std::unique_ptr<CFifo> rqueue;
 	std::unique_ptr<CFifo> tqueue;
 
-protected:
+private:
 	// The AT command line can consist of a 99-character command sequence
 	// including the AT prefix followed by "D<phone/hostname>", where the
 	// hostname can reach a length of up to 253 characters.
@@ -239,7 +224,6 @@ protected:
 	uint8_t waiting_tx_character = 0;
 	uint32_t cmdpause = 0;
 	int32_t ringtimer = 0;
-	int32_t ringcount = 0;
 	uint32_t plusinc = 0;
 	uint32_t cmdpos = 0;
 	uint32_t flowcontrol = 0;

@@ -1,25 +1,8 @@
-/*
- *  SPDX-License-Identifier: GPL-2.0-or-later
- *
- *  Copyright (C) 2023-2023  The DOSBox Staging Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2023-2025 The DOSBox Staging Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
-#include "../src/dos/program_mixer.h"
-#include "channel_names.h"
+#include "audio/channel_names.h"
+#include "dos/programs/mixer.h"
 
 #include <gtest/gtest.h>
 
@@ -58,10 +41,7 @@ static void assert_success(const std::vector<std::string>& args,
 	                                  ChannelInfos(channel_infos_map),
 	                                  AllChannelNames);
 
-	if (auto error = std::get_if<Error>(&result); error) {
-		printf("*** TEST FAILED: ");
-		printf(error->message.c_str());
-		printf("\n");
+	if (auto error_type = std::get_if<ErrorType>(&result); error_type) {
 		FAIL();
 	} else {
 		auto actual = std::get<std::queue<MixerCommand::Command>>(result);
@@ -77,11 +57,9 @@ static void assert_failure(const std::vector<std::string>& args,
 	                                  ChannelInfos(channel_infos_map),
 	                                  AllChannelNames);
 
-	if (auto error = std::get_if<Error>(&result); error) {
-		LOG_WARNING(error->message.c_str());
-		EXPECT_EQ(error->type, expected_error_type);
+	if (auto error_type = std::get_if<ErrorType>(&result); error_type) {
+		EXPECT_EQ(*error_type, expected_error_type);
 	} else {
-		printf("*** TEST FAILED: No error reported");
 		FAIL();
 	}
 }
@@ -298,7 +276,7 @@ TEST(ProgramMixer, Channel_SetVolumeChannelNameStartsWithLetterD)
 TEST(ProgramMixer, Channel_SetStereoModeStereo)
 {
 	auto expected = select_sb_channel();
-	expected.emplace(SetStereoMode{Stereo});
+	expected.emplace(SetStereoMode{StereoMap});
 
 	assert_success({"sb", "stereo"}, expected);
 }
@@ -306,7 +284,7 @@ TEST(ProgramMixer, Channel_SetStereoModeStereo)
 TEST(ProgramMixer, Channel_SetStereoModeReverse)
 {
 	auto expected = select_sb_channel();
-	expected.emplace(SetStereoMode{Reverse});
+	expected.emplace(SetStereoMode{ReverseMap});
 
 	assert_success({"sb", "reverse"}, expected);
 }
@@ -393,7 +371,7 @@ TEST(ProgramMixer, AllCommands)
 	expected.emplace(SelectChannel{"SB"});
 	expected.emplace(SetChorusLevel{0.09f});
 	expected.emplace(SetReverbLevel{0.20f});
-	expected.emplace(SetStereoMode{Reverse});
+	expected.emplace(SetStereoMode{ReverseMap});
 	expected.emplace(SetCrossfeedStrength{0.10f});
 	expected.emplace(SetVolume{AudioFrame(0.20f, 0.20f)});
 

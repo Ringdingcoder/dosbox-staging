@@ -1,17 +1,25 @@
-add_library(libmidi STATIC
-		midi.cpp
-		midi_alsa.cpp
-		midi_fluidsynth.cpp
-		midi_mt32.cpp
-		midi_lasynth_model.cpp
-		midi_oss.cpp
+target_sources(libdosboxcommon PRIVATE
+  alsa.cpp
+  coreaudio.cpp
+  coremidi.cpp
+  fluidsynth.cpp
+  midi.cpp
+  mt32.cpp
+  mt32_lasynth_model.cpp
+  soundcanvas.cpp
+  win32.cpp
 )
 
-find_package(MT32Emu CONFIG REQUIRED)
-find_package(FluidSynth CONFIG REQUIRED)
-
-target_link_libraries(libmidi PRIVATE
-		$<IF:$<TARGET_EXISTS:SDL2::SDL2>,SDL2::SDL2,SDL2::SDL2-static>
-		MT32Emu::mt32emu
-		FluidSynth::libfluidsynth
+target_link_libraries(libdosboxcommon PRIVATE 
+  MT32Emu::mt32emu 
+  FluidSynth::libfluidsynth
 )
+
+if (C_ALSA)
+  target_link_libraries(libdosboxcommon PRIVATE ALSA::ALSA)
+endif()
+
+if (C_COREMIDI)
+  target_link_libraries(libdosboxcommon PRIVATE "-framework CoreFoundation")
+  target_link_libraries(libdosboxcommon PRIVATE "-framework CoreMIDI")
+endif()

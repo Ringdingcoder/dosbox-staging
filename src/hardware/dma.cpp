@@ -1,39 +1,24 @@
-/*
- *  Copyright (C) 2022-2024  The DOSBox Staging Team
- *  Copyright (C) 2002-2021  The DOSBox Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2022-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
-#include "dosbox.h"
+#include "dma.h"
 
 #include <algorithm>
 #include <cstring>
 #include <memory>
 
-#include "dma.h"
-#include "mem.h"
-#include "inout.h"
-#include "pic.h"
-#include "paging.h"
-#include "setup.h"
+#include "config/setup.h"
+#include "cpu/paging.h"
+#include "hardware/audio/tandy_sound.h"
+#include "hardware/memory.h"
+#include "hardware/pic.h"
+#include "hardware/port.h"
 
 std::unique_ptr<DmaController> primary   = {};
 std::unique_ptr<DmaController> secondary = {};
 
-#define EMM_PAGEFRAME4K ((0xE000 * 16) / dos_pagesize)
+#define EMM_PAGEFRAME4K ((0xE000 * 16) / DosPageSize)
 uint32_t ems_board_mapping[LINK_START];
 
 // Constants
@@ -55,7 +40,7 @@ static void UpdateEMSMapping()
 
 // Generic function to read or write a block of data to or from memory.
 // Don't use this directly; call two helpers: DMA_BlockRead or DMA_BlockWrite
-static void perform_dma_io(const DMA_DIRECTION direction, const PhysPt spage,
+static void perform_dma_io(const DmaDirection direction, const PhysPt spage,
                            PhysPt mem_address, void* const data_start,
                            const size_t num_words, const uint8_t is_dma16)
 {
@@ -83,24 +68,24 @@ static void perform_dma_io(const DMA_DIRECTION direction, const PhysPt spage,
 		}
 
 		// Calculate the offset within the page
-		const auto pos_in_page       = mem_address & (dos_pagesize - 1);
-		const auto bytes_to_page_end = check_cast<uint16_t>(
-		        dos_pagesize - pos_in_page);
-		const auto chunk_start = check_cast<PhysPt>(page * dos_pagesize +
+		const auto pos_in_page = mem_address & (DosPageSize - 1);
+		const auto bytes_to_page_end = check_cast<uint16_t>(DosPageSize -
+		                                                    pos_in_page);
+		const auto chunk_start = check_cast<PhysPt>(page * DosPageSize +
 		                                            pos_in_page);
 
 		// Determine how many bytes to transfer within this page
 		const auto chunk_bytes = std::min(remaining_bytes, bytes_to_page_end);
 
 		// Copy the data from the page address into the data pointer
-		if (direction == DMA_DIRECTION::READ) {
+		if (direction == DmaDirection::Read) {
 			for (auto i = 0; i < chunk_bytes; ++i) {
 				data_pt[i] = phys_readb(chunk_start + i);
 			}
 		}
 
 		// Copy the data from the data pointer into the page address
-		else if (direction == DMA_DIRECTION::WRITE) {
+		else if (direction == DmaDirection::Write) {
 			for (auto i = 0; i < chunk_bytes; ++i) {
 				phys_writeb(chunk_start + i, data_pt[i]);
 			}
@@ -111,8 +96,6 @@ static void perform_dma_io(const DMA_DIRECTION direction, const PhysPt spage,
 		remaining_bytes -= chunk_bytes;
 	} while (remaining_bytes);
 }
-
-void TANDYSOUND_ShutDown(Section* = nullptr);
 
 static bool activate_primary()
 {
@@ -131,7 +114,7 @@ static bool activate_secondary()
 	// conflict, so we explicitly shutdown the TandySound device (if
 	// it happens to be running) to meet this request.
 	//
-	TANDYSOUND_ShutDown();
+	TANDYSOUND_Destroy();
 
 	constexpr uint8_t secondary_index = 1;
 	secondary = std::make_unique<DmaController>(secondary_index);
@@ -357,8 +340,8 @@ uint16_t DmaController::ReadControllerReg(const io_port_t reg, io_width_t)
 		}
 		return ret;
 	default:
-		LOG(LOG_DMACONTROL, LOG_NORMAL)
-		("Trying to read undefined DMA port %x", reg);
+		LOG(LOG_DMACONTROL,
+		    LOG_NORMAL)("Trying to read undefined DMA port %x", reg);
 		break;
 	}
 	return 0xffff;
@@ -375,7 +358,7 @@ DmaChannel::DmaChannel(const uint8_t num, const bool is_dma_16bit)
 	assert(is_incremented);
 }
 
-void DmaChannel::DoCallback(const DMAEvent event) const
+void DmaChannel::DoCallback(const DmaEvent event) const
 {
 	if (callback) {
 		callback(this, event);
@@ -385,7 +368,7 @@ void DmaChannel::DoCallback(const DMAEvent event) const
 void DmaChannel::SetMask(const bool _mask)
 {
 	is_masked = _mask;
-	DoCallback(is_masked ? DMA_MASKED : DMA_UNMASKED);
+	DoCallback(is_masked ? DmaEvent::IsMasked : DmaEvent::IsUnmasked);
 }
 
 void DmaChannel::RegisterCallback(const DMA_Callback _cb)
@@ -402,12 +385,12 @@ void DmaChannel::RegisterCallback(const DMA_Callback _cb)
 void DmaChannel::ReachedTerminalCount()
 {
 	has_reached_terminal_count = true;
-	DoCallback(DMA_REACHED_TC);
+	DoCallback(DmaEvent::ReachedTerminalCount);
 }
 
 void DmaChannel::SetPage(const uint8_t val)
 {
-	page_num = val;
+	page_num  = val;
 	page_base = (page_num >> is_16bit) << (16 + is_16bit);
 }
 
@@ -423,16 +406,16 @@ void DmaChannel::ClearRequest()
 
 size_t DmaChannel::Read(const size_t words, uint8_t* const dest_buffer)
 {
-	return ReadOrWrite(DMA_DIRECTION::READ, words, dest_buffer);
+	return ReadOrWrite(DmaDirection::Read, words, dest_buffer);
 }
 
 size_t DmaChannel::Write(const size_t words, uint8_t* const src_buffer)
 {
-	return ReadOrWrite(DMA_DIRECTION::WRITE, words, src_buffer);
+	return ReadOrWrite(DmaDirection::Write, words, src_buffer);
 }
 
-size_t DmaChannel::ReadOrWrite(const DMA_DIRECTION direction,
-                               const size_t words, uint8_t* const buffer)
+size_t DmaChannel::ReadOrWrite(const DmaDirection direction, const size_t words,
+                               uint8_t* const buffer)
 {
 	auto want     = check_cast<uint16_t>(words);
 	uint16_t done = 0;
@@ -465,7 +448,7 @@ again:
 			curr_count = 0xffff;
 			is_masked  = true;
 			UpdateEMSMapping();
-			DoCallback(DMA_MASKED);
+			DoCallback(DmaEvent::IsMasked);
 		}
 	}
 	return done;
@@ -473,42 +456,42 @@ again:
 
 bool DmaChannel::HasReservation() const
 {
-	return (reservation_callback && !reservation_owner.empty());
+	return (evict_callback && !reservation_owner_name.empty());
 }
 
 void DmaChannel::EvictReserver()
 {
 	assert(HasReservation());
 
-	reservation_callback(nullptr);
+	evict_callback(nullptr);
 
-	reservation_callback = {};
-	reservation_owner    = {};
+	evict_callback         = {};
+	reservation_owner_name = {};
 }
 
-void DmaChannel::ReserveFor(const std::string& new_owner,
-                            const DMA_ReservationCallback new_cb)
+void DmaChannel::ReserveFor(const std::string& owner_name,
+                            const DMA_EvictCallback evict_cb)
 {
-	assert(new_cb);
-	assert(!new_owner.empty());
+	assert(evict_cb);
+	assert(!owner_name.empty());
 
 	if (HasReservation()) {
 		LOG_MSG("DMA: %s is replacing %s on %d-bit DMA channel %u",
-		        new_owner.c_str(),
-		        reservation_owner.c_str(),
+		        owner_name.c_str(),
+		        reservation_owner_name.c_str(),
 		        is_16bit == 1 ? 16 : 8,
 		        chan_num);
 		EvictReserver();
 	}
 	Reset();
-	reservation_callback = new_cb;
-	reservation_owner    = new_owner;
+	evict_callback         = evict_cb;
+	reservation_owner_name = owner_name;
 }
 
 void DmaChannel::Reset()
 {
 	// Defaults at the time of initialization
-	page_base  = 0;
+	page_base = 0;
 	curr_addr = 0;
 
 	base_addr  = 0;
@@ -523,16 +506,33 @@ void DmaChannel::Reset()
 	has_reached_terminal_count = false;
 	has_raised_request         = false;
 
-	callback             = {};
-	reservation_callback = {};
-	reservation_owner    = {};
+	callback               = {};
+	evict_callback         = {};
+	reservation_owner_name = {};
+}
+
+void DmaChannel::LogDetails() const
+{
+	LOG_DEBUG(
+	        "DMA[%u]: %s %d-bit DMA has base count:%4u, "
+	        "current count:%4u, is auto-init: %d, is masked: %d, "
+	        " has reached TC: %d, has raised IRQ request: %d",
+	        chan_num,
+	        reservation_owner_name.c_str(),
+	        is_16bit == 1 ? 16 : 8,
+	        base_count,
+	        curr_count,
+	        is_autoiniting,
+	        is_masked,
+	        has_reached_terminal_count,
+	        has_raised_request);
 }
 
 DmaChannel::~DmaChannel()
 {
 	if (HasReservation()) {
 		LOG_MSG("DMA: Shutting down %s on %d-bit DMA channel %d",
-		        reservation_owner.c_str(),
+		        reservation_owner_name.c_str(),
 		        is_16bit == 1 ? 16 : 8,
 		        chan_num);
 		EvictReserver();
@@ -563,7 +563,7 @@ DmaController::DmaController(const uint8_t controller_index)
 			io_read_handlers[i].Install(i, DMA_Read_Port, width);
 		}
 		// Install handler for secondary DMA controller ports
-		else if (IS_EGAVGA_ARCH) {
+		else if (is_machine_ega_or_better()) {
 			assert(index == 1);
 			const auto dma_port = static_cast<io_port_t>(0xc0 + i * 2);
 			io_write_handlers[i].Install(dma_port, DMA_Write_Port, width);
@@ -578,7 +578,7 @@ DmaController::DmaController(const uint8_t controller_index)
 		io_read_handlers[0x11].Install(0x87, DMA_Read_Port, io_width_t::byte, 1);
 	}
 	// Install handlers for ports 0x89-0x8b,0x8f (on the secondary)
-	else if (IS_EGAVGA_ARCH) {
+	else if (is_machine_ega_or_better()) {
 		assert(index == 1);
 		io_write_handlers[0x10].Install(0x89, DMA_Write_Port, io_width_t::byte, 3);
 		io_read_handlers[0x10].Install(0x89, DMA_Read_Port, io_width_t::byte, 3);
@@ -635,15 +635,16 @@ void DMA_SetWrapping(const uint32_t wrap)
 	dma_wrapping = wrap;
 }
 
-void DMA_Destroy(Section* /*sec*/)
+void DMA_Destroy()
 {
 	primary   = {};
 	secondary = {};
 }
-void DMA_Init(Section* sec)
+
+void DMA_Init()
 {
 	DMA_SetWrapping(0xffff);
-	sec->AddDestroyFunction(&DMA_Destroy);
+
 	Bitu i;
 	for (i = 0; i < LINK_START; i++) {
 		ems_board_mapping[i] = i;

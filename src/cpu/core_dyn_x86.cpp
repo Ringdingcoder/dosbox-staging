@@ -1,20 +1,5 @@
-/*
- *  Copyright (C) 2002-2021  The DOSBox Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 
 #include "dosbox.h"
@@ -40,15 +25,15 @@
 
 #endif // HAVE_MPROTECT
 
-#include "callback.h"
-#include "cpu.h"
-#include "debug.h"
-#include "fpu.h"
-#include "inout.h"
-#include "mem.h"
-#include "paging.h"
-#include "regs.h"
-#include "tracy.h"
+#include "cpu/callback.h"
+#include "cpu/cpu.h"
+#include "cpu/paging.h"
+#include "cpu/registers.h"
+#include "debugger/debugger.h"
+#include "fpu/fpu.h"
+#include "hardware/memory.h"
+#include "hardware/port.h"
+#include "misc/tracy.h"
 
 #define CACHE_MAXSIZE	(4096*3)
 #define CACHE_TOTAL		(1024*1024*8)
@@ -114,7 +99,7 @@ enum BlockReturn {
 	BR_Link1,BR_Link2,
 	BR_Opcode,
 	BR_Iret,
-	BR_CallBack,
+	BR_Callback,
 	BR_SMCBlock
 };
 
@@ -324,8 +309,8 @@ Bits CPU_Core_Dyn_X86_Run() noexcept
 	/* Determine the linear address of CS:EIP */
 restart_core:
 	PhysPt ip_point=SegPhys(cs)+reg_eip;
-#if C_DEBUG
-#if C_HEAVY_DEBUG
+#if C_DEBUGGER
+#if C_HEAVY_DEBUGGER
 		if (DEBUG_HeavyIsBreakpoint()) return debugCallback;
 #endif
 #endif
@@ -359,13 +344,13 @@ restart_core:
 run_block:
 	cache.block.running=nullptr;
 	const auto ret = sync_normal_fpu_and_run_dyn_code(block->cache.start);
-#	if C_DEBUG
+#	if C_DEBUGGER
 	cycle_count += 32;
 #endif
 	switch (ret) {
 	case BR_Iret:
-#if C_DEBUG
-#if C_HEAVY_DEBUG
+#if C_DEBUGGER
+#if C_HEAVY_DEBUGGER
 		if (DEBUG_HeavyIsBreakpoint()) {
 			return debugCallback;
 		}
@@ -381,20 +366,20 @@ run_block:
 		return CBRET_NONE;
 	case BR_Normal:
 		/* Maybe check if we staying in the same page? */
-#if C_DEBUG
-#if C_HEAVY_DEBUG
+#if C_DEBUGGER
+#if C_HEAVY_DEBUGGER
 		if (DEBUG_HeavyIsBreakpoint()) return debugCallback;
 #endif
 #endif
 		goto restart_core;
 	case BR_Cycles:
-#if C_DEBUG
-#if C_HEAVY_DEBUG			
+#if C_DEBUGGER
+#if C_HEAVY_DEBUGGER			
 		if (DEBUG_HeavyIsBreakpoint()) return debugCallback;
 #endif
 #endif
 		return CBRET_NONE;
-	case BR_CallBack:
+	case BR_Callback:
 		return core_dyn.callback;
 	case BR_SMCBlock:
 		// LOG_MSG("selfmodification of running block at %x:%x",

@@ -1,15 +1,16 @@
-add_library(libgui STATIC
-		render.cpp
-		render_scalers.cpp
-		sdl_mapper.cpp
-		sdlmain.cpp
-		shader_manager.cpp
-		titlebar.cpp
+target_sources(libdosboxcommon PRIVATE
+  clipboard.cpp
+  mapper.cpp
+  sdl_gui.cpp
+  shader_manager.cpp
+  titlebar.cpp
+
+  render/opengl_renderer.cpp
+  render/render.cpp
+  render/scaler/scalers.cpp
+  render/sdl_renderer.cpp
 )
 
-find_package(OpenGL REQUIRED)
-
-target_link_libraries(libgui PRIVATE
-		$<IF:$<TARGET_EXISTS:SDL2::SDL2>,SDL2::SDL2,SDL2::SDL2-static>
-		OpenGL::GL
-)
+target_link_libraries(libdosboxcommon PRIVATE
+  OpenGL::GL
+  $<IF:$<BOOL:${C_OPENGL}>,libglad,>)

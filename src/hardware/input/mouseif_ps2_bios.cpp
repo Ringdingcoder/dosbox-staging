@@ -1,23 +1,10 @@
-/*
- *  Copyright (C) 2022-2024  The DOSBox Staging Team
- *  Copyright (C) 2002-2021  The DOSBox Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2022-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "mouse.h"
+
+#include "private/intel8042.h"
 #include "mouse_config.h"
 #include "mouse_interfaces.h"
 
@@ -25,17 +12,15 @@
 #include <cmath>
 #include <vector>
 
-#include "bios.h"
-#include "bitops.h"
-#include "callback.h"
-#include "checks.h"
-#include "cpu.h"
-#include "intel8042.h"
-#include "math_utils.h"
-#include "pic.h"
-#include "regs.h"
-
-#include "../../ints/int10.h"
+#include "cpu/callback.h"
+#include "cpu/cpu.h"
+#include "cpu/registers.h"
+#include "hardware/pic.h"
+#include "ints/bios.h"
+#include "ints/int10.h"
+#include "utils/bitops.h"
+#include "utils/checks.h"
+#include "utils/math_utils.h"
 
 CHECK_NARROWING();
 
@@ -105,9 +90,10 @@ static MouseButtonsAll buttons;     // currently visible button state
 static MouseButtonsAll buttons_all; // state of all 5 buttons as on the host side
 static MouseButtons12S buttons_12S; // buttons with 3/4/5 quished together
 
-static float delta_x = 0.0f; // accumulated mouse movement since last reported
-static float delta_y = 0.0f;
-static int8_t counter_w = 0; // mouse wheel counter
+// Accumulated mouse movement, waiting to be reported
+static float delta_x     = 0.0f;
+static float delta_y     = 0.0f;
+static float delta_wheel = 0.0f;
 
 static MouseModelPS2 protocol = MouseModelPS2::Standard;
 static uint8_t unlock_idx_im = 0; // sequence index for unlocking extended protocol
@@ -169,31 +155,54 @@ static void terminate_unlock_sequence()
 	unlock_idx_xp = 0;
 }
 
-static void set_protocol(const MouseModelPS2 new_protocol)
+static void maybe_log_mouse_protocol()
+{
+	using enum MouseModelPS2;
+
+	static bool first_time = true;
+	static MouseModelPS2 last_logged = {};
+
+	if (!first_time && protocol == last_logged) {
+		return;
+	}
+
+	std::string protocol_name = {};
+	switch (protocol) {
+	case Standard:
+		protocol_name = "3 buttons";
+		break;
+	case IntelliMouse:
+		protocol_name = "3 buttons + wheel (IntelliMouse)";
+		break;
+	case Explorer:
+		protocol_name = "5 buttons + wheel (IntelliMouse Explorer)";
+		break;
+	case NoMouse:
+		break;
+	default:
+		assertm(false, "unknown mouse model (PS/2)");
+		break;
+	}
+
+	if (!protocol_name.empty()) {
+		LOG_MSG("MOUSE (PS/2): Using a %s protocol, selected by guest software",
+	        	protocol_name.c_str());
+	}	
+
+	first_time  = false;
+	last_logged = protocol;
+}
+
+static void set_protocol(const MouseModelPS2 new_protocol, bool is_startup = false)
 {
 	terminate_unlock_sequence();
 
-	static bool first_time = true;
-	if (first_time || protocol != new_protocol) {
-		const char* protocol_name = nullptr;
+	if (is_startup || protocol != new_protocol) {
+		protocol = new_protocol;
 
-		first_time = false;
-		protocol   = new_protocol;
-
-		switch (protocol) {
-		case MouseModelPS2::Standard:
-			protocol_name = "Standard, 3 buttons";
-			break;
-		case MouseModelPS2::IntelliMouse:
-			protocol_name = "IntelliMouse, wheel, 3 buttons";
-			break;
-		case MouseModelPS2::Explorer:
-			protocol_name = "IntelliMouse Explorer, wheel, 5 buttons";
-			break;
-		default: break;
+		if (!is_startup) {
+			maybe_log_mouse_protocol();
 		}
-
-		LOG_MSG("MOUSE (PS/2): %s", protocol_name);
 
 		frame.clear();
 		MOUSEPS2_UpdateButtonSquish();
@@ -202,26 +211,19 @@ static void set_protocol(const MouseModelPS2 new_protocol)
 
 static uint8_t get_reset_wheel_4bit()
 {
-	const int8_t tmp = std::clamp(counter_w,
-	                              static_cast<int8_t>(-0x08),
-	                              static_cast<int8_t>(0x07));
-
-	// reading always clears the counter
-	counter_w = 0;
+	auto d = MOUSE_ConsumeInt8(delta_wheel);
+	d = std::clamp(d, static_cast<int8_t>(-0x08), static_cast<int8_t>(0x07));
 
 	// 0x0f for -1, 0x0e for -2, etc.
-	return static_cast<uint8_t>((tmp >= 0) ? tmp : 0x10 + tmp);
+	return static_cast<uint8_t>((d >= 0) ? d : 0x10 + d);
 }
 
 static uint8_t get_reset_wheel_8bit()
 {
-	const auto tmp = counter_w;
-
-	// reading always clears the counter
-	counter_w = 0;
+	const auto d = MOUSE_ConsumeInt8(delta_wheel);
 
 	// 0xff for -1, 0xfe for -2, etc.
-	return static_cast<uint8_t>((tmp >= 0) ? tmp : 0x100 + tmp);
+	return static_cast<uint8_t>((d >= 0) ? d : 0x100 + d);
 }
 
 static int16_t get_scaled_movement(const int16_t d, const bool is_polling)
@@ -252,9 +254,9 @@ static int16_t get_scaled_movement(const int16_t d, const bool is_polling)
 
 static void reset_counters()
 {
-	delta_x   = 0.0f;
-	delta_y   = 0.0f;
-	counter_w = 0;
+	delta_x     = 0.0f;
+	delta_y     = 0.0f;
+	delta_wheel = 0.0f;
 }
 
 static void build_protocol_frame(const bool is_polling = false)
@@ -277,11 +279,8 @@ static void build_protocol_frame(const bool is_polling = false)
 	mdat.right  = buttons.right;
 	mdat.middle = buttons.middle;
 
-	auto dx = static_cast<int16_t>(std::round(delta_x));
-	auto dy = static_cast<int16_t>(std::round(delta_y));
-
-	delta_x -= dx;
-	delta_y -= dy;
+	auto dx = MOUSE_ConsumeInt16(delta_x);
+	auto dy = MOUSE_ConsumeInt16(delta_y);
 
 	dx = get_scaled_movement(dx, is_polling);
 	dy = get_scaled_movement(static_cast<int16_t>(-dy), is_polling);
@@ -430,7 +429,8 @@ static void cmd_poll_frame()
 	build_protocol_frame(is_polling);
 	I8042_AddAuxFrame(frame);
 	frame.clear();
-	reset_counters();
+	// resetting counters not necessary; frame building process consumes
+	// all the data
 }
 
 static void cmd_set_resolution(const uint8_t new_counts_mm)
@@ -478,15 +478,13 @@ static void cmd_set_sample_rate(const uint8_t new_rate_hz)
 	static const std::vector<uint8_t> unlock_sequence_im = {200, 100, 80};
 	static const std::vector<uint8_t> unlock_sequence_xp = {200, 200, 80};
 
-	if (mouse_config.model_ps2 == MouseModelPS2::IntelliMouse) {
-		process_unlock(unlock_sequence_im,
-		               unlock_idx_im,
-		               MouseModelPS2::IntelliMouse);
-	} else if (mouse_config.model_ps2 == MouseModelPS2::Explorer) {
-		process_unlock(unlock_sequence_im,
-		               unlock_idx_im,
-		               MouseModelPS2::IntelliMouse);
-		process_unlock(unlock_sequence_xp, unlock_idx_xp, MouseModelPS2::Explorer);
+	using enum MouseModelPS2;
+
+	if (mouse_config.model_ps2 == IntelliMouse) {
+		process_unlock(unlock_sequence_im, unlock_idx_im, IntelliMouse);
+	} else if (mouse_config.model_ps2 == Explorer) {
+		process_unlock(unlock_sequence_im, unlock_idx_im, IntelliMouse);
+		process_unlock(unlock_sequence_xp, unlock_idx_xp, Explorer);
 	}
 }
 
@@ -534,7 +532,7 @@ static void cmd_reset(bool is_startup = false)
 {
 	cmd_set_defaults();
 
-	set_protocol(MouseModelPS2::Standard);
+	set_protocol(MouseModelPS2::Standard, is_startup);
 	frame.clear();
 
 	if (is_startup) {
@@ -649,6 +647,8 @@ bool MOUSEPS2_PortWrite(const uint8_t byte)
 		return false; // no mouse emulated
 	}
 
+	maybe_log_mouse_protocol();
+
 	if (byte != static_cast<uint8_t>(AuxCommand::ResetDev) && mode_wrap &&
 	    byte != static_cast<uint8_t>(AuxCommand::ResetWrapMode)) {
 		I8042_AddAuxByte(byte); // wrap mode, just send bytes back
@@ -677,22 +677,12 @@ void MOUSEPS2_NotifyMoved(const float x_rel, const float y_rel)
 	delta_x = MOUSE_ClampRelativeMovement(delta_x + x_rel);
 	delta_y = MOUSE_ClampRelativeMovement(delta_y + y_rel);
 
-	// Threshold the accumulated movement needs to cross
-	// to be considered significant enough for new event
-	constexpr float threshold = 0.5f;
-
-	has_data_for_frame |= (std::fabs(delta_x) >= threshold) ||
-	                      (std::fabs(delta_y) >= threshold) ||
+	has_data_for_frame |= MOUSE_HasAccumulatedInt(delta_x) ||
+	                      MOUSE_HasAccumulatedInt(delta_y) ||
 	                      vmm_needs_dummy_event;
+
 	maybe_transfer_frame();
 	vmm_needs_dummy_event = false;
-}
-
-void MOUSEPS2_NotifyMovedDummy()
-{
-	if (should_report()) {
-		vmm_needs_dummy_event = true;
-	}
 }
 
 void MOUSEPS2_NotifyButton(const MouseButtons12S new_buttons_12S,
@@ -710,17 +700,25 @@ void MOUSEPS2_NotifyButton(const MouseButtons12S new_buttons_12S,
 	vmm_needs_dummy_event = false;
 }
 
-void MOUSEPS2_NotifyWheel(const int16_t w_rel)
+void MOUSEPS2_NotifyWheel(const float w_rel)
 {
 	// Note: VMware mouse protocol can support wheel even if the emulated
-	// PS/2 mouse does not have it - this works at least with VBADOS v0.67
-	auto old_counter_w = counter_w;
+	// PS/2 mouse does not have it - this works at least with VBADOS v0.67.
+	// Thus, we can't skip the function entirely for basic PS/2 mouse.
+
+	constexpr bool skip_delta_update = true;
+
+	const auto old_counter = MOUSE_ConsumeInt8(delta_wheel, skip_delta_update);
+
 	if (protocol == MouseModelPS2::IntelliMouse ||
 	    protocol == MouseModelPS2::Explorer) {
-		counter_w = clamp_to_int8(static_cast<int32_t>(counter_w + w_rel));
+		delta_wheel = MOUSE_ClampWheelMovement(delta_wheel + w_rel);
 	}
 
-	has_data_for_frame |= (old_counter_w != counter_w) || vmm_needs_dummy_event;
+	const auto new_counter = MOUSE_ConsumeInt8(delta_wheel, skip_delta_update);
+
+	has_data_for_frame |= (old_counter != new_counter);
+	has_data_for_frame |= vmm_needs_dummy_event;
 	maybe_transfer_frame();
 	vmm_needs_dummy_event = false;
 }
@@ -728,6 +726,15 @@ void MOUSEPS2_NotifyWheel(const int16_t w_rel)
 void MOUSEPS2_SetDelay(const uint8_t new_delay_ms)
 {
 	delay_ms = new_delay_ms;
+}
+
+void MOUSEPS2_NotifyInterruptNeeded(const bool immediately)
+{
+	if (immediately) {
+		I8042_TriggerAuxInterrupt();
+	} else if (should_report()) {
+		vmm_needs_dummy_event = true;
+	}
 }
 
 // ***************************************************************************
@@ -956,6 +963,8 @@ void MOUSEBIOS_Subfunction_C2() // INT 15h, AH = 0xc2
 		set_return_value(BiosRetVal::InterfaceError);
 		return;
 	}
+
+	maybe_log_mouse_protocol();
 
 	switch (reg_al) {
 	case 0x00: // enable/disable mouse

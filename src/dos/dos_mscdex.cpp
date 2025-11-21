@@ -1,21 +1,6 @@
-/*
- *  Copyright (C) 2019-2024  The DOSBox Staging Team
- *  Copyright (C) 2002-2021  The DOSBox Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2019-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "dos_mscdex.h"
 
@@ -26,19 +11,19 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-#include "compiler.h"
-#include "regs.h"
-#include "callback.h"
-#include "dos_system.h"
-#include "dos_inc.h"
-#include "fs_utils.h"
-#include "setup.h"
-#include "support.h"
-#include "bios_disk.h"
-#include "cpu.h"
 #include "cdrom.h"
-#include "math_utils.h"
-#include "string_utils.h"
+#include "config/setup.h"
+#include "cpu/callback.h"
+#include "cpu/cpu.h"
+#include "cpu/registers.h"
+#include "dos.h"
+#include "dos/dos_system.h"
+#include "ints/bios_disk.h"
+#include "misc/compiler.h"
+#include "misc/support.h"
+#include "utils/fs_utils.h"
+#include "utils/math_utils.h"
+#include "utils/string_utils.h"
 
 #define MSCDEX_LOG LOG(LOG_MISC,LOG_ERROR)
 //#define MSCDEX_LOG
@@ -352,7 +337,7 @@ int CMscdex::AddDrive(uint16_t _drive, const char* physicalPath, uint8_t& subUni
 		// Create Callback Strategy
 		uint16_t off = sizeof(DOS_DeviceHeader::sDeviceHeader);
 		uint16_t call_strategy=(uint16_t)CALLBACK_Allocate();
-		CallBack_Handlers[call_strategy]=MSCDEX_Strategy_Handler;
+		Callback_Handlers[call_strategy]=MSCDEX_Strategy_Handler;
 		real_writeb(seg,off+0,(uint8_t)0xFE);		//GRP 4
 		real_writeb(seg,off+1,(uint8_t)0x38);		//Extra Callback instruction
 		real_writew(seg,off+2,call_strategy);	//The immediate word
@@ -362,7 +347,7 @@ int CMscdex::AddDrive(uint16_t _drive, const char* physicalPath, uint8_t& subUni
 		// Create Callback Interrupt
 		off += 5;
 		uint16_t call_interrupt=(uint16_t)CALLBACK_Allocate();
-		CallBack_Handlers[call_interrupt]=MSCDEX_Interrupt_Handler;
+		Callback_Handlers[call_interrupt]=MSCDEX_Interrupt_Handler;
 		real_writeb(seg,off+0,(uint8_t)0xFE);		//GRP 4
 		real_writeb(seg,off+1,(uint8_t)0x38);		//Extra Callback instruction
 		real_writew(seg,off+2,call_interrupt);	//The immediate word
@@ -1454,23 +1439,8 @@ bool MSCDEX_HasMediaChanged(uint8_t subUnit)
 	return has_changed;
 }
 
-void MSCDEX_ShutDown(Section* /*sec*/) {
-	std::for_each(CDROM::cdroms.begin(),
-	              CDROM::cdroms.end(),
-	              [](auto& cdrom_ptr) { cdrom_ptr.reset(); });
-
-	delete mscdex;
-	mscdex = nullptr;
-	curReqheaderPtr = 0;
-}
-
-void MSCDEX_Init(Section* sec)
+void MSCDEX_Init()
 {
-	assert(sec);
-
-	// AddDestroy func
-	sec->AddDestroyFunction(&MSCDEX_ShutDown);
-
 	// Register the mscdex device
 	DOS_Device* newdev = new device_MSCDEX();
 	DOS_AddDevice(newdev);
@@ -1482,3 +1452,15 @@ void MSCDEX_Init(Section* sec)
 	// Create MSCDEX
 	mscdex = new CMscdex;
 }
+
+void MSCDEX_Destroy()
+{
+	std::for_each(CDROM::cdroms.begin(),
+	              CDROM::cdroms.end(),
+	              [](auto& cdrom_ptr) { cdrom_ptr.reset(); });
+
+	delete mscdex;
+	mscdex          = nullptr;
+	curReqheaderPtr = 0;
+}
+

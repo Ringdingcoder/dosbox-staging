@@ -1,32 +1,15 @@
-/*
- *  SPDX-License-Identifier: GPL-2.0-or-later
- *
- *  Copyright (C) 2023-2023  The DOSBox Staging Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2023-2025 The DOSBox Staging Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "image_scaler.h"
 
 #include <cmath>
 
-#include "byteorder.h"
-#include "checks.h"
-#include "math_utils.h"
-#include "rgb.h"
-#include "support.h"
+#include "misc/support.h"
+#include "utils/byteorder.h"
+#include "utils/checks.h"
+#include "utils/math_utils.h"
+#include "utils/rgb.h"
 
 CHECK_NARROWING();
 
@@ -72,8 +55,9 @@ void ImageScaler::UpdateOutputParamsUpscale()
 
 	// Calculate initial integer vertical scaling factor so the resulting
 	// output image height is roughly around 1200px.
-	output.vert_scale = static_cast<uint8_t>(roundf(
-	        static_cast<float>(target_output_height) / video_mode.height));
+	output.vert_scale = static_cast<uint8_t>(
+	        roundf(static_cast<float>(target_output_height) /
+	               static_cast<float>(video_mode.height)));
 
 	output.vert_scaling_mode = PerAxisScaling::Integer;
 
@@ -95,8 +79,8 @@ void ImageScaler::UpdateOutputParamsUpscale()
 		output.horiz_scale = horiz_scale_fract.ToFloat();
 		output.one_per_horiz_scale = horiz_scale_fract.Inverse().ToFloat();
 
-		output.width = static_cast<uint16_t>(
-		        roundf(input.params.width * output.horiz_scale));
+		output.width = static_cast<uint16_t>(roundf(
+		        static_cast<float>(input.params.width) * output.horiz_scale));
 
 		output.height = static_cast<uint16_t>(video_mode.height *
 		                                      output.vert_scale);

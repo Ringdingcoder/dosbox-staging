@@ -1,31 +1,16 @@
-/*
- *  Copyright (C) 2002-2021  The DOSBox Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
-#include "drives.h"
+#include "dos/drives.h"
 
 #include <cctype>
 #include <cstring>
 
 #include "cdrom.h"
 #include "dos_mscdex.h"
-#include "dos_system.h"
-#include "string_utils.h"
-#include "support.h"
+#include "dos/dos_system.h"
+#include "utils/string_utils.h"
+#include "misc/support.h"
 
 #define FLAGS1	((iso) ? de.fileFlags : de.timeZone)
 #define FLAGS2	((iso) ? de->fileFlags : de->timeZone)
@@ -83,7 +68,7 @@ bool isoFile::Read(uint8_t *data, uint16_t *size) {
 		}
 	}
 
-	static_assert(ISO_FRAMESIZE <= UINT16_MAX, "");
+	static_assert(ISO_FRAMESIZE <= UINT16_MAX);
 	auto sectorPos = static_cast<uint16_t>(filePos % ISO_FRAMESIZE);
 
 	while (nowSize < *size) {
@@ -281,7 +266,7 @@ bool isoDrive::FindFirst(const char* dir, DOS_DTA& dta, bool fcb_findfirst)
 		dta.SetResult(discLabel, 0, 0, 0, FatAttributeFlags::Volume);
 		return true;
 	} else if (attr.volume && isRoot && !fcb_findfirst) {
-		if (WildFileCmp(discLabel,pattern)) {
+		if (wild_file_cmp(discLabel, pattern)) {
 			// Get Volume Label and only in basedir and if it
 			// matches the searchstring
 			dta.SetResult(discLabel, 0, 0, 0, FatAttributeFlags::Volume);
@@ -313,7 +298,7 @@ bool isoDrive::FindNext(DOS_DTA& dta)
 		findAttr.hidden            = IS_HIDDEN(FLAGS1);
 
 		if (!IS_ASSOC(FLAGS1) && !(isRoot && de.ident[0] == '.') &&
-		    WildFileCmp((char*)de.ident, pattern) &&
+		    wild_file_cmp((char*)de.ident, pattern) &&
 		    !(~(attr._data) & findAttr._data & attr_mask._data)) {
 			/* file is okay, setup everything to be copied in DTA
 			 * Block */

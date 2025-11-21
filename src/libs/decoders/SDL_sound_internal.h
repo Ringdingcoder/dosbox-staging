@@ -1,24 +1,7 @@
-/*
- *  SPDX-License-Identifier: GPL-2.0-or-later
- *
- *  Copyright (C) 2020-2023  The DOSBox Staging Team
- *  Copyright (C) 2018-2021  kcgen <kcgen@users.noreply.github.com>
- *  Copyright (C) 2001-2017  Ryan C. Gordon <icculus@icculus.org>
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2020-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2018-2021 kcgen <kcgen@users.noreply.github.com>
+// SPDX-FileCopyrightText:  2001-2017  Ryan C. Gordon <icculus@icculus.org>
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 /*
  *  Modified SDL Sound API implementation
@@ -30,10 +13,13 @@
 #ifndef _INCLUDE_SDL_SOUND_INTERNAL_H_
 #define _INCLUDE_SDL_SOUND_INTERNAL_H_
 
+#include "dosbox_config.h"
+
 #ifndef __SDL_SOUND_INTERNAL__
 #error Do not include this header from your applications.
 #endif
 
+// must be included after dosbox_config.h
 #include <SDL.h>
 
 /* SDL 1.2.4 defines this, but better safe than sorry. */

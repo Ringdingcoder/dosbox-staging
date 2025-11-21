@@ -1,20 +1,5 @@
-/*
- *  Copyright (C) 2002-2021  The DOSBox Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "decoder_basic.h"
 #include "operators.h"
@@ -621,7 +606,7 @@ static CacheBlock *CreateCacheBlock(CodePageHandler *codepage, PhysPt start, Bit
 				        break;
 			        default:
 #if DYN_LOG
-//					LOG_MSG("Unhandled dual opcode 0F%02X",dual_code);
+//					LOG_MSG("Unhandled dual opcode 0F%02" PRIXPTR, dual_code);
 #endif
 				goto illegalopcode;
 			}
@@ -836,7 +821,7 @@ static CacheBlock *CreateCacheBlock(CodePageHandler *codepage, PhysPt start, Bit
 		case 0xcb:dyn_ret_far(0);goto finish_block;
 
 		// int/iret
-#if !(C_DEBUG)
+#if !(C_DEBUGGER)
 		case 0xcd:dyn_interrupt(decode_fetchb());goto finish_block;
 #endif
 		case 0xcf:dyn_iret();goto finish_block;
@@ -973,7 +958,7 @@ static CacheBlock *CreateCacheBlock(CodePageHandler *codepage, PhysPt start, Bit
 
 		default:
 #if DYN_LOG
-//			LOG_MSG("Dynrec unhandled opcode %X",opcode);
+//			LOG_MSG("Dynrec unhandled opcode %" PRIXPTR, opcode);
 #endif
 			goto illegalopcode;
 		}

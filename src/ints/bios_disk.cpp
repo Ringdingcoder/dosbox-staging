@@ -1,34 +1,19 @@
-/*
- *  Copyright (C) 2002-2021  The DOSBox Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
-#include "bios_disk.h"
+#include "ints/bios_disk.h"
 
 #include <algorithm>
 #include <cassert>
 #include <utility>
 
-#include "callback.h"
-#include "regs.h"
-#include "mem.h"
-#include "dos_inc.h" /* for Drives[] */
-#include "drives.h"
-#include "mapper.h"
-#include "string_utils.h"
+#include "cpu/callback.h"
+#include "cpu/registers.h"
+#include "dos/dos.h" /* for Drives[] */
+#include "dos/drives.h"
+#include "gui/mapper.h"
+#include "hardware/memory.h"
+#include "utils/string_utils.h"
 
 diskGeo DiskGeometryList[] = {
 	{ 160,  8, 1, 40, 0},	// SS/DD 5.25"
@@ -351,17 +336,21 @@ static Bitu INT13_DiskHandler(void) {
 			 */
 			if (any_images && driveInactive(drivenum)) {
 				/* driveInactive sets carry flag if the specified drive is not available */
-				if ((machine==MCH_CGA) || (machine==MCH_PCJR)) {
+				if (is_machine_cga() || is_machine_pcjr()) {
 					/* those bioses call floppy drive reset for invalid drive values */
 					if (((imageDiskList[0]) && (imageDiskList[0]->active)) || ((imageDiskList[1]) && (imageDiskList[1]->active))) {
-						if (machine!=MCH_PCJR && reg_dl<0x80) reg_ip++;
+						if (!is_machine_pcjr() && reg_dl < 0x80) {
+							reg_ip++;
+						}
 						last_status = 0x00;
 						CALLBACK_SCF(false);
 					}
 				}
 				return CBRET_NONE;
 			}
-			if (machine!=MCH_PCJR && reg_dl<0x80) reg_ip++;
+			if (!is_machine_pcjr() && reg_dl < 0x80) {
+				reg_ip++;
+			}
 			last_status = 0x00;
 			CALLBACK_SCF(false);
 		}

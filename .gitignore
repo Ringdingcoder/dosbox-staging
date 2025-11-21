@@ -13,8 +13,8 @@ make.log
 missed.txt
 
 # Common names for meson build dirs
-build
-builddir
+/build
+/builddir
 
 # VCPKG
 vcpkg_installed
@@ -85,3 +85,12 @@ tools/unlock_the_magic_mpeg_ps.exe
 obj-*.-linux-gnu
 debian
 
+# CMake
+CMakeUserPresets.json
+cmake-build-*/
+
+# External deps for symlinking for local dev
+/lib
+
+# Tests
+/Testing

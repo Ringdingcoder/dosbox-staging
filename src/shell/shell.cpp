@@ -1,23 +1,8 @@
-/*
- *  Copyright (C) 2021-2024  The DOSBox Staging Team
- *  Copyright (C) 2002-2021  The DOSBox Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2021-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
-#include "shell.h"
+#include "shell/shell.h"
 
 #include <cstdarg>
 #include <cstdlib>
@@ -26,22 +11,28 @@
 #include <memory>
 #include <regex>
 
-#include "../dos/program_more_output.h"
-#include "../dos/program_setver.h"
-#include "autoexec.h"
-#include "callback.h"
-#include "control.h"
-#include "fs_utils.h"
-#include "mapper.h"
-#include "regs.h"
-#include "string_utils.h"
-#include "support.h"
-#include "timer.h"
+#include "config/config.h"
+#include "cpu/callback.h"
+#include "cpu/registers.h"
+#include "dos/programs/more_output.h"
+#include "dos/programs/setver.h"
+#include "gui/mapper.h"
+#include "hardware/timer.h"
+#include "misc/support.h"
+#include "shell/autoexec.h"
+#include "utils/fs_utils.h"
+#include "utils/string_utils.h"
 
 callback_number_t call_shellstop = 0;
-/* Larger scope so shell_del autoexec can use it to
- * remove things from the environment */
-DOS_Shell *first_shell = nullptr;
+
+// Larger scope so shell_del autoexec can use it to
+// remove things from the environment
+static DOS_Shell *first_shell = nullptr;
+
+DOS_Shell* DOS_GetFirstShell()
+{
+	return first_shell;
+}
 
 constexpr uint16_t InvalidFileHandle = DOS_FILES;
 
@@ -204,7 +195,6 @@ static uint16_t get_output_redirection(const char *out_file,
 	constexpr bool fcb = true;
 	FatAttributeFlags fattr = {};
 	uint16_t file_handle = InvalidFileHandle;
-	uint32_t bigdummy = 0;
 	bool success = true;
 	/* Create if not exist. Open if exist. Both in read/write mode */
 	if (!pipe_file && append) {
@@ -212,7 +202,8 @@ static uint16_t get_output_redirection(const char *out_file,
 			DOS_SetError(DOSERR_ACCESS_DENIED);
 			success = false;
 		} else if ((success = DOS_OpenFile(out_file, OPEN_READWRITE, &file_handle, fcb))) {
-			DOS_SeekFile(1, &bigdummy, DOS_SEEK_END, fcb);
+			uint32_t seek_pos = 0;
+			DOS_SeekFile(file_handle, &seek_pos, DOS_SEEK_END, fcb);
 		} else {
 			// Create if not exists.
 			success = DOS_CreateFile(out_file,
@@ -414,7 +405,8 @@ void DOS_Shell::ParseLine(char *line)
 void DOS_Shell::RunBatchFile()
 {
 	char input_line[CMD_MAXLINE] = {0};
-	while (!batchfiles.empty() && !shutdown_requested && !exit_cmd_called) {
+	while (!batchfiles.empty() && !DOSBOX_IsShutdownRequested() &&
+	       !exit_cmd_called) {
 		if (batchfiles.top().ReadLine(input_line)) {
 			if (batchfiles.top().Echo()) {
 				if (input_line[0] != '@') {
@@ -456,26 +448,27 @@ void DOS_Shell::Run()
 	/* Start a normal shell and check for a first command init */
 	if (cmd->FindString("/INIT",line,true)) {
 		const bool wants_welcome_banner = control->GetStartupVerbosity() >=
-		                                  Verbosity::High;
+		                                  StartupVerbosity::High;
 		if (wants_welcome_banner) {
 			WriteOut(MSG_Get("SHELL_STARTUP_BEGIN"),
 			         DOSBOX_GetDetailedVersion(), PRIMARY_MOD_NAME,
 			         PRIMARY_MOD_NAME, PRIMARY_MOD_PAD, PRIMARY_MOD_PAD,
 			         PRIMARY_MOD_NAME, PRIMARY_MOD_PAD);
-#if C_DEBUG
+#if C_DEBUGGER
 			WriteOut(MSG_Get("SHELL_STARTUP_DEBUG"), MMOD2_NAME);
 #endif
-			if (machine == MCH_CGA) {
-				if (mono_cga)
+			if (is_machine_cga()) {
+				if (is_machine_cga_mono()) {
 					WriteOut(MSG_Get("SHELL_STARTUP_CGA_MONO"),
 					         MMOD2_NAME);
-				else
+				} else {
 					WriteOut(MSG_Get("SHELL_STARTUP_CGA"),
-					         MMOD2_NAME, MMOD1_NAME,
-					         MMOD2_NAME, PRIMARY_MOD_PAD);
+					         MMOD2_NAME);
+				}
 			}
-			if (machine == MCH_HERC)
+			if (is_machine_hercules()) {
 				WriteOut(MSG_Get("SHELL_STARTUP_HERC"));
+			}
 			WriteOut(MSG_Get("SHELL_STARTUP_END"));
 		}
 		safe_strcpy(input_line, line.c_str());
@@ -484,7 +477,7 @@ void DOS_Shell::Run()
 	} else {
 		WriteOut(MSG_Get("SHELL_STARTUP_SUB"), DOSBOX_GetDetailedVersion());
 	}
-	while (!exit_cmd_called && !shutdown_requested) {
+	while (!exit_cmd_called && !DOSBOX_IsShutdownRequested()) {
 		if (!batchfiles.empty()){
 			RunBatchFile();
 		} else {
@@ -501,79 +494,6 @@ void DOS_Shell::SyntaxError()
 }
 
 extern int64_t ticks_at_program_launch;
-
-// Specify a 'Drive' config object with allowed key and value types
-static std::unique_ptr<Config> specify_drive_config()
-{
-	auto conf = std::make_unique<Config>();
-
-	// Define the [drive] section
-	constexpr auto changeable_at_runtime = false;
-	auto prop = conf->AddSection_prop("drive", nullptr, changeable_at_runtime);
-
-	// Define the allowed keys and types
-	constexpr auto on_startup = Property::Changeable::OnlyAtStart;
-	prop->Add_string("type", on_startup, "")
-	        ->Set_values({"dir", "floppy", "cdrom", "overlay"});
-	prop->Add_string("label", on_startup, "");
-	prop->Add_string("path", on_startup, "");
-	prop->Add_string("override_drive", on_startup, "");
-	prop->Add_bool("verbose", on_startup, true);
-	prop->Add_bool("readonly", on_startup, false);
-
-	return conf;
-}
-
-// Parse a 'Drive' config file and return object with allowed key and value types
-std::tuple<std::string, std::string, std::string, bool> parse_drive_conf(
-        std::string drive_letter, const std_fs::path& conf_path)
-{
-	// Default return values
-	constexpr auto default_args = "";
-	constexpr auto default_path = "";
-	constexpr auto default_verbosity = false;
-
-	// If the conf path doesn't exist, at least return the default quiet arg
-	if (!path_exists(conf_path))
-		return {drive_letter, default_args, default_path, default_verbosity};
-
-	// If we couldn't parse it, return the defaults
-	auto conf = specify_drive_config();
-	assert(conf);
-	if (!conf->ParseConfigFile("auto-mounted drive", conf_path.string()))
-		return {drive_letter, default_args, default_path, default_verbosity};
-
-	const auto settings = static_cast<Section_prop *>(conf->GetSection("drive"));
-
-	// Construct the mount arguments
-	const std::string override_drive = settings->Get_string("override_drive");
-	if (override_drive.length() == 1 && override_drive[0] >= 'a' && override_drive[0] <= 'y')
-		drive_letter = override_drive;
-	else if (!override_drive.empty()) {
-		LOG_ERR("AUTOMOUNT: %s: setting 'override_drive = %s' is invalid", conf_path.string().c_str(), override_drive.c_str());
-		LOG_ERR("AUTOMOUNT: The override_drive setting can be left empty or a drive letter from 'a' to 'y'");
-	}
-
-	std::string drive_type = settings->Get_string("type");
-	if (!drive_type.empty()) {
-		drive_type.insert(0, " -t ");
-	}
-
-	std::string drive_label = settings->Get_string("label");
-	if (!drive_label.empty()) {
-		drive_label.insert(0, " -label ");
-	}
-
-	const auto is_readonly = settings->Get_bool("readonly");
-
-	const auto mount_args = drive_type + drive_label + (is_readonly ? " -ro" : "");
-
-	const std::string path_val = settings->Get_string("path");
-
-	const auto is_verbose = settings->Get_bool("verbose");
-
-	return {drive_letter, mount_args, path_val, is_verbose};
-}
 
 static Bitu INT2E_Handler()
 {
@@ -616,7 +536,8 @@ static const char* const comspec_string = "COMSPEC=Z:\\COMMAND.COM";
 static const char* const full_name      = "Z:\\COMMAND.COM";
 static const char* const init_line      = "/INIT AUTOEXEC.BAT";
 
-void SHELL_Init() {
+void SHELL_InitAndRun()
+{
 	// Generic messages, to be used by any command or DOS program
 	MSG_Add("SHELL_ILLEGAL_PATH", "Illegal path.\n");
 	MSG_Add("SHELL_ILLEGAL_FILE_NAME", "Illegal filename.\n");
@@ -636,6 +557,8 @@ void SHELL_Init() {
 	MSG_Add("SHELL_NO_FILES_SUBDIRS_TO_DISPLAY", "No files or subdirectories to display.\n");
 	MSG_Add("SHELL_READ_ERROR", "Error reading file - '%s'\n");
 	MSG_Add("SHELL_WRITE_ERROR", "Error writing file - '%s'\n");
+	MSG_Add("SHELL_CANT_RUN_UNDER_WINDOWS",
+	        "This command cannot be executed under Microsoft Windows.\n");
 
 	// Command specific messages
 	MSG_Add("SHELL_CMD_HELP", "If you want a list of all supported commands, run [color=yellow]help /all[reset]\n"
@@ -783,7 +706,6 @@ void SHELL_Init() {
 	        "║                                                                    ║\n"
 	        "║ To adjust the emulated CPU speed, use [color=light-red]%s+F11[color=white] and [color=light-red]%s+F12[color=white].%s%s       ║\n"
 	        "║ To activate the keymapper [color=light-red]%s+F1[color=white].%s                                 ║\n"
-	        "║ For more information read the [color=light-cyan]README[color=white] file in the DOSBox directory. ║\n"
 	        "║                                                                    ║\n");
 	MSG_Add("SHELL_STARTUP_CGA",
 	        "║ DOSBox supports Composite CGA mode.                                ║\n"
@@ -899,7 +821,6 @@ void SHELL_Init() {
 	        "\n"
 	        "Examples:\n"
 	        "  [color=light-green]exit[reset]\n");
-	MSG_Add("SHELL_CMD_EXIT_TOO_SOON", "Preventing an early 'exit' call from terminating.\n");
 
 	MSG_Add("SHELL_CMD_HELP_HELP",
 	        "Display help information for DOS commands.\n");
@@ -1307,27 +1228,26 @@ void SHELL_Init() {
 	MSG_Add("SHELL_CMD_FOR_HELP",
 	        "Run a specified command for each string in a set.\n");
 	MSG_Add("SHELL_CMD_FOR_HELP_LONG",
-		"Usage:\n"
-		"  [color=light-green]for[reset] [color=white]%VAR[reset] [color=light-cyan]in[reset] [color=white](SET)[reset] [color=light-cyan]do[reset] [color=white]COMMAND[reset]\n"
-		"\n"
-		"Parameters:\n"
-		"  [color=white]%VAR[reset]     single character representing a variable, prefixed by a '%'\n"
-		"  [color=light-cyan]in[reset]       case-insensitive keyword\n"
-		"  [color=white](SET)[reset]    set of strings to replace [color=white]%VAR[reset] instances in [color=white]COMMAND[reset]\n"
-		"  [color=light-cyan]do[reset]       case-insensitive keyword\n"
-		"  [color=white]COMMAND[reset]  command to repeat for each string in [color=white](SET)[reset]\n"
-		"\n"
-		"Notes:\n"
-		"  - In batch files, [color=white]%VAR[reset] must be written as [color=white]%%VAR[reset] (two percent signs) instead.\n"
-		"  - Strings in [color=white](SET)[reset] may be separated by any valid DOS separator.\n"
-		"  - Any string in [color=white](SET)[reset] containing wildcards (* or ?) will expand to\n" 
-		"    the set of matching files in the current directory.\n"
-		"  - Using another [color=light-green]for[reset] command as [color=white]COMMAND[reset] is not permitted.\n"
-		"\n"
-		"Examples:\n"
-		"  [color=light-green]for[reset] [color=white]%C[reset] [color=light-cyan]in[reset] [color=white](ONE TWO)[reset] [color=light-cyan]do[reset] [color=white]MKDIR[reset] [color=white]%C[reset]\n"
-		"  [color=light-green]for[reset] [color=white]%D[reset] [color=light-cyan]in[reset] [color=white](*.TXT)[reset] [color=light-cyan]do[reset] [color=white]ECHO[reset] [color=white]%D[reset]\n"
-	);
+	        "Usage:\n"
+	        "  [color=light-green]for[reset] [color=white]%%VAR[reset] [color=light-cyan]in[reset] [color=white](SET)[reset] [color=light-cyan]do[reset] [color=white]COMMAND[reset]\n"
+	        "\n"
+	        "Parameters:\n"
+	        "  [color=white]%%VAR[reset]     single character representing a variable, prefixed by a '%%'\n"
+	        "  [color=light-cyan]in[reset]       case-insensitive keyword\n"
+	        "  [color=white](SET)[reset]    set of strings to replace [color=white]%%VAR[reset] instances in [color=white]COMMAND[reset]\n"
+	        "  [color=light-cyan]do[reset]       case-insensitive keyword\n"
+	        "  [color=white]COMMAND[reset]  command to repeat for each string in [color=white](SET)[reset]\n"
+	        "\n"
+	        "Notes:\n"
+	        "  - In batch files, [color=white]%%VAR[reset] must be written as [color=white]%%VAR[reset] (two percent signs) instead.\n"
+	        "  - Strings in [color=white](SET)[reset] may be separated by any valid DOS separator.\n"
+	        "  - Any string in [color=white](SET)[reset] containing wildcards (* or ?) will expand to\n"
+	        "    the set of matching files in the current directory.\n"
+	        "  - Using another [color=light-green]for[reset] command as [color=white]COMMAND[reset] is not permitted.\n"
+	        "\n"
+	        "Examples:\n"
+	        "  [color=light-green]for[reset] [color=white]%%C[reset] [color=light-cyan]in[reset] [color=white](ONE TWO)[reset] [color=light-cyan]do[reset] [color=white]MKDIR[reset] [color=white]%%C[reset]\n"
+	        "  [color=light-green]for[reset] [color=white]%%D[reset] [color=light-cyan]in[reset] [color=white](*.TXT)[reset] [color=light-cyan]do[reset] [color=white]ECHO[reset] [color=white]%%D[reset]\n");
 
 	/* Ensure help categories are loaded into the message vector */
 	HELP_AddMessages();

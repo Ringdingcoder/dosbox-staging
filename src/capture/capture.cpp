@@ -1,23 +1,6 @@
-/*
- *  SPDX-License-Identifier: GPL-2.0-or-later
- *
- *  Copyright (C) 2023-2024  The DOSBox Staging Team
- *  Copyright (C) 2002-2021  The DOSBox Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2023-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "capture.h"
 
@@ -26,18 +9,22 @@
 #include <cstdio>
 #include <mutex>
 
-#include "capture_audio.h"
-#include "capture_midi.h"
-#include "capture_video.h"
-#include "checks.h"
-#include "control.h"
-#include "fs_utils.h"
-#include "image/image_capturer.h"
-#include "mapper.h"
-#include "setup.h"
-#include "string_utils.h"
-#include "support.h"
+#include "private/capture_audio.h"
+#include "private/capture_midi.h"
+#include "private/capture_video.h"
 
+#include "config/config.h"
+#include "config/setup.h"
+#include "dosbox_config.h"
+#include "gui/mapper.h"
+#include "gui/titlebar.h"
+#include "image/image_capturer.h"
+#include "misc/support.h"
+#include "utils/checks.h"
+#include "utils/fs_utils.h"
+#include "utils/string_utils.h"
+
+// must be included after dosbox_config.h
 #include <SDL.h>
 
 CHECK_NARROWING();
@@ -47,9 +34,9 @@ static struct {
 	bool path_initialised = false;
 
 	struct {
-		CaptureState audio = {};
-		CaptureState midi  = {};
-		CaptureState video = {};
+		std::atomic<CaptureState> audio = {};
+		std::atomic<CaptureState> midi  = {};
+		std::atomic<CaptureState> video = {};
 	} state = {};
 
 	struct {
@@ -61,6 +48,16 @@ static struct {
 		int32_t image              = 1;
 		int32_t serial_log         = 1;
 	} next_index = {};
+
+	void reset()
+	{
+		path.clear();
+		path_initialised = false;
+		state.audio = CaptureState::Off;
+		state.midi = CaptureState::Off;
+		state.video = CaptureState::Off;
+		next_index = {};
+	}
 } capture = {};
 
 static std::unique_ptr<ImageCapturer> image_capturer = {};
@@ -357,7 +354,7 @@ void CAPTURE_StartVideoCapture()
 	switch (capture.state.video) {
 	case CaptureState::Off:
 		capture.state.video = CaptureState::Pending;
-		GFX_NotifyVideoCaptureStatus(true);
+		TITLEBAR_NotifyVideoCaptureStatus(true);
 		break;
 	case CaptureState::Pending:
 	case CaptureState::InProgress:
@@ -377,12 +374,12 @@ void CAPTURE_StopVideoCapture()
 		// completeness only
 		LOG_MSG("CAPTURE: Cancelling pending video output capture");
 		capture.state.video = CaptureState::Off;
-		GFX_NotifyVideoCaptureStatus(false);
+		TITLEBAR_NotifyVideoCaptureStatus(false);
 		break;
 	case CaptureState::InProgress:
 		capture_video_finalise();
 		capture.state.video = CaptureState::Off;
-		GFX_NotifyVideoCaptureStatus(false);
+		TITLEBAR_NotifyVideoCaptureStatus(false);
 		LOG_MSG("CAPTURE: Stopped capturing video output");
 	}
 }
@@ -558,16 +555,39 @@ static void handle_capture_video_event(bool pressed)
 	}
 }
 
-static void capture_destroy(Section* /*sec*/)
+void CAPTURE_Init()
+{
+	const auto section = get_section("capture");
+
+	auto capture_path = section->GetPath("capture_dir");
+
+	// We can safely change the capture output path even if capturing of any
+	// type is in progress.
+	capture.path = capture_path->realpath;
+	if (capture.path.empty()) {
+		LOG_WARNING(
+		        "CAPTURE: No value specified for `capture_dir`; "
+		        "defaulting to 'capture' in the current working directory");
+		capture.path = "capture";
+	}
+
+	const auto prefs = section->GetString("default_image_capture_formats");
+
+	image_capturer = std::make_unique<ImageCapturer>(prefs);
+}
+
+void CAPTURE_Destroy()
 {
 	if (capture.state.audio == CaptureState::InProgress) {
 		capture_audio_finalise();
 		capture.state.audio = CaptureState::Off;
 	}
+
 	if (capture.state.midi == CaptureState::InProgress) {
 		capture_midi_finalise();
 		capture.state.midi = CaptureState::Off;
 	}
+
 	// When destructed, the threaded image capturer instances do a blocking
 	// wait until all pending capture tasks are processed.
 	image_capturer = {};
@@ -577,35 +597,14 @@ static void capture_destroy(Section* /*sec*/)
 		capture.state.video = CaptureState::Off;
 	}
 
-	capture = {};
+	capture.reset();
 }
 
-static void capture_init(Section* sec)
+static void notify_capture_setting_updated([[maybe_unused]] SectionProp& section,
+                                           [[maybe_unused]] const std::string& prop_name)
 {
-	assert(sec);
-	const Section_prop* secprop = dynamic_cast<Section_prop*>(sec);
-	if (!secprop) {
-		return;
-	}
-
-	Prop_path* capture_path = secprop->Get_path("capture_dir");
-	assert(capture_path);
-
-	// We can safely change the capture output path even if capturing of any
-	// type is in progress.
-	capture.path = capture_path->realpath;
-	if (capture.path.empty()) {
-		LOG_WARNING("CAPTURE: No value specified for `capture_dir`; defaulting to 'capture' "
-		            "in the current working directory");
-		capture.path = "capture";
-	}
-
-	const std::string prefs = secprop->Get_string("default_image_capture_formats");
-
-	image_capturer = std::make_unique<ImageCapturer>(prefs);
-
-	constexpr auto changeable_at_runtime = true;
-	sec->AddDestroyFunction(&capture_destroy, changeable_at_runtime);
+	CAPTURE_Destroy();
+	CAPTURE_Init();
 }
 
 static void init_key_mappings()
@@ -653,21 +652,20 @@ static void init_key_mappings()
 	                  "Rec. Video");
 }
 
-static void init_capture_dosbox_settings(Section_prop& secprop)
+static void init_capture_config_settings(SectionProp& section)
 {
-	constexpr auto when_idle = Property::Changeable::WhenIdle;
+	using enum Property::Changeable::Value;
 
-	auto* path_prop = secprop.Add_path("capture_dir", when_idle, "capture");
-	path_prop->Set_help(
+	auto path_prop = section.AddPath("capture_dir", WhenIdle, "capture");
+	path_prop->SetHelp(
 	        "Directory where the various captures are saved, such as audio, video, MIDI\n"
 	        "and screenshot captures. ('capture' in the current working directory by\n"
 	        "default).");
-	assert(path_prop);
 
-	auto* str_prop = secprop.Add_string("default_image_capture_formats",
-	                                    when_idle,
-	                                    "upscaled");
-	str_prop->Set_help(
+	auto* str_prop = section.AddString("default_image_capture_formats",
+	                                   WhenIdle,
+	                                   "upscaled");
+	str_prop->SetHelp(
 	        "Set the capture format of the default screenshot action ('upscaled' by\n"
 	        "default):\n"
 	        "  upscaled:  The image is bilinear-sharp upscaled and the correct aspect\n"
@@ -688,20 +686,15 @@ static void init_capture_dosbox_settings(Section_prop& secprop)
 	        "screenshot action will save multiple images in the specified formats.\n"
 	        "Keybindings for taking single screenshots in specific formats are also\n"
 	        "available.");
-	assert(str_prop);
 }
 
 void CAPTURE_AddConfigSection(const ConfigPtr& conf)
 {
 	assert(conf);
 
-	constexpr auto changeable_at_runtime = true;
+	auto section = conf->AddSection("capture");
+	section->AddUpdateHandler(notify_capture_setting_updated);
 
-	Section_prop* sec = conf->AddSection_prop("capture",
-	                                          &capture_init,
-	                                          changeable_at_runtime);
-	assert(sec);
-	init_capture_dosbox_settings(*sec);
+	init_capture_config_settings(*section);
 	init_key_mappings();
 }
-

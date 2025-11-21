@@ -1,20 +1,5 @@
-/*
- *  Copyright (C) 2002-2021  The DOSBox Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "zmbv.h"
 
@@ -24,10 +9,10 @@
 #include <cstdlib>
 #include <cstring>
 
-#include "math_utils.h"
-#include "mem_unaligned.h"
-#include "support.h"
-#include "checks.h"
+#include "utils/math_utils.h"
+#include "utils/mem_unaligned.h"
+#include "misc/support.h"
+#include "utils/checks.h"
 
 CHECK_NARROWING();
 
@@ -181,19 +166,18 @@ int VideoCodec::PossibleBlock(const int vx, const int vy, const FrameBlock & blo
 template <class P>
 int VideoCodec::CompareBlock(const int vx, const int vy, const FrameBlock & block)
 {
-	int ret = 0;
+	int diff_count = 0;
 	P *pold = reinterpret_cast<P *>(oldframe) + block.start + (vy * pitch) + vx;
 	P *pnew = reinterpret_cast<P *>(newframe) + block.start;
-	;
+
 	for (auto y = 0; y < block.dy; y++) {
 		for (auto x = 0; x < block.dx; x++) {
-			const auto test = 0 - ((pold[x] - pnew[x]) & 0x00ffffff);
-			ret -= check_cast<int>(test >> 31);
+			diff_count += ((pold[x] ^ pnew[x]) & 0x00ffffff) != 0;
 		}
 		pold += pitch;
 		pnew += pitch;
 	}
-	return ret;
+	return diff_count;
 }
 
 template <class P>

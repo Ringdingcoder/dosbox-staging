@@ -1,33 +1,18 @@
-/*
- *  Copyright (C) 2002-2021  The DOSBox Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "dosbox.h"
 
-#include "callback.h"
-#include "cpu.h"
-#include "debug.h"
-#include "fpu.h"
-#include "inout.h"
+#include "cpu/callback.h"
+#include "cpu/cpu.h"
+#include "cpu/paging.h"
+#include "cpu/registers.h"
+#include "debugger/debugger.h"
+#include "fpu/fpu.h"
+#include "hardware/pic.h"
+#include "hardware/port.h"
 #include "lazyflags.h"
-#include "paging.h"
-#include "pic.h"
-#include "regs.h"
-#include "tracy.h"
+#include "misc/tracy.h"
 
 typedef PhysPt EAPoint;
 #define SegBase(c)	SegPhys(c)
@@ -66,9 +51,9 @@ Bits CPU_Core_Full_Run() noexcept
 	ZoneScoped;
 	FullData inst{};
 	while (CPU_Cycles-->0) {
-#if C_DEBUG
+#if C_DEBUGGER
 		cycle_count++;
-#if C_HEAVY_DEBUG
+#if C_HEAVY_DEBUGGER
 		if (DEBUG_HeavyIsBreakpoint()) {
 			FillFlags();
 			return debugCallback;

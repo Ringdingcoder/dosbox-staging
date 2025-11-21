@@ -1,20 +1,5 @@
-/*
- *  Copyright (C) 2002-2021  The DOSBox Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "cdrom.h"
 
@@ -22,11 +7,11 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#include "callback.h"
-#include "channel_names.h"
+#include "audio/channel_names.h"
+#include "cpu/callback.h"
 #include "dosbox.h"
-#include "pic.h"
-#include "string_utils.h"
+#include "hardware/pic.h"
+#include "utils/string_utils.h"
 
 namespace CDROM {
 std::array<std::unique_ptr<CDROM_Interface>, MaxNumDosDriveLetters> cdroms;
@@ -132,7 +117,7 @@ void CDROM_Interface_Physical::CdReaderLoop()
 			audio_frames.emplace_back(left, right);
 		}
 
-		queue.BulkEnqueue(audio_frames, audio_frames.size());
+		queue.BulkEnqueue(audio_frames);
 
 		lock.lock();
 		if (mixer_channel && !is_paused && sectors_remaining > 0 && queue.IsRunning()) {
@@ -172,6 +157,7 @@ void CDROM_Interface_Physical::InitAudio()
 		return;
 	}
 
+	MIXER_LockMixerThread();
 	auto callback = std::bind(&CDROM_Interface_Physical::CdAudioCallback,
 	                          this,
 	                          std::placeholders::_1);
@@ -182,9 +168,10 @@ void CDROM_Interface_Physical::InitAudio()
 	                                  ChannelFeature::DigitalAudio});
 
 	thread = std::thread(&CDROM_Interface_Physical::CdReaderLoop, this);
+	MIXER_UnlockMixerThread();
 }
 
-void CDROM_Interface_Physical::CdAudioCallback(const uint16_t requested_frames)
+void CDROM_Interface_Physical::CdAudioCallback(const int requested_frames)
 {
 	assert(requested_frames > 0);
 

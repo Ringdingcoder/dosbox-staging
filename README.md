@@ -3,10 +3,28 @@
 ![GPL-2.0-or-later][gpl-badge]
 [![Chat][discord-badge]][discord]
 
-This repository attempts to modernize the DOSBox codebase by using current
-development practices and tools, fixing issues, and adding features that better
-support today's systems.
+DOSBox Staging is a modern continuation of DOSBox with advanced features and current development practices.
 
+It is a (mostly) drop-in replacement for older DOSBox versions—your existing configurations will continue to work, and you will have access to many advanced features.
+
+For a detailed description of the project's scope please refer to the [About](https://www.dosbox-staging.org/about/) page on our website.
+
+## Donations
+
+If you enjoy using DOSBox Staging, please [consider a
+donation](https://www.dosbox-staging.org/get-involved/#make-a-donation) to the
+project.
+
+If you want to help but can't afford a donation, check out the [Get
+involved](https://www.dosbox-staging.org/get-involved/) page of our website
+for other ways to contribute.
+
+
+## Project website
+
+https://www.dosbox-staging.org/
+
+First-time users and people migrating from other DOSBox variants should start by reading the [Getting started guide](https://www.dosbox-staging.org/getting-started/).
 
 ## Build status
 
@@ -17,50 +35,42 @@ support today's systems.
 [![macOS build status][build-mac-badge]][build-mac-ci]
 
 
-## Code quality status
-
-[![Coverity status][coverity-badge]][3]
-
 ## Stable release builds
 
-[Linux](https://www.dosbox-staging.org/releases/linux/),
 [Windows](https://www.dosbox-staging.org/releases/windows/),
 [macOS](https://www.dosbox-staging.org/releases/macos/)
+[Linux](https://www.dosbox-staging.org/releases/linux/),
+
 
 ## Test builds & development snapshots
 
-[Development builds].
+[Development builds]
 
 ## Key features for developers
 
-| **Feature**                    | **Status**                   |
-|--------------------------------|------------------------------|
-| **Version control**            | Git                          |
-| **Language**                   | C++20                        |
-| **SDL**                        | >= 2.0.5                     |
-| **Logging**                    | Loguru for C++<sup>[5]</sup> |
-| **Buildsystem**                | Meson or Visual Studio 2022  |
-| **CI**                         | Yes                          |
-| **Static analysis**            | Yes<sup>[1],[3],[4]</sup>    |
-| **Dynamic analysis**           | Yes                          |
-| **clang-format**               | Yes                          |
-| **[Development builds]**       | Yes                          |
-| **Unit tests**                 | Yes<sup>[6]</sup>            |
-| **Automated regression tests** | WIP                          |
+| **Feature**                | **Status**                          |
+| -------------------------- | -------------------------------     |
+| **Version control**        | Git                                 |
+| **Language**               | C++20                               |
+| **Logging**                | Loguru for C++<sup>[3]</sup>        |
+| **Build system**           | CMake + Ninja or Visual Studio 2022 |
+| **Dependency manager**     | vcpkg                               |
+| **CI**                     | Yes                                 |
+| **Static analysis**        | Yes<sup>[1],[2]</sup>               |
+| **Dynamic analysis**       | Yes                                 |
+| **clang-format**           | Yes                                 |
+| **[Development builds]**   | Yes                                 |
+| **Unit tests**             | Yes<sup>[4]</sup>                   |
 
-[1]: https://github.com/dosbox-staging/dosbox-staging/actions?query=workflow%3A%22Code+analysis%22
-[2]: https://lgtm.com/projects/g/dosbox-staging/dosbox-staging/
-[3]: https://scan.coverity.com/projects/dosbox-staging
-[4]: https://github.com/dosbox-staging/dosbox-staging/actions?query=workflow%3A%22PVS-Studio+analysis%22
-[5]: https://github.com/emilk/loguru
-[6]: https://github.com/dosbox-staging/dosbox-staging/tree/main/tests
+[1]: https://github.com/dosbox-staging/dosbox-staging/actions/workflows/clang-analysis.yml
+[2]: https://github.com/dosbox-staging/dosbox-staging/actions/workflows/pvs-studio.yml
+[3]: https://github.com/emilk/loguru
+[4]: https://github.com/dosbox-staging/dosbox-staging/tree/main/tests
 [Development builds]: https://www.dosbox-staging.org/releases/development-builds/
 
 ## Source code analysis tools
 
 - [PVS-Studio](https://pvs-studio.com/pvs-studio/?utm_source=website&utm_medium=github&utm_campaign=open_source) — C++ static analyser
-- [Coverity](https://scan.coverity.com/) — C++ static analyser
-- [Clang Static Analyzer](https://clang-analyzer.llvm.org/) — C++ static analyser
 - [Pylint](https://pypi.org/project/pylint/) — Python static analyser
 - [markdownlint](https://github.com/DavidAnson/markdownlint) — style checker and linter for Markdown
 - [ShellCheck](https://www.shellcheck.net/) — shell script analysis tool
@@ -69,23 +79,36 @@ support today's systems.
 
 DOSBox Staging has the following library dependencies:
 
-| Package                                                            | Lib name      | Provides feature                                        | Presence    | Meson wrap   | VCPKG   | Repo availability   |
-| ------------------------------------------------------------------ | ------------- | ------------------------------------------------------- | ----------- | ------------ | ------- | ------------------- |
-| [FluidSynth](https://www.fluidsynth.org/)                          | fluidsynth    | General MIDI playback                                   | Optional    | yes          | yes     | common              |
-| [Google Test+Mock](https://github.com/google/googletest)           | gmock         | Framework for unit testing (development)                | Optional    | yes          | yes     | common              |
-| [IIR](https://github.com/berndporr/iir1)                           | iir1          | Audio filtering                                         | Mandatory   | yes          | yes     | rare                |
-| [libpng](http://www.libpng.org/pub/png/libpng.html)                | libpng        | PNG-encoding of screen captures                         | Optional    | yes          | yes     | very common         |
-| [Munt](https://github.com/munt/munt)                               | libmt32emu    | Roland MT-32 and CM-32L playback                        | Optional    | yes          | yes     | rare                |
-| [Opus File](https://opus-codec.org/)                               | opusfile      | CDDA playback for Opus-encoded track files              | Mandatory   | **no** 🔴    | yes     | common              |
-| [SDL 2.0](https://github.com/libsdl-org/SDL)                       | sdl2          | OS-agnostic API for video, audio, and eventing          | Mandatory   | **no** 🔴    | yes     | common              |
-| [SDL_net 2.0](https://github.com/libsdl-org/SDL_net)               | sdl2-net      | Network API for emulated serial and IPX                 | Optional    | **no** 🔴    | yes     | common              |
-| [slirp](https://gitlab.freedesktop.org/slirp)                      | libslirp      | Unprivileged virtual TCP/IP stack for Ethernet          | Optional    | yes          | yes     | less common         |
-| [SpeexDSP](https://github.com/xiph/speexdsp)                       | speexdsp      | Audio resampling                                        | Mandatory   | yes          | yes     | common              |
-| [Tracy Profiler](https://github.com/wolfpld/tracy)                 | tracy         | Event profile (development)                             | Optional    | yes          | yes     | rare                |
-| [zlib](http://www.zlib.net/)                                       | zlib          | ZMBV video capture                                      | Optional    | **no** 🔴    | yes     | very common         |
-| [zlib-ng](https://github.com/zlib-ng/zlib-ng)                      | zlib-ng       | ZMBV video capture (more performant zlib replacement)   | Optional    | yes          | yes     | common              |
+| Dependency                                               | Provides feature                                | vcpkg package name | vcpkg version   | Optional?           |
+| -------------------------------------------------------- | ----------------------------------------------- | ------------------ | --------------- | ------------------- |
+| [FluidSynth](https://www.fluidsynth.org/)                | General MIDI playback                           | fluidsynth         | 2.5.0 (overlay) | **no** :red_circle: |
+| [GoogleTest](https://github.com/google/googletest)       | Unit testing (development)                      | gtest              | 1.70.0#1        | yes :green_circle:  |
+| [IIR](https://github.com/berndporr/iir1)                 | Audio filtering                                 | iir1               | 1.10.0          | **no** :red_circle: |
+| [libpng](http://www.libpng.org/pub/png/libpng.html)      | PNG encoding of screen captures                 | libpng             | 1.6.50          | yes :green_circle:  |
+| [Munt](https://github.com/munt/munt)                     | Roland MT-32 and CM-32L emulation               | libmt32emu         | 2.7.1           | yes :green_circle:  |
+| [Opus File](https://opus-codec.org/)                     | CD Audio playback for Opus-encoded audio tracks | opusfile           | 0.12+20221121#1 | **no** :red_circle: |
+| [SDL 2](https://github.com/libsdl-org/SDL)               | OS-agnostic API for video, audio, and eventing  | sdl2               | 2.32.10         | **no** :red_circle: |
+| [SDL_net 2](https://github.com/libsdl-org/SDL_net)       | Network API for emulated serial and IPX         | sdl2-net           | 2.2.0#3         | yes :green_circle:  |
+| [SpeexDSP](https://github.com/xiph/speexdsp)             | Audio resampling                                | speexdsp           | 1.2.1#1         | **no** :red_circle: |
+| [Tracy Profiler](https://github.com/wolfpld/tracy)       | Event profiler (development)                    | tracy              | 0.11.1#2        | yes :green_circle:  |
+| [zlib-ng](https://github.com/zlib-ng/zlib-ng)            | ZMBV video capture                              | zlib-ng            | 2.2.5           | yes :green_circle:  |
 
-See the Meson wrap files in [subprojects](/subprojects) the current library versions we use.
+
+### Dynamically loaded dependencies
+
+**Slirp** is built separately as a dynamic library (via
+vcpkg) and is loaded on-demand at runtime if available. Please refer to the
+[dosbox-staging-ext](https://github.com/dosbox-staging/dosbox-staging-ext)
+project for further details. To check the version of this dependency 
+included in our stable and dev build packages, check out the comments of the
+[releases packages](https://github.com/dosbox-staging/dosbox-staging-ext/releases) of
+the [dosbox-staging-ext](https://github.com/dosbox-staging/dosbox-staging-ext)
+project.
+
+For information on the optional **Nuked SC-55 CLAP** audio plugin, check out
+the [plugin's GitHub repository](https://github.com/johnnovak/Nuked-SC55-CLAP/) (note Nuked SC-55
+CLAP is _not_ a DOSBox Staging project).
+
 
 ## Get the sources
 
@@ -97,7 +120,11 @@ git clone https://github.com/dosbox-staging/dosbox-staging.git
 
 ## Build instructions
 
-Read [BUILD.md] for the comprehensive compilation guide.
+Please refer to the platform specific build instructions:
+
+- [Windows](docs/build-windows.md)
+- [macOS](docs/build-macos.md)
+- [Linux](docs/build-linux.md)
 
 > **Note**
 >
@@ -143,26 +170,6 @@ sudo zypper install ccache gcc gcc-c++ meson alsa-devel libatomic1 libpng-devel 
 ```
 
 ``` shell
-# Void Linux
-sudo xbps-install -S SDL2-devel SDL2_net-devel alsa-lib-devel \
-                     fluidsynth-devel libiir1-devel libmt32emu-devel \
-                     libpng-devel libslirp-devel opusfile-devel \
-                     speexdsp-devel libatomic-devel libXi-devel
-```
-
-``` shell
-# NixOS
-# With Home Manager on home.nix (Recommended Permanent Installation)
-home.packages = [ pkg-config gcc_multi cmake ccache SDL2 SDL2_net \
-                  fluidsynth glib gtest libGL libGLU libjack2 libmt32emu libogg \
-                  libpng libpulseaudio libslirp libsndfile meson ninja opusfile \
-                  libselinux speexdsp stdenv alsa-lib xorg.libXi irr1 ]
-
-# Note: the same package list will work with environment.systemPackages
-# on configuration.nix
-```
-
-``` shell
 # macOS
 xcode-select --install
 brew install cmake ccache meson libpng sdl2 sdl2_net opusfile \
@@ -205,8 +212,6 @@ brew install cmake ccache meson libpng sdl2 sdl2_net opusfile \
     The binary depends on local resources relative to it, so we suggest
     symlinking to the binary from your `PATH`, such as into `~/.local/bin/`.
 
-    Have fun!
-
 
 ### Windows – Visual Studio (2022 or newer)
 
@@ -231,14 +236,14 @@ a significant length of time.
 [vcpkg]: https://github.com/microsoft/vcpkg
 
 
-### Windows (MSYS2), macOS (MacPorts), Haiku, Nix0S, others
+### Windows (MSYS2), macOS (MacPorts), Haiku, NixOS, others
 
 Instructions for other build systems and operating systems are documented
-in [BUILD.md].
+in [docs/BUILD.md].
 
 Links to OS-specific instructions: [MSYS2], [MacPorts], [Haiku], [NixOS].
 
-[BUILD.md]: BUILD.md
+[BUILD.md]: docs/BUILD.md
 [MSYS2]:    docs/build-windows.md
 [MacPorts]: docs/build-macos.md
 [Haiku]:    docs/build-haiku.md
@@ -288,8 +293,6 @@ git fetch origin "refs/notes/*:refs/notes/*"
 
 [build-mac-badge]: https://img.shields.io/github/actions/workflow/status/dosbox-staging/dosbox-staging/macos.yml?label=macOS%20%28x86_64%2C%20arm64%29
 [build-mac-ci]:    https://github.com/dosbox-staging/dosbox-staging/actions/workflows/macos.yml?query=branch%3Amain
-
-[coverity-badge]: https://img.shields.io/coverity/scan/dosbox-staging
 
 
 ## Website & documentation

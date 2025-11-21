@@ -1,23 +1,6 @@
-/*
- *  SPDX-License-Identifier: GPL-2.0-or-later
- *
- *  Copyright (C) 2019-2024  The DOSBox Staging Team
- *  Copyright (C) 2002-2021  The DOSBox Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2019-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #ifndef DOSBOX_CDROM_H
 #define DOSBOX_CDROM_H
@@ -33,10 +16,10 @@
 #include <string>
 #include <vector>
 
-#include "support.h"
-#include "mem.h"
-#include "mixer.h"
-#include "rwqueue.h"
+#include "audio/mixer.h"
+#include "hardware/memory.h"
+#include "misc/support.h"
+#include "utils/rwqueue.h"
 
 #include "decoders/SDL_sound.h"
 
@@ -227,7 +210,7 @@ private:
 
 	class BinaryFile final : public TrackFile {
 	public:
-		BinaryFile(const char* filename, bool& error);
+		BinaryFile(const std_fs::path &filename, bool &error);
 		~BinaryFile() override;
 
 		BinaryFile()                  = delete;
@@ -289,14 +272,15 @@ private:
 public:
 	// Nested struct definition
 	struct Track {
-		std::shared_ptr<TrackFile> file       = nullptr;
-		uint32_t                   start      = 0;
-		uint32_t                   length     = 0;
-		uint32_t                   skip       = 0;
-		uint16_t                   sectorSize = 0;
-		uint8_t                    number     = 0;
-		uint8_t                    attr       = 0;
-		bool                       mode2      = false;
+		std::shared_ptr<TrackFile> file            = nullptr;
+		uint32_t                   start           = 0;
+		uint32_t                   length          = 0;
+		uint32_t                   skip            = 0;
+		uint16_t                   sector_size     = 0;
+		uint16_t                   subchannel_size = 0;
+		uint8_t                    number          = 0;
+		uint8_t                    attr            = 0;
+		bool                       mode2           = false;
 	};
 
 	CDROM_Interface_Image();
@@ -331,6 +315,7 @@ public:
 private:
 	static struct imagePlayer {
 		// Objects, pointers, and then scalars; in descending size-order.
+		std::mutex mutex                   = {};
 		std::weak_ptr<TrackFile> trackFile = {};
 		MixerChannelPtr channel            = nullptr;
 		CDROM_Interface_Image* cd          = nullptr;
@@ -340,7 +325,6 @@ private:
 		uint32_t playedTrackFrames  = 0;
 		uint32_t totalTrackFrames   = 0;
 		uint32_t startSector        = 0;
-		uint32_t totalRedbookFrames = 0;
 		bool isPlaying              = false;
 		bool isPaused               = false;
 
@@ -360,10 +344,14 @@ private:
 	// Private utility functions
 	bool  LoadIsoFile(const char *filename);
 	bool  CanReadPVD(TrackFile *file,
-	                 const uint16_t sectorSize,
+	                 const uint16_t sector_size,
 	                 const bool mode2);
 	std::vector<Track>::iterator GetTrack(const uint32_t sector);
-	void CDAudioCallBack(uint16_t desired_frames);
+	void CDAudioCallback(const int desired_track_frames);
+	void PlayNextAudioTrack();
+	bool PlayAudioTrack(const Track& track, const uint32_t sector_offset);
+
+	bool LoadMdsFile(const char *filename);
 
 	// Private functions for cue sheet processing
 	bool  LoadCueSheet(const char *cuefile);
@@ -380,6 +368,7 @@ private:
 	std::vector<Track>   tracks;
 	std::vector<uint8_t> readBuffer;
 	std::string          mcn;
+	size_t               currentTrackIndex = 0;
 	static int           refCount;
 };
 
@@ -398,7 +387,7 @@ protected:
 
 private:
 	virtual std::vector<int16_t> ReadAudio(const uint32_t sector, const uint32_t frames_requested) = 0;
-	void CdAudioCallback(const uint16_t requested_frames);
+	void CdAudioCallback(const int requested_frames);
 	void CdReaderLoop();
 
 	MixerChannelPtr mixer_channel  = {};
@@ -483,4 +472,4 @@ private:
 
 #endif // Linux / WIN32
 
-#endif
+#endif // DOSBOX_CDROM_H

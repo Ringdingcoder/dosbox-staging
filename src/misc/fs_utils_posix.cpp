@@ -1,24 +1,7 @@
-/*
- *  SPDX-License-Identifier: GPL-2.0-or-later
- *
- *  Copyright (C) 2020-2024  The DOSBox Staging Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2020-2025 The DOSBox Staging Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
-#include "fs_utils.h"
+#include "utils/fs_utils.h"
 
 #if !defined(WIN32)
 
@@ -35,9 +18,9 @@
 #include <sys/xattr.h>
 #endif
 
-#include "dos_inc.h"
-#include "logging.h"
-#include "string_utils.h"
+#include "dos/dos.h"
+#include "misc/logging.h"
+#include "utils/string_utils.h"
 
 bool path_exists(const char *path) noexcept
 {
@@ -162,11 +145,18 @@ constexpr int PermissionsRW = S_IWUSR | S_IWGRP | S_IWOTH | PermissionsRO;
 
 // Attributes 'hidden', 'system', and 'archive' are always taken from the
 // host extended attributes.
-constexpr uint8_t XattrReadMask = 0b0010'0110; // hidden, system, archive
-// Attributes 'read-only' and 'directory' are stored in extended attributes,
-// but not used by DOSBox, for these we are always using host file system
-// attribute bits.
-constexpr uint8_t XattrWriteMask = 0b0001'0001 | XattrReadMask;
+// XattrReadMask = bitflags for read-only, hidden, system, and archive
+constexpr uint8_t XattrReadMask = 0b0010'0111;
+
+// Attributes 'read-only' and 'directory' are stored in extended attributes.
+// For files, read-only is checked using host file system permissions.
+// For directories, read-only is checked by either file system permission or the extended attribute.
+// We do not set file system permissions when a DOS program marks a directory as read-only.
+// MS-DOS does not prevent new files from being created inside read-only directories.
+// Linux does prevent this so we must not set the host directory read-only.
+// XattrWriteMask = bitflag for directory OR'd with XattrReadMask
+constexpr uint8_t XattrWriteMask = 0b0001'0000 | XattrReadMask;
+
 // We are storing DOS file attributes in Unix extended attributes, using same
 // format as WINE, Samba 3, and DOSEmu 2.
 static const std::string XattrName = "user.DOSATTRIB";
@@ -315,7 +305,13 @@ uint16_t local_drive_get_attributes(const std_fs::path& path,
 	}
 
 	attributes.directory = is_directory;
-	attributes.read_only = is_read_only;
+	if (is_directory) {
+		// Directories need to honor the extended attribute.
+		// See comment above XattrWriteMask.
+		attributes.read_only = attributes.read_only || is_read_only;
+	} else {
+		attributes.read_only = is_read_only;
+	}
 
 	return DOSERR_NONE;
 }
@@ -329,8 +325,16 @@ uint16_t local_drive_set_attributes(const std_fs::path& path,
 
 	bool status = make_writable(path);
 	if (status) {
+		struct stat file_info;
+		bool is_directory = true;
+		if (stat(path.c_str(), &file_info) == 0) {
+			is_directory = file_info.st_mode & S_IFDIR;
+		}
 		status = set_xattr(path, attributes);
-		if (status && attributes.read_only) {
+		if (status && attributes.read_only && !is_directory) {
+			// Sets permissions on the host filesystem.
+			// Don't do this for directories.
+			// MS-DOS allows new files to be created in read-only directories.
 			status = make_readonly(path);
 		}
 	}
@@ -480,6 +484,26 @@ void set_dos_file_time(const NativeFileHandle handle, const uint16_t date, const
 	// I like hating on Win32 API but at least they have better function names...
 	// F U too Mr. Timens
 	futimens(handle, unix_times);
+}
+
+bool delete_native_file(const std_fs::path& path)
+{
+	return unlink(path.c_str()) == 0;
+}
+
+bool local_drive_remove_dir(const std_fs::path& path)
+{
+	return rmdir(path.c_str()) == 0;
+}
+
+bool delete_file(const std_fs::path& path)
+{
+	return delete_native_file(path);
+}
+
+bool remove_dir(const std_fs::path& path)
+{
+	return local_drive_remove_dir(path);
 }
 
 #endif

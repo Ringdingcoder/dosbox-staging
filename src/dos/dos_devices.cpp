@@ -1,35 +1,20 @@
-/*
- *  Copyright (C) 2020-2024  The DOSBox Staging Team
- *  Copyright (C) 2002-2021  The DOSBox Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2020-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
-#include "dos_system.h"
+#include "dos/dos_system.h"
 
 #include <cstring>
 
 #include "dosbox.h"
-#include "callback.h"
-#include "regs.h"
-#include "mem.h"
-#include "bios.h"
-#include "dos_inc.h"
-#include "support.h"
-#include "drives.h"
+#include "cpu/callback.h"
+#include "cpu/registers.h"
 #include "dev_con.h"
+#include "dos.h"
+#include "dos/drives.h"
+#include "hardware/memory.h"
+#include "ints/bios.h"
+#include "misc/support.h"
 
 DOS_Device * Devices[DOS_DEVICES];
 
@@ -399,7 +384,8 @@ uint8_t DOS_FindDevice(const char* name)
 	for (int index = DOS_DEVICES - 1; index >= 0; index--) {
 		if (Devices[index]) {
 			if (Devices[index]->GetInformation() & EXT_DEVICE_BIT) {
-				if (WildFileCmp(name_part, Devices[index]->name.c_str())) {
+				if (wild_file_cmp(name_part,
+				                  Devices[index]->name.c_str())) {
 					if (DOS_CheckExtDevice(name_part, false) != 0) {
 						return index;
 					} else {
@@ -427,8 +413,9 @@ uint8_t DOS_FindDevice(const char* name)
 	/* loop through devices */
 	for(uint8_t index = 0;index < DOS_DEVICES;index++) {
 		if (Devices[index]) {
-			if (WildFileCmp(name_part, Devices[index]->GetName()))
+			if (wild_file_cmp(name_part, Devices[index]->GetName())) {
 				return index;
+			}
 		}
 	}
 	return DOS_DEVICES;

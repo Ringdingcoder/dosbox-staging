@@ -1,20 +1,22 @@
 # Sources without messages.cpp or messages_stubs.cpp
 libmisc_nomsg_sources = [
     'ansi_code_markup.cpp',
+    'console.cpp',
     'cross.cpp',
-    'ethernet.cpp',
-    'ethernet_slirp.cpp',
     'fs_utils.cpp',
     'fs_utils_posix.cpp',
     'fs_utils_win32.cpp',
     'help_util.cpp',
-    'pacer.cpp',
-    'programs.cpp',
+    'host_locale.cpp',
+    'host_locale_macos.cpp',
+    'host_locale_posix.cpp',
+    'host_locale_win32.cpp',
+    'messages_po_entry.cpp',
     'rwqueue.cpp',
-    'setup.cpp',
-    'string_utils.cpp',
     'support.cpp',
     'unicode.cpp',
+    'unicode_encodings.cpp',
+    'video.cpp',
 ]
 
 # Full sources
@@ -26,8 +28,8 @@ libmisc_stubs_sources = libmisc_nomsg_sources + ['messages_stubs.cpp']
 libmisc_dependencies = [
     corefoundation_dep,
     ghc_dep,
+    libiir_dep,
     libloguru_dep,
-    libslirp_dep,
     libwhereami_dep,
     sdl2_dep,
     stdcppfs_dep,

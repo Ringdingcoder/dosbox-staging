@@ -1,28 +1,16 @@
-/*
- *  Copyright (C) 2002-2021  The DOSBox Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2025-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
-#include "dosbox.h"
-#include "inout.h"
-#include "cpu.h"
-#include "callback.h"
 #include "pic.h"
-#include "timer.h"
-#include "setup.h"
+
+#include <memory>
+
+#include "cpu/callback.h"
+#include "cpu/cpu.h"
+#include "hardware/pic.h"
+#include "hardware/port.h"
+#include "hardware/timer.h"
 
 // PIC Controllers
 // ~~~~~~~~~~~~~~~
@@ -136,9 +124,11 @@ static PIC_Controller &primary_controller = pics[0];
 static PIC_Controller &secondary_controller = pics[1];
 uint32_t PIC_Ticks = 0;
 uint32_t PIC_IRQCheck = 0; // x86 dynamic core expects a 32 bit variable size
+std::atomic<double> atomic_pic_index = 0.0;
 
-void PIC_Controller::set_imr(uint8_t val) {
-	if (machine == MCH_PCJR) {
+void PIC_Controller::set_imr(uint8_t val)
+{
+	if (is_machine_pcjr()) {
 		//irq 6 is a NMI on the PCJR
 		if (this == &primary_controller)
 			val &= ~(1 << (6));
@@ -185,7 +175,7 @@ void PIC_Controller::start_irq(uint8_t val) {
 		isr |= 1<<(val);
 		isrr = ~isr;
 	} else if (rotate_on_auto_eoi) {
-		E_Exit("rotate on auto EOI not handled");
+		LOG_ERR("PIC: Rotate on auto EOI not handled");
 	}
 }
 
@@ -209,15 +199,23 @@ static void write_command(io_port_t port, io_val_t value, io_width_t)
 	PIC_Controller *pic = &pics[port == 0x20 ? 0 : 1];
 
 	if (val & 0x10) { // ICW1 issued
-		if (val&0x04) E_Exit("PIC: 4 byte interval not handled");
-		if (val&0x08) E_Exit("PIC: level triggered mode not handled");
-		if (val&0xe0) E_Exit("PIC: 8080/8085 mode not handled");
+		if (val & 0x04) {
+			LOG_ERR("PIC: 4-byte interval not handled");
+		}
+		if (val & 0x08) {
+			LOG_ERR("PIC: Level triggered mode not handled");
+		}
+		if (val & 0xe0) {
+			LOG_ERR("PIC: 8080/8085 mode not handled");
+		}
 		pic->set_imr(0);
 		pic->single=(val&0x02)==0x02;
 		pic->icw_index=1;			// next is ICW2
 		pic->icw_words=2 + (val&0x01);	// =3 if ICW4 needed
 	} else if (val & 0x08) {                // OCW3 issued
-		if (val&0x04) E_Exit("PIC: poll command not handled");
+		if (val & 0x04) {
+			LOG_ERR("PIC: Poll command not handled");
+		}
 		if (val&0x02) {		// function select
 			if (val&0x01) pic->request_issr=true;	/* select read interrupt in-service register */
 			else pic->request_issr=false;			/* select read interrupt request register */
@@ -232,7 +230,7 @@ static void write_command(io_port_t port, io_val_t value, io_width_t)
 	} else {                        // OCW2 issued
 		if (val&0x20) {		// EOI commands
 			if (val & 0x80) {
-				E_Exit("rotate mode not supported");
+				LOG_ERR("PIC: Rotate mode not supported");
 			}
 			if (val & 0x40) { // specific EOI
 				pic->isr &= ~(1 << ((val - 0x60)));
@@ -291,10 +289,13 @@ static void write_data(io_port_t port, io_val_t value, io_width_t)
 
 		LOG(LOG_PIC, LOG_NORMAL)("%d:ICW 4 %u", port == 0x21 ? 0 : 1, val);
 
-		if ((val & 0x01) == 0)
-			E_Exit("PIC:ICW4: %x, 8085 mode not handled", val);
-		if ((val & 0x10) != 0)
-			LOG_MSG("PIC:ICW4: %x, special fully-nested mode not handled", val);
+		if ((val & 0x01) == 0) {
+			LOG_ERR("PIC:ICW4: %x, 8085 mode not handled", val);
+		}
+		if ((val & 0x10) != 0) {
+			LOG_MSG("PIC:ICW4: %x, special fully-nested mode not handled",
+			        val);
+		}
 
 		if(pic->icw_index++ >= pic->icw_words) pic->icw_index=0;
 		break;
@@ -366,9 +367,9 @@ static void secondary_startIRQ()
 			break;
 		}
 	}
-	// Maybe change the E_Exit to a return
 	if (pic1_irq == 8) {
-		E_Exit("PIC: IRQ 2 is active, but IRQ is not active on the secondary controller.");
+		LOG_ERR("PIC: IRQ 2 is active, but IRQ is not active on the secondary controller.");
+		return;
 	}
 
 	secondary_controller.start_irq(pic1_irq);
@@ -527,6 +528,8 @@ void PIC_RemoveEvents(PIC_EventHandler handler) {
 
 
 bool PIC_RunQueue(void) {
+	PIC_UpdateAtomicIndex();
+
 	/* Check to see if a new millisecond needs to be started */
 	CPU_CycleLeft+=CPU_Cycles;
 	CPU_Cycles=0;
@@ -567,7 +570,7 @@ bool PIC_RunQueue(void) {
 		}
 	} else CPU_Cycles=CPU_CycleLeft;
 	CPU_CycleLeft-=CPU_Cycles;
-	if (PIC_IRQCheck) PIC_runIRQs();
+	PIC_runIRQs();
 	return true;
 }
 
@@ -622,12 +625,13 @@ void TIMER_AddTick(void) {
 }
 
 /* Use full name to avoid name clash with compile option for position-independent code */
-class PIC_8259A final : public Module_base {
+class PIC_8259A {
 private:
 	IO_ReadHandleObject ReadHandler[4];
 	IO_WriteHandleObject WriteHandler[4];
 public:
-	PIC_8259A(Section* configuration):Module_base(configuration){
+	PIC_8259A()
+	{
 		/* Setup pic0 and pic1 with initial values like DOS has normally */
 		PIC_IRQCheck = 0;
 		PIC_Ticks = 0;
@@ -656,12 +660,12 @@ public:
 		// Ref: https://dosdays.co.uk/topics/io_addresses_irq_dma.php
 		// If present, the MPU-401 activates and uses IRQ 9.
 		//
-		if (IS_EGAVGA_ARCH) {
+		if (is_machine_ega_or_better()) {
 			PIC_SetIRQMask(9, false);
 			PIC_DeActivateIRQ(9);
 		}
 
-		if (machine == MCH_PCJR) {
+		if (is_machine_pcjr()) {
 			/* Enable IRQ6 (replacement for the NMI for PCJr) */
 			PIC_SetIRQMask(6,false);
 		}
@@ -682,17 +686,17 @@ public:
 		pic_queue.next_entry=nullptr;
 	}
 
-	~PIC_8259A(){
-	}
+	~PIC_8259A() = default;
 };
 
-static PIC_8259A* test;
+static std::unique_ptr<PIC_8259A> pic = {};
 
-void PIC_Destroy(Section* /*sec*/){
-	delete test;
+void PIC_Init()
+{
+	pic = std::make_unique<PIC_8259A>();
 }
 
-void PIC_Init(Section* sec) {
-	test = new PIC_8259A(sec);
-	sec->AddDestroyFunction(&PIC_Destroy);
+void PIC_Destroy()
+{
+	pic = {};
 }

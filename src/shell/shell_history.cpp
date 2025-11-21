@@ -1,31 +1,16 @@
-/*
- *  Copyright (C) 2024-2024  The DOSBox Staging Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2024-2025 The DOSBox Staging Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
-#include "shell.h"
+#include "shell/shell.h"
 
 #include <fstream>
 
-#include "checks.h"
-#include "control.h"
+#include "utils/checks.h"
+#include "config/config.h"
 #include "dosbox.h"
-#include "fs_utils.h"
-#include "string_utils.h"
-#include "unicode.h"
+#include "utils/fs_utils.h"
+#include "utils/string_utils.h"
+#include "misc/unicode.h"
 
 CHECK_NARROWING();
 
@@ -129,10 +114,10 @@ ShellHistory::~ShellHistory()
 
 static std_fs::path get_shell_history_path()
 {
-	const auto* section = dynamic_cast<Section_prop*>(control->GetSection("dos"));
+	const auto section = get_section("dos");
 	assert(section);
 
-	const auto* path = section->Get_path("shell_history_file"); //-V522
+	const auto* path = section->GetPath("shell_history_file"); //-V522
 	if (path == nullptr) {
 		return {};
 	}

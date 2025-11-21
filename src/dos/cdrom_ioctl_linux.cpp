@@ -1,27 +1,12 @@
-/*
- *  Copyright (C) 2002-2021  The DOSBox Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <cassert>
 #include <cstring>
 
 #include "cdrom.h"
-#include "string_utils.h"
-#include "support.h"
+#include "utils/string_utils.h"
+#include "misc/support.h"
 
 #if defined(LINUX)
 #include <fcntl.h>
@@ -302,7 +287,11 @@ bool CDROM_Interface_Ioctl::SetDevice(const char* path)
 		return false;
 	}
 
-	std_fs::path cannonical_path = std_fs::canonical(path);
+	std::error_code err = {};
+	const auto cannonical_path = std_fs::canonical(path, err);
+	if (err) {
+		return false;
+	}
 
 	while (mntent *entry = getmntent(mounts)) {
 		// Don't try to open names that aren't a full path. Ex: "tmpfs" "sysfs"

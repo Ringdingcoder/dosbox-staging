@@ -1,33 +1,18 @@
-/*
- *  Copyright (C) 2002-2021  The DOSBox Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
-#include "dos_system.h"
+#include "dos/dos_system.h"
 
 #include <algorithm>
 #include <cassert>
 #include <iterator>
 #include <vector>
 
-#include "cross.h"
-#include "dos_inc.h"
-#include "drives.h"
-#include "string_utils.h"
-#include "support.h"
+#include "dos.h"
+#include "dos/drives.h"
+#include "misc/cross.h"
+#include "misc/support.h"
+#include "utils/string_utils.h"
 
 int fileInfoCounter = 0;
 
@@ -369,8 +354,9 @@ void DOS_Drive_Cache::CacheOut(const char* path, bool ignoreLastDir) {
 	save_dir = nullptr;
 }
 
-bool DOS_Drive_Cache::IsCachedIn(CFileInfo* curDir) {
-	return (curDir->isOverlayDir || curDir->fileList.size()>0);
+bool DOS_Drive_Cache::IsCachedIn(CFileInfo* curDir)
+{
+	return curDir->isOverlayDir || !curDir->fileList.empty();
 }
 
 
@@ -688,7 +674,7 @@ void DOS_Drive_Cache::CreateShortName(CFileInfo* curDir, CFileInfo* info) {
 		}
 
 		// keep list sorted for CreateShortNameID to work correctly
-		if (curDir->longNameList.size()>0) {
+		if (!curDir->longNameList.empty()) {
 			if (!(strcmp(info->shortname,curDir->longNameList.back()->shortname)<0)) {
 				// append at end of list
 				curDir->longNameList.push_back(info);
@@ -829,7 +815,7 @@ bool DOS_Drive_Cache::OpenDir(CFileInfo* dir, const char* expand, uint16_t& id) 
 	// open dir
 	if (dirSearch[id]) {
 		// open dir
-		dir_information* dirp = open_directory(expandcopy);
+		DirInformation* dirp = open_directory(expandcopy);
 		if (dirp || dir->isOverlayDir) { 
 			// Reset it..
 			if (dirp) close_directory(dirp);
@@ -856,7 +842,7 @@ void DOS_Drive_Cache::CreateEntry(CFileInfo* dir, const char* name, bool is_dire
 	bool found = false;
 
 	// keep list sorted (so GetLongName works correctly, used by CreateShortName in this routine)
-	if (dir->fileList.size()>0) {
+	if (!dir->fileList.empty()) {
 		if (!(strcmp(info->shortname,dir->fileList.back()->shortname)<0)) {
 			// append at end of list
 			dir->fileList.push_back(info);
@@ -897,7 +883,7 @@ bool DOS_Drive_Cache::ReadDir(uint16_t id, char* &result) {
 
 	if (!IsCachedIn(dirSearch[id])) {
 		// Try to open directory
-		dir_information* dirp = open_directory(dirPath);
+		DirInformation* dirp = open_directory(dirPath);
 		if (!dirp) {
 			if (dirSearch[id]) {
 				dirSearch[id]->id = MAX_OPENDIRS;

@@ -1,38 +1,33 @@
-/*
- *  Copyright (C) 2022-2023  The DOSBox Staging Team
- *  Copyright (C) 2002-2021  The DOSBox Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2022-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "int10.h"
 
 #include <cassert>
 
-#include "mem.h"
-#include "inout.h"
+#include "hardware/memory.h"
+#include "hardware/port.h"
 
 Bitu INT10_VideoState_GetSize(Bitu state) {
 	// state: bit0=hardware, bit1=bios data, bit2=color regs/dac state
-	if ((state&7)==0) return 0;
+	if ((state & 7) == 0) {
+		return 0;
+	}
 
-	Bitu size=0x20;
-	if (state&1) size+=0x46;
-	if (state&2) size+=0x3a;
-	if (state&4) size+=0x303;
-	if ((svgaCard==SVGA_S3Trio) && (state&8)) size+=0x43;
+	Bitu size = 0x20;
+	if (state & 1) {
+		size += 0x46;
+	}
+	if (state & 2) {
+		size += 0x3a;
+	}
+	if (state & 4) {
+		size += 0x303;
+	}
+	if ((svga_type == SvgaType::S3) && (state & 8)) {
+		size += 0x43;
+	}
 	assert(size > 0);
 	return (size - 1) / 64 + 1;
 }
@@ -173,7 +168,7 @@ bool INT10_VideoState_Save(Bitu state,RealPt buffer) {
 		base_dest+=0x303;
 	}
 
-	if ((svgaCard==SVGA_S3Trio) && (state&8))  {
+	if ((svga_type == SvgaType::S3) && (state & 8)) {
 		real_writew(base_seg,RealOffset(buffer)+6,base_dest);
 
 		uint16_t crt_reg=real_readw(BIOSMEM_SEG,BIOSMEM_CRTC_ADDRESS);
@@ -327,7 +322,7 @@ bool INT10_VideoState_Restore(Bitu state,RealPt buffer) {
 		}
 	}
 
-	if ((svgaCard==SVGA_S3Trio) && (state&8))  {
+	if ((svga_type == SvgaType::S3) && (state & 8))  {
 		base_dest=real_readw(base_seg,RealOffset(buffer)+6);
 
 		uint16_t crt_reg=real_readw(BIOSMEM_SEG,BIOSMEM_CRTC_ADDRESS);

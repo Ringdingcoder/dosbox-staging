@@ -1,29 +1,40 @@
-/*
- *  SPDX-License-Identifier: GPL-2.0-or-later
- *
- *  Copyright (C) 2022-2023  The DOSBox Staging Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2022-2025 The DOSBox Staging Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <regex>
 #include <unordered_map>
 
-#include "string_utils.h"
-#include "support.h"
-#include "ansi_code_markup.h"
+#include "misc/ansi_code_markup.h"
+#include "utils/string_utils.h"
+#include "misc/support.h"
+
+// Pre-defined markups to help creating strings
+
+const std::string Ansi::Reset               = "[reset]";
+
+// Low intensity text colours
+const std::string Ansi::ColorBlack          = "[color=black]";
+const std::string Ansi::ColorBlue           = "[color=blue]";
+const std::string Ansi::ColorGreen          = "[color=green]";
+const std::string Ansi::ColorCyan           = "[color=cyan]";
+const std::string Ansi::ColorRed            = "[color=red]";
+const std::string Ansi::ColorMagenta        = "[color=magenta]";
+const std::string Ansi::ColorBrown          = "[color=brown]";
+const std::string Ansi::ColorLightGray      = "[color=light-grey]";
+
+// High intensity text colours
+const std::string Ansi::ColorDarkGray       = "[color=dark-grey]";
+const std::string Ansi::ColorLightBlue      = "[color=light-blue]";
+const std::string Ansi::ColorLightGreen     = "[color=light-green]";
+const std::string Ansi::ColorLightCyan      = "[color=light-cyan]";
+const std::string Ansi::ColorLightRed       = "[color=light-red]";
+const std::string Ansi::ColorLightMagenta   = "[color=light-magenta]";
+const std::string Ansi::ColorYellow         = "[color=yellow]";
+const std::string Ansi::ColorWhite          = "[color=white]";
+
+// Definitions to help keeping the command output style consistent
+const std::string& Ansi::HighlightHeader    = Ansi::ColorWhite;
+const std::string& Ansi::HighlightSelection = Ansi::ColorLightGreen;
 
 /*!
  * \brief Represents a markup tag.
@@ -45,41 +56,41 @@ public:
 		Misc,
 	};
 
-	enum class Type : int {
+	enum class Type {
 		Invalid = -1,
-		Color = -2,
+		Color   = -2,
 		BGColor = -3,
-		EraseL = -4,
-		EraseS = -5,
-		It = 3,
-		Bold = 1,
-		Ul = 4,
-		Strike = 9,
-		Blink = 5,
-		Dim = 2,
-		Hidden = 8,
+		EraseL  = -4,
+		EraseS  = -5,
+		It      = 3,
+		Bold    = 1,
+		Ul      = 4,
+		Strike  = 9,
+		Blink   = 5,
+		Dim     = 2,
+		Hidden  = 8,
 		Inverse = 7,
-		Reset = 0,
+		Reset   = 0,
 	};
 
-	enum class Color : int {
+	enum class Color {
 		Invalid = -1,
-		Black = 30,
-		Red = 31,
-		Green = 32,
-		Yellow = 33,
-		Blue = 34,
+		Black   = 30,
+		Red     = 31,
+		Green   = 32,
+		Yellow  = 33,
+		Blue    = 34,
 		Magenta = 35,
-		Cyan = 36,
-		White = 37,
+		Cyan    = 36,
+		White   = 37,
 		Default = 39,
 	};
 
-	enum class EraseExtents : int {
+	enum class EraseExtents {
 		Invalid = -1,
-		End = 0,
-		Begin = 1,
-		Entire = 2,
+		End     = 0,
+		Begin   = 1,
+		Entire  = 2,
 	};
 
 	Tag() = delete;
@@ -122,23 +133,23 @@ private:
 
 	static inline const std::string light_prefix = "light-";
 
+	// clang-format off
 	static inline const std::unordered_map<std::string, TagDetail> tags = {
-	        {"color", {Group::Colors, Type::Color}},
-	        {"bgcolor", {Group::Colors, Type::BGColor}},
-	        {"erasel", {Group::Erasers, Type::EraseL}},
-	        {"erases", {Group::Erasers, Type::EraseS}},
-	        {"i", {Group::Styles, Type::It}},
-	        {"b", {Group::Styles, Type::Bold}},
-	        {"u", {Group::Styles, Type::Ul}},
-	        {"s", {Group::Styles, Type::Strike}},
-	        {"blink", {Group::Styles, Type::Blink}},
-	        {"dim", {Group::Styles, Type::Dim}},
-	        {"hidden", {Group::Styles, Type::Hidden}},
-	        {"inverse", {Group::Styles, Type::Inverse}},
-	        {"reset", {Group::Misc, Type::Reset}},
+	        {"color",   {Group::Colors,  Type::Color}},
+	        {"bgcolor", {Group::Colors,  Type::BGColor}},
+	        {"erasel",  {Group::Erasers, Type::EraseL}},
+	        {"erases",  {Group::Erasers, Type::EraseS}},
+	        {"i",       {Group::Styles,  Type::It}},
+	        {"b",       {Group::Styles,  Type::Bold}},
+	        {"u",       {Group::Styles,  Type::Ul}},
+	        {"s",       {Group::Styles,  Type::Strike}},
+	        {"blink",   {Group::Styles,  Type::Blink}},
+	        {"dim",     {Group::Styles,  Type::Dim}},
+	        {"hidden",  {Group::Styles,  Type::Hidden}},
+	        {"inverse", {Group::Styles,  Type::Inverse}},
+	        {"reset",   {Group::Misc,    Type::Reset}},
 	};
 
-	// clang-format off
 	static inline const std::unordered_map<std::string, ColorDetail> color_values = {
 	        // Default colours
 	        {"default",       {Color::Default, false}},
@@ -180,8 +191,10 @@ Tag::Tag(std::string &tag, std::string &val, const bool close)
 	if (!contains(tags, tag)) {
 		return;
 	}
+
 	is_closed = close;
 	t_detail = tags.at(tag);
+
 	if ((t_detail.group == Group::Colors || t_detail.group == Group::Erasers) &&
 	    is_closed) {
 		return;
@@ -192,11 +205,12 @@ Tag::Tag(std::string &tag, std::string &val, const bool close)
 	if (t_detail.group == Group::Erasers && !parse_erase_val(val)) {
 		return;
 	}
+
 	is_valid = true;
 	return;
 }
 
-bool Tag::parse_color_val(const std::string &val)
+bool Tag::parse_color_val(const std::string& val)
 {
 	if (!contains(color_values, val)) {
 		return false;
@@ -204,7 +218,8 @@ bool Tag::parse_color_val(const std::string &val)
 	c_detail = color_values.at(val);
 	return true;
 }
-bool Tag::parse_erase_val(const std::string &val)
+
+bool Tag::parse_erase_val(const std::string& val)
 {
 	if (!contains(eraser_extents, val)) {
 		return false;
@@ -278,10 +293,14 @@ static const char *get_ansi_code(const Tag &tag)
 	if (!tag.valid()) {
 		return nullptr;
 	}
+
 	reset_str(ansi_code);
+
 	Tag::Group group = tag.group();
 	Tag::Type type = tag.type();
+
 	int ansi_num = tag.ansi_num();
+
 	switch (group) {
 	case Tag::Group::Colors:
 		// Background colors have codes that are +10
@@ -341,16 +360,20 @@ std::string convert_ansi_markup(const char *str)
 	const char *begin = str;
 	const char *last_match = str;
 	std::cmatch m;
+
 	while (std::regex_search(begin, m, markup)) {
 		const char *r = nullptr;
 		bool escape = m[1].matched;
+
 		if (!escape) {
 			bool close = m[3].matched;
 			std::string tag = m[5].matched ? m[5].str() : m[4].str();
 			std::string val = m[5].matched ? m[6].str() : "";
+
 			Tag t(tag, val, close);
 			r = get_ansi_code(t);
 		}
+
 		// Copy text before current match to output string
 		result += m.prefix().str();
 		result += r ? r : m[2].str();
@@ -359,12 +382,43 @@ std::string convert_ansi_markup(const char *str)
 		begin += m.position() + m.length();
 		last_match = m[0].second;
 	}
+
 	// Add the rest of the string after all matches have been found
 	result += last_match;
+
 	// And just in case our result is empty for some reason, set output
 	// string to input string
 	if (result.empty()) {
 		result = str;
 	}
+
+	return result;
+}
+
+std::string strip_ansi_markup(const std::string& str)
+{
+	std::string result;
+	const char* begin      = str.c_str();
+	const char* last_match = str.c_str();
+	std::cmatch m;
+
+	while (std::regex_search(begin, m, markup)) {
+		// Copy text before current match to output string
+		result += m.prefix().str();
+
+		// Continue the next iteration from the end of the current match
+		begin += m.position() + m.length();
+		last_match = m[0].second;
+	}
+
+	// Add the rest of the string after all matches have been found
+	result += last_match;
+
+	// And just in case our result is empty for some reason, set output
+	// string to input string
+	if (result.empty()) {
+		result = str;
+	}
+
 	return result;
 }

@@ -1,42 +1,27 @@
-/*
- *  Copyright (C) 2024-2024  The DOSBox Staging Team
- *  Copyright (C) 2002-2021  The DOSBox Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2024-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <cstdio>
 
 // Needed for std::isnan in simde
 #include <cmath>
 
-#include "callback.h"
-#include "cpu.h"
+#include "cpu/callback.h"
+#include "cpu/cpu.h"
+#include "cpu/mmx.h"
+#include "cpu/paging.h"
 #include "dosbox.h"
-#include "fpu.h"
-#include "inout.h"
+#include "fpu/fpu.h"
+#include "hardware/memory.h"
+#include "hardware/pic.h"
+#include "hardware/port.h"
 #include "lazyflags.h"
-#include "mem.h"
-#include "mmx.h"
-#include "paging.h"
-#include "pic.h"
 
 #include "simde/x86/mmx.h"
 
-#if C_DEBUG
-#include "debug.h"
+#if C_DEBUGGER
+#include "debugger/debugger.h"
 #endif
 
 #if (!C_CORE_INLINE)
@@ -49,7 +34,7 @@
 #define SaveMd(off,val)	mem_writed(off,val)
 #define SaveMq(off,val) mem_writeq(off,val) 
 #else 
-#include "paging.h"
+#include "cpu/paging.h"
 #define LoadMb(off) mem_readb_inline(off)
 #define LoadMw(off) mem_readw_inline(off)
 #define LoadMd(off) mem_readd_inline(off)
@@ -232,8 +217,8 @@ Bits CPU_Core_Prefetch_Run() noexcept
 		BaseDS=SegBase(ds);
 		BaseSS=SegBase(ss);
 		core.base_val_ds=ds;
-#if C_DEBUG
-#if C_HEAVY_DEBUG
+#if C_DEBUGGER
+#if C_HEAVY_DEBUGGER
 		if (DEBUG_HeavyIsBreakpoint()) {
 			FillFlags();
 			return debugCallback;
@@ -292,7 +277,7 @@ restart_opcode:
 		#include "core_normal/prefix_66_0f.h"
 		default:
 		illegal_opcode:
-#if C_DEBUG	
+#if C_DEBUGGER	
 			{
 				Bitu len=(GETIP-reg_eip);
 				LOADIP;

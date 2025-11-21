@@ -1,29 +1,15 @@
-/*
- *  Copyright (C) 2022-2024  The DOSBox Staging Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2022-2025 The DOSBox Staging Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "mouse.h"
+
 #include "mouse_config.h"
 #include "mouse_interfaces.h"
 
 #include <algorithm>
 
-#include "checks.h"
-#include "math_utils.h"
+#include "utils/checks.h"
+#include "utils/math_utils.h"
 
 CHECK_NARROWING();
 
@@ -56,11 +42,15 @@ static struct {
 
 	bool updated = false;       // true = state update waits to be picked up
 	VmWareButtons buttons = {}; // state of mouse buttons, in VMware format
-	int8_t counter_w      = 0;  // wheel movement counter
+	float delta_wheel = 0.0f;   // accumulated mouse wheel movement
 } vmware;
 
-static bool use_relative = true; // true = ignore absolute mouse position, use relative
-static bool is_input_raw = true; // true = no host mouse acceleration pre-applied
+// true = ignore absolute mouse position, use relative
+static bool use_relative = true;
+// true = no host mouse acceleration pre-applied
+static bool is_input_raw = true;
+// true = trigger interrupt without waiting and creating the data packet
+static bool immediate_interrupts = false;
 
 static float pos_x = 0.0f; // absolute mouse position in guest-side pixels
 static float pos_y = 0.0f;
@@ -117,6 +107,11 @@ bool MOUSEVMM_IsSupported(const MouseVmmProtocol protocol)
 	return false;
 }
 
+void MOUSEVMM_EnableImmediateInterrupts(const bool enable)
+{
+	immediate_interrupts = enable;
+}
+
 void MOUSEVMM_Activate(const MouseVmmProtocol protocol)
 {
 	bool is_activating = false;
@@ -144,13 +139,13 @@ void MOUSEVMM_Activate(const MouseVmmProtocol protocol)
 			pos_y = static_cast<float>(mouse_shared.resolution_y) / 2.0f;
 			scaled_x = 0;
 			scaled_y = 0;
-			MOUSEPS2_NotifyMovedDummy();
+			MOUSEPS2_NotifyInterruptNeeded(immediate_interrupts);
 		}
 	}
 
 	if (protocol == MouseVmmProtocol::VmWare) {
 		vmware.buttons._data = 0;
-		vmware.counter_w     = 0;
+		vmware.delta_wheel   = 0.0f;
 	}
 }
 
@@ -178,7 +173,7 @@ void MOUSEVMM_Deactivate(const MouseVmmProtocol protocol)
 
 	if (protocol == MouseVmmProtocol::VmWare) {
 		vmware.buttons._data = 0;
-		vmware.counter_w     = 0;
+		vmware.delta_wheel   = 0.0f;
 	}
 }
 
@@ -224,13 +219,11 @@ bool MOUSEVMM_CheckIfUpdated_VmWare()
 
 void MOUSEVMM_GetPointerStatus(MouseVmWarePointerStatus& status)
 {
-	status.absolute_x = scaled_x;
-	status.absolute_y = scaled_y;
-
+	status.absolute_x    = scaled_x;
+	status.absolute_y    = scaled_y;
 	status.buttons       = vmware.buttons._data;
-	status.wheel_counter = static_cast<uint8_t>(vmware.counter_w);
-
-	vmware.counter_w = 0;
+	status.wheel_counter = static_cast<uint8_t>(
+	        MOUSE_ConsumeInt8(vmware.delta_wheel));
 }
 
 // ***************************************************************************
@@ -244,7 +237,7 @@ void MOUSEVMM_NotifyInputType(const bool new_use_relative, const bool new_is_inp
 }
 
 void MOUSEVMM_NotifyMoved(const float x_rel, const float y_rel,
-                          const uint32_t x_abs, const uint32_t y_abs)
+                          const float x_abs, const float y_abs)
 {
 	if (!mouse_shared.active_vmm) {
 		return;
@@ -255,9 +248,9 @@ void MOUSEVMM_NotifyMoved(const float x_rel, const float y_rel,
 	const auto old_scaled_x = scaled_x;
 	const auto old_scaled_y = scaled_y;
 
-	auto calculate = [](float &position,
+	auto calculate = [](float& position,
 	                    const float relative,
-	                    const uint32_t absolute,
+	                    const float absolute,
 	                    const uint32_t resolution) {
 		assert(resolution > 1u);
 
@@ -271,11 +264,13 @@ void MOUSEVMM_NotifyMoved(const float x_rel, const float y_rel,
 			if (is_input_raw) {
 				const auto coeff = MOUSE_GetBallisticsCoeff(speed_xy.Get());
 				position += MOUSE_ClampRelativeMovement(relative * coeff);
-			} else
+			} else {
 				position += MOUSE_ClampRelativeMovement(relative);
-		} else
+			}
+		} else {
 			// Cursor position controlled by the host OS
-			position = static_cast<float>(absolute);
+			position = absolute;
+		}
 
 		position = std::clamp(position, 0.0f, static_cast<float>(resolution));
 
@@ -297,7 +292,7 @@ void MOUSEVMM_NotifyMoved(const float x_rel, const float y_rel,
 	}
 
 	vmware.updated = vmware.is_active;
-	MOUSEPS2_NotifyMovedDummy();
+	MOUSEPS2_NotifyInterruptNeeded(immediate_interrupts);
 }
 
 void MOUSEVMM_NotifyButton(const MouseButtons12S buttons_12S)
@@ -319,28 +314,32 @@ void MOUSEVMM_NotifyButton(const MouseButtons12S buttons_12S)
 	}
 
 	vmware.updated = vmware.is_active;
-	MOUSEPS2_NotifyMovedDummy();
+	MOUSEPS2_NotifyInterruptNeeded(immediate_interrupts);
 }
 
-void MOUSEVMM_NotifyWheel(const int16_t w_rel)
+void MOUSEVMM_NotifyWheel(const float w_rel)
 {
 	if (!vmware.is_active) { // only needed by VMware
 		return;
 	}
 
-	const auto old_counter_w = vmware.counter_w;
-	const auto new_counter_w = vmware.counter_w + w_rel;
-	vmware.counter_w = clamp_to_int8(static_cast<int32_t>(new_counter_w));
+	constexpr bool skip_delta_update = true;
 
-	if (old_counter_w == vmware.counter_w) {
-		return;
+	const auto old_counter = MOUSE_ConsumeInt8(vmware.delta_wheel,
+	                                           skip_delta_update);
+	vmware.delta_wheel = MOUSE_ClampWheelMovement(vmware.delta_wheel + w_rel);
+	const auto new_counter = MOUSE_ConsumeInt8(vmware.delta_wheel,
+	                                           skip_delta_update);
+
+	if (old_counter == new_counter) {
+		return; // movement not significant enough
 	}
 
 	vmware.updated = vmware.is_active;
-	MOUSEPS2_NotifyMovedDummy();
+	MOUSEPS2_NotifyInterruptNeeded(immediate_interrupts);
 }
 
-void MOUSEVMM_NewScreenParams(const uint32_t x_abs, const uint32_t y_abs)
+void MOUSEVMM_NewScreenParams(const float x_abs, const float y_abs)
 {
 	MOUSEVMM_NotifyMoved(0.0f, 0.0f, x_abs, y_abs);
 }

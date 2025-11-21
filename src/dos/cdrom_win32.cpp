@@ -1,25 +1,10 @@
-/*
- *  Copyright (C) 2024-2024  The DOSBox Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2024-2024 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "cdrom.h"
-#include "checks.h"
-#include "string_utils.h"
-#include "support.h"
+#include "utils/checks.h"
+#include "utils/string_utils.h"
+#include "misc/support.h"
 
 #if defined(WIN32)
 
@@ -281,20 +266,20 @@ bool CDROM_Interface_Win32::GetMediaTrayStatus(bool& mediaPresent,
 // LaserLock currently does not work with CDROM_Interface_Image or
 // CDROM_Interface_Ioctl either which does implement these. I could not find any
 // other game that uses this.
-bool CDROM_Interface_Win32::ReadSector(uint8_t* buffer, const bool raw,
-                                       const uint32_t sector)
+bool CDROM_Interface_Win32::ReadSector([[maybe_unused]]uint8_t* buffer, [[maybe_unused]]const bool raw,
+                                       [[maybe_unused]]const uint32_t sector)
 {
 	return false;
 }
 
-bool CDROM_Interface_Win32::ReadSectors(PhysPt buffer, const bool raw,
-                                        const uint32_t sector, const uint16_t num)
+bool CDROM_Interface_Win32::ReadSectors([[maybe_unused]]PhysPt buffer, [[maybe_unused]]const bool raw,
+                                        [[maybe_unused]]const uint32_t sector, [[maybe_unused]]const uint16_t num)
 {
 	return false;
 }
 
-bool CDROM_Interface_Win32::ReadSectorsHost(void* buffer, bool raw,
-                                            unsigned long sector, unsigned long num)
+bool CDROM_Interface_Win32::ReadSectorsHost([[maybe_unused]]void* buffer, [[maybe_unused]]bool raw,
+                                            [[maybe_unused]]unsigned long sector, [[maybe_unused]]unsigned long num)
 {
 	return false;
 }
@@ -374,7 +359,7 @@ std::vector<int16_t> CDROM_Interface_Win32::ReadAudio(const uint32_t sector,
 	LPVOID input_buffer      = &read_info;
 	DWORD input_buffer_size  = sizeof(read_info);
 	LPVOID output_buffer     = audio_frames.data();
-	DWORD output_buffer_size = audio_frames.size() * sizeof(int16_t);
+	DWORD output_buffer_size = static_cast<DWORD>(audio_frames.size() * sizeof(int16_t));
 	LPDWORD bytes_returned   = NULL;
 	LPOVERLAPPED overlapped  = NULL;
 

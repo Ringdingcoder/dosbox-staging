@@ -1,29 +1,14 @@
-/*
- *  Copyright (C) 2002-2021  The DOSBox Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 
 #include "dosbox.h"
 #if C_FPU
 
-#include "cpu.h"
-#include "cross.h"
-#include "fpu.h"
-#include "mem.h"
+#include "cpu/cpu.h"
+#include "misc/cross.h"
+#include "fpu/fpu.h"
+#include "hardware/memory.h"
 #include <cmath>
 
 FPU_rec fpu = {};
@@ -476,11 +461,7 @@ void FPU_ESC5_Normal(Bitu rm) {
 	const uint8_t group = (rm >> 3) & 7;
 	const uint8_t sub   = (rm & 7);
 	switch (group) {
-	case 0x00: /* FFREE STi */ fpu.tags[STV(sub)] = TAG_Empty;
-	#if !C_FPU_X86
-		fpu.regs_memcpy[STV(sub)].reset();
-	#endif
-		break;
+	case 0x00: /* FFREE STi */ fpu.tags[STV(sub)] = TAG_Empty; break;
 	case 0x01: /* FXCH STi*/
 		FPU_FXCH(TOP,STV(sub));
 		break;
@@ -592,10 +573,8 @@ void FPU_ESC7_Normal(Bitu rm) {
 	const uint8_t group = (rm >> 3) & 7;
 	const uint8_t sub   = (rm & 7);
 	switch (group) {
-	case 0x00: /* FFREEP STi*/ fpu.tags[STV(sub)] = TAG_Empty;
-	#if !C_FPU_X86
-		fpu.regs_memcpy[STV(sub)].reset();
-	#endif
+	case 0x00: /* FFREEP STi*/
+		fpu.tags[STV(sub)] = TAG_Empty;
 		FPU_FPOP();
 		break;
 	case 0x01: /* FXCH STi*/
@@ -623,8 +602,8 @@ void FPU_ESC7_Normal(Bitu rm) {
 	}
 }
 
-
-void FPU_Init(Section*) {
+void FPU_Init()
+{
 #if !C_FPU_X86
 	LOG_WARNING("FPU: Using reduced-precision floating-point emulation");
 #endif

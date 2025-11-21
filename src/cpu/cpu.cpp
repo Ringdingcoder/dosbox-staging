@@ -1,43 +1,30 @@
-/*
- *  SPDX-License-Identifier: GPL-2.0-or-later
- *
- *  Copyright (C) 2021-2024  The DOSBox Staging Team
- *  Copyright (C) 2002-2021  The DOSBox Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2021-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
-#include "cpu.h"
+#include "cpu/cpu.h"
 
 #include <cassert>
 #include <cstddef>
 #include <sstream>
+#include <memory>
 
-#include "control.h"
-#include "debug.h"
+#include "config/config.h"
+#include "config/setup.h"
+#include "cpu/cpu.h"
+#include "cpu/paging.h"
+#include "debugger/debugger.h"
+#include "dos/programs.h"
+#include "fpu/fpu.h"
+#include "gui/mapper.h"
+#include "gui/titlebar.h"
+#include "hardware/pic.h"
 #include "lazyflags.h"
-#include "mapper.h"
-#include "math_utils.h"
-#include "memory.h"
-#include "paging.h"
-#include "pic.h"
-#include "programs.h"
-#include "setup.h"
-#include "string_utils.h"
-#include "support.h"
-#include "video.h"
+#include "misc/support.h"
+#include "misc/video.h"
+#include "shell/command_line.h"
+#include "utils/math_utils.h"
+#include "utils/string_utils.h"
 
 #if 1
 	#undef LOG
@@ -95,6 +82,8 @@ static constexpr auto DefaultCpuCycleDown = 20;
 static int cpu_cycle_up   = 0;
 static int cpu_cycle_down = 0;
 
+static bool should_hlt_on_idle = false;
+
 int64_t CPU_IODelayRemoved = 0;
 
 CPU_Decoder* cpudecoder;
@@ -135,7 +124,7 @@ void CPU_Core_Dynrec_Cache_Close();
  * In non-debug mode dosbox doesn't do detection (and hence doesn't crash at
  * that point). (game might crash later due to the unhandled exception) */
 
-#if C_DEBUG
+#if C_DEBUGGER
 // #define CPU_CHECK_EXCEPT 1
 // #define CPU_CHECK_IGNORE 1
  /* Use CHECK_EXCEPT when something doesn't work to see if a exception is
@@ -143,7 +132,7 @@ void CPU_Core_Dynrec_Cache_Close();
 #else
 /* NORMAL NO CHECKING => More Speed */
 #define CPU_CHECK_IGNORE 1
-#endif /* C_DEBUG */
+#endif /* C_DEBUGGER */
 
 #if defined(CPU_CHECK_IGNORE)
 #define CPU_CHECK_COND(cond,msg,exc,sel) {	\
@@ -254,6 +243,8 @@ static void set_modern_cycles_config(const CpuMode mode)
 	}
 }
 
+static bool is_protected_mode_program = false;
+
 void CPU_RestoreRealModeCyclesConfig()
 {
 	if (cpu.pmode || (!last_auto_determine_mode.auto_core &&
@@ -274,7 +265,8 @@ void CPU_RestoreRealModeCyclesConfig()
 			set_modern_cycles_config(CpuMode::Real);
 		}
 
-		GFX_NotifyCyclesChanged();
+		is_protected_mode_program = false;
+		TITLEBAR_NotifyCyclesChanged();
 	}
 #if C_DYNAMIC_X86 || C_DYNREC
 	if (auto_determine_mode.auto_core) {
@@ -751,10 +743,10 @@ void CPU_Interrupt(Bitu num,Bitu type,Bitu oldeip) {
 	last_interrupt = num;
 
 	FillFlags();
-#if C_DEBUG
+#if C_DEBUGGER
 	switch (num) {
 	case 0xcd:
-#if C_HEAVY_DEBUG
+#if C_HEAVY_DEBUGGER
  		LOG(LOG_CPU,LOG_ERROR)("Call to interrupt 0xCD this is BAD");
 //		DEBUG_HeavyWriteLogInstruction();
 //		E_Exit("Call to interrupt 0xCD this is BAD");
@@ -962,7 +954,6 @@ do_interrupt:
 			       gate.Type(), num);
 		}
 	}
-	assert(1);
 	return ; // make compiler happy
 }
 
@@ -1267,7 +1258,6 @@ CODE_jmp:
 			E_Exit("JMP Illegal descriptor type 0x%x", desc.Type());
 		}
 	}
-	assert(1);
 }
 
 
@@ -1504,7 +1494,6 @@ call_code:
 			E_Exit("CALL:Descriptor type 0x%x unsupported", call.Type());
 		}
 	}
-	assert(1);
 }
 
 
@@ -1776,6 +1765,8 @@ void CPU_SET_CRX(Bitu cr, Bitu value)
 				break;
 			}
 
+			is_protected_mode_program = true;
+
 #if C_DYNAMIC_X86
 			if (auto_determine_mode.auto_core) {
 				CPU_Core_Dyn_X86_Cache_Init(true);
@@ -1794,18 +1785,18 @@ void CPU_SET_CRX(Bitu cr, Bitu value)
 					CPU_Cycles          = 0;
 					old_cycle_max       = CPU_CycleMax;
 
-					GFX_NotifyCyclesChanged();
+					TITLEBAR_NotifyCyclesChanged();
 					maybe_display_max_cycles_warning();
 
 				} else {
-					GFX_RefreshTitle();
+					TITLEBAR_RefreshTitle();
 				}
 			} else {
 				// Modern cycles mode
 				if (auto_determine_mode.auto_cycles) {
 					set_modern_cycles_config(CpuMode::Protected);
 
-					GFX_NotifyCyclesChanged();
+					TITLEBAR_NotifyCyclesChanged();
 				}
 			}
 
@@ -2495,7 +2486,7 @@ static void cpu_increase_cycles(bool pressed)
 		cpu_increase_cycles_modern();
 	}
 
-	GFX_NotifyCyclesChanged();
+	TITLEBAR_NotifyCyclesChanged();
 }
 
 static int calc_cycles_decrease(const int cycles, const int cycle_down)
@@ -2587,7 +2578,7 @@ static void cpu_decrease_cycles(bool pressed)
 		cpu_decrease_cycles_modern();
 	}
 
-	GFX_NotifyCyclesChanged();
+	TITLEBAR_NotifyCyclesChanged();
 }
 
 void CPU_ResetAutoAdjust()
@@ -2600,8 +2591,6 @@ void CPU_ResetAutoAdjust()
 
 std::string CPU_GetCyclesConfigAsString()
 {
-	static const auto CyclesPerMs = " cycles/ms";
-
 	if (legacy_cycles_mode) {
 		std::string s = {};
 
@@ -2616,7 +2605,9 @@ std::string CPU_GetCyclesConfigAsString()
 		} else {
 			s += format_str("%d", CPU_CycleMax);
 		}
-		return s += CyclesPerMs;
+
+		s += " ";
+		return s += MSG_GetTranslatedRaw("TITLEBAR_CYCLES_MS");
 
 	} else {
 		// Modern mode
@@ -2634,7 +2625,7 @@ std::string CPU_GetCyclesConfigAsString()
 			}
 		};
 
-		if (cpu.pmode) {
+		if (is_protected_mode_program) {
 			if (conf.protected_mode_auto) {
 				// 'cpu_cycles' controls both real and protected
 				// mode
@@ -2647,10 +2638,13 @@ std::string CPU_GetCyclesConfigAsString()
 			format_cycles(conf.real_mode);
 		}
 
-		s += CyclesPerMs;
+		s += " ";
+		s += MSG_GetTranslatedRaw("TITLEBAR_CYCLES_MS");
 
 		if (modern_cycles_config.throttle && !max_mode) {
-			s += " (throttled)";
+			s += " (";
+			s += MSG_GetTranslatedRaw("TITLEBAR_CYCLES_THROTTLED");
+			s += ")";
 		}
 		return s;
 	}
@@ -2744,7 +2738,7 @@ public:
 
 	~Cpu() = default;
 
-	void ConfigureCyclesModern(Section_prop* secprop)
+	void ConfigureCyclesModern(SectionProp* secprop)
 	{
 		modern_cycles_config = {};
 
@@ -2773,7 +2767,7 @@ public:
 		};
 
 		// Real mode
-		const std::string cpu_cycles_pref = secprop->Get_string("cpu_cycles");
+		const std::string cpu_cycles_pref = secprop->GetString("cpu_cycles");
 
 		if (cpu_cycles_pref == "max") {
 			modern_cycles_config.real_mode = {};
@@ -2802,7 +2796,7 @@ public:
 		};
 
 		// Protected mode
-		const std::string cpu_cycles_protected_pref = secprop->Get_string(
+		const std::string cpu_cycles_protected_pref = secprop->GetString(
 		        "cpu_cycles_protected");
 
 		if (cpu_cycles_protected_pref == "auto") {
@@ -2864,7 +2858,7 @@ public:
 		}
 
 		// Throttling
-		modern_cycles_config.throttle = secprop->Get_bool("cpu_throttle");
+		modern_cycles_config.throttle = secprop->GetBool("cpu_throttle");
 	}
 
 	// The legacy 'cycles' config setting accepts all the following value
@@ -2913,7 +2907,7 @@ public:
 	//   auto 12000 max 90%
 	//   auto 12000 max 90% limit 50000
 	//
-	void ConfigureCyclesLegacy(Section_prop* secprop)
+	void ConfigureCyclesLegacy(SectionProp* secprop)
 	{
 		// Sets the value if the string in within the min and max values
 		auto set_if_in_range = [](const std::string& str,
@@ -2934,9 +2928,9 @@ public:
 
 		PropMultiVal* p = secprop->GetMultiVal("cycles");
 
-		const std::string type = p->GetSection()->Get_string("type");
+		const std::string type = p->GetSection()->GetString("type");
 		std::string str;
-		CommandLine cmd("", p->GetSection()->Get_string("parameters"));
+		CommandLine cmd("", p->GetSection()->GetString("parameters"));
 
 		constexpr auto MinPercent = 0;
 		constexpr auto MaxPercent = 100;
@@ -3159,15 +3153,15 @@ public:
 		CPU_Cycles          = 0;
 		auto_determine_mode = {};
 
-		Section_prop* secprop = static_cast<Section_prop*>(sec);
+		SectionProp* secprop = static_cast<SectionProp*>(sec);
 
-		const std::string cpu_core = secprop->Get_string("core");
-		const std::string cpu_type = secprop->Get_string("cputype");
+		const std::string cpu_core = secprop->GetString("core");
+		const std::string cpu_type = secprop->GetString("cputype");
 
 		ConfigureCpuCore(cpu_core);
 		ConfigureCpuType(cpu_core, cpu_type);
 
-		auto cycles_pref = secprop->Get_string("cycles");
+		auto cycles_pref = secprop->GetString("cycles");
 		trim(cycles_pref);
 
 		if (!cycles_pref.empty()) {
@@ -3196,10 +3190,12 @@ public:
 			set_modern_cycles_config(CpuMode::Real);
 		}
 
-		cpu_cycle_up   = secprop->Get_int("cycleup");
-		cpu_cycle_down = secprop->Get_int("cycledown");
+		cpu_cycle_up   = secprop->GetInt("cycleup");
+		cpu_cycle_down = secprop->GetInt("cycledown");
 
-		GFX_NotifyCyclesChanged();
+		should_hlt_on_idle = secprop->GetBool("cpu_idle");
+
+		TITLEBAR_NotifyCyclesChanged();
 
 		return true;
 	}
@@ -3208,9 +3204,16 @@ public:
 // Initialise static members
 bool Cpu::initialised = false;
 
-static std::unique_ptr<Cpu> cpu_instance = nullptr;
+static std::unique_ptr<Cpu> cpu_instance = {};
 
-static void cpu_shutdown([[maybe_unused]] Section* sec)
+void CPU_Init()
+{
+	auto section = get_section("cpu");
+
+	cpu_instance = std::make_unique<Cpu>(section);
+}
+
+void CPU_Destroy()
 {
 #if C_DYNAMIC_X86
 	CPU_Core_Dyn_X86_Cache_Close();
@@ -3221,23 +3224,19 @@ static void cpu_shutdown([[maybe_unused]] Section* sec)
 	cpu_instance.reset();
 }
 
-static void cpu_init(Section* sec)
+static void notify_cpu_setting_updated([[maybe_unused]] SectionProp& section,
+                                       [[maybe_unused]] const std::string& prop_name)
 {
-	assert(sec);
-	cpu_instance = std::make_unique<Cpu>(sec);
-
-	constexpr auto ChangeableAtRuntime = true;
-	sec->AddDestroyFunction(&cpu_shutdown, ChangeableAtRuntime);
+	CPU_Destroy();
+	CPU_Init();
 }
 
-void init_cpu_dosbox_settings(Section_prop& secprop)
+void init_cpu_config_settings(SectionProp& secprop)
 {
-	constexpr auto Always   = Property::Changeable::Always;
-	constexpr auto WhenIdle = Property::Changeable::WhenIdle;
-	constexpr auto DeprecatedButAllowed = Property::Changeable::DeprecatedButAllowed;
+	using enum Property::Changeable::Value;
 
-	auto pstring = secprop.Add_string("core", WhenIdle, "auto");
-	pstring->Set_values({
+	auto pstring = secprop.AddString("core", WhenIdle, "auto");
+	pstring->SetValues({
 		"auto",
 #if C_DYNAMIC_X86 || C_DYNREC
 		"dynamic",
@@ -3245,7 +3244,7 @@ void init_cpu_dosbox_settings(Section_prop& secprop)
 		"normal", "simple"
 	});
 
-	pstring->Set_help(
+	pstring->SetHelp(
 	        "Type of CPU emulation core to use ('auto' by default).\n"
 	        "  auto:     'normal' core for real mode programs, 'dynamic' core for protected\n"
 	        "            mode programs (default). Most programs will run correctly with this\n"
@@ -3267,11 +3266,11 @@ void init_cpu_dosbox_settings(Section_prop& secprop)
 	        "            Programs that self-modify their code might misbehave or crash on\n"
 	        "            the 'dynamic' core; use the 'normal' core for such programs.");
 
-	pstring = secprop.Add_string("cputype", Always, "auto");
-	pstring->Set_values(
+	pstring = secprop.AddString("cputype", Always, "auto");
+	pstring->SetValues(
 	        {"auto", "386", "386_fast", "386_prefetch", "486", "pentium", "pentium_mmx"});
 
-	pstring->Set_help(
+	pstring->SetHelp(
 	        "CPU type to emulate ('auto' by default).\n"
 	        "You should only change this if the program doesn't run correctly on 'auto'.\n"
 	        "  auto:          The fastest and most compatible setting (default).\n"
@@ -3304,22 +3303,21 @@ void init_cpu_dosbox_settings(Section_prop& secprop)
 	auto pmulti_remain = secprop.AddMultiValRemain("cycles",
 	                                               DeprecatedButAllowed,
 	                                               " ");
-	pmulti_remain->Set_help(
-	        "The 'cycles' setting is deprecated but still accepted; please use the\n"
-	        "'cpu_cycles', 'cpu_cycles_protected' and 'cpu_throttle' settings instead as\n"
-	        "support will be removed in the future.");
+	pmulti_remain->SetHelp(
+	        "The 'cycles' setting is deprecated but still accepted;\n"
+	        "please use 'cpu_cycles', 'cpu_cycles_protected' and 'cpu_throttle' instead.");
 
-	pstring = pmulti_remain->GetSection()->Add_string("type", Always, "auto");
+	pstring = pmulti_remain->GetSection()->AddString("type", Always, "auto");
 	pmulti_remain->SetValue(" ");
-	pstring->Set_values({"auto", "fixed", "max", "%u"});
+	pstring->SetValues({"auto", "fixed", "max", "%u"});
 
-	pmulti_remain->GetSection()->Add_string("parameters", Always, "");
+	pmulti_remain->GetSection()->AddString("parameters", Always, "");
 
 	// Revised CPU cycles related settings
 	const auto cpu_cycles_default = format_str("%d", CpuCyclesRealModeDefault);
 
-	pstring = secprop.Add_string("cpu_cycles", Always, cpu_cycles_default.c_str());
-	pstring->Set_help(format_str(
+	pstring = secprop.AddString("cpu_cycles", Always, cpu_cycles_default.c_str());
+	pstring->SetHelp(format_str(
 	        "Speed of the emulated CPU ('%d' by default). If 'cpu_cycles_protected' is on\n"
 	        "'auto', this sets the cycles for both real and protected mode programs.\n"
 	        "  <number>:  Emulate a fixed number of cycles per millisecond (roughly\n"
@@ -3352,10 +3350,10 @@ void init_cpu_dosbox_settings(Section_prop& secprop)
 	const auto cpu_cycles_protected_default =
 	        format_str("%d", CpuCyclesProtectedModeDefault);
 
-	pstring = secprop.Add_string("cpu_cycles_protected",
+	pstring = secprop.AddString("cpu_cycles_protected",
 	                             Always,
 	                             cpu_cycles_protected_default.c_str());
-	pstring->Set_help(format_str(
+	pstring->SetHelp(format_str(
 	        "Speed of the emulated CPU for protected mode programs only\n"
 	        "('%d' by default).\n"
 	        "  auto:      Use the `cpu_cycles' setting.\n"
@@ -3369,36 +3367,50 @@ void init_cpu_dosbox_settings(Section_prop& secprop)
 	        CpuCyclesMin,
 	        CpuCyclesMax));
 
-	auto pbool = secprop.Add_bool("cpu_throttle", Always, CpuThrottleDefault);
-	pbool->Set_help(format_str(
+	auto pbool = secprop.AddBool("cpu_throttle", Always, CpuThrottleDefault);
+	pbool->SetHelp(format_str(
 	        "Throttle down the number of emulated CPU cycles dynamically if your host CPU\n"
 	        "cannot keep up (%s by default).\n"
 	        "Only affects fixed cycles settings. When enabled, the number of cycles per\n"
 	        "millisecond can vary; this might cause issues in some DOS programs.",
-	        (CpuThrottleDefault ? "enabled" : "disabled")));
+	        (CpuThrottleDefault ? "'on'" : "'off'")));
 
-	auto pint = secprop.Add_int("cycleup", Always, DefaultCpuCycleUp);
+	auto pint = secprop.AddInt("cycleup", Always, DefaultCpuCycleUp);
 	pint->SetMinMax(CpuCycleStepMin, CpuCycleStepMax);
-	pint->Set_help(
+	pint->SetHelp(
 	        format_str("Number of cycles to add with the 'Inc Cycles' hotkey (%d by default).\n"
 	                   "Values lower than 100 are treated as a percentage increase.",
 	                   DefaultCpuCycleUp));
 
-	pint = secprop.Add_int("cycledown", Always, DefaultCpuCycleDown);
+	pint = secprop.AddInt("cycledown", Always, DefaultCpuCycleDown);
 	pint->SetMinMax(CpuCycleStepMin, CpuCycleStepMax);
-	pint->Set_help(
+	pint->SetHelp(
 	        format_str("Number of cycles to subtract with the 'Dec Cycles' hotkey (%d by default).\n"
 	                   "Values lower than 100 are treated as a percentage decrease.",
 	                   DefaultCpuCycleDown));
+
+	pbool = secprop.AddBool("cpu_idle", Always, true);
+	pbool->SetHelp(
+	        "Reduce the CPU usage in the DOS shell and in some applications when DOSBox is\n"
+	        "idle ('on' by default). This is done by emulating the HLT CPU instruction, so\n"
+	        "it might interfere with other power management tools such as DOSidle and FDAPM\n"
+	        "when enabled.");
+}
+
+bool CPU_ShouldHltOnIdle()
+{
+	// We should only execute the power-saving HLT if configured AND if the
+	// interrupts are enabled
+	return should_hlt_on_idle && (reg_flags & FLAG_IF);
 }
 
 void CPU_AddConfigSection(const ConfigPtr& conf)
 {
 	assert(conf);
 
-	constexpr auto ChangeableAtRuntime = true;
+	auto section = conf->AddSection("cpu");
 
-	Section_prop* sec = conf->AddSection_prop("cpu", &cpu_init, ChangeableAtRuntime);
-	assert(sec);
-	init_cpu_dosbox_settings(*sec);
+	section->AddUpdateHandler(notify_cpu_setting_updated);
+
+	init_cpu_config_settings(*section);
 }

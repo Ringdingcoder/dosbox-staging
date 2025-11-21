@@ -1,57 +1,62 @@
-/*
- *  Copyright (C) 2022-2024  The DOSBox Staging Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2022-2025 The DOSBox Staging Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "mouse_config.h"
-#include "mouse_common.h"
+
+#include "private/mouse_common.h"
 #include "mouse_interfaces.h"
 
-#include "checks.h"
-#include "control.h"
-#include "math_utils.h"
-#include "setup.h"
-#include "string_utils.h"
-#include "support.h"
-#include "video.h"
+#include "config/config.h"
+#include "config/setup.h"
+#include "gui/common.h"
+#include "misc/support.h"
+#include "misc/video.h"
+#include "utils/checks.h"
+#include "utils/math_utils.h"
+#include "utils/string_utils.h"
 
 #include <cmath>
 
 CHECK_NARROWING();
 
-MouseConfig     mouse_config;
+MouseConfig mouse_config;
 MousePredefined mouse_predefined;
 
-constexpr auto capture_type_seamless_str  = "seamless";
-constexpr auto capture_type_onclick_str   = "onclick";
-constexpr auto capture_type_onstart_str   = "onstart";
-constexpr auto capture_type_nomouse_str   = "nomouse";
+namespace OptionBuiltInDosDriver {
+	constexpr auto Off   = "off";
+	constexpr auto On    = "on";
+	constexpr auto NoTsr = "no-tsr";
+}
 
-constexpr auto model_ps2_standard_str     = "standard";
-constexpr auto model_ps2_intellimouse_str = "intellimouse";
-constexpr auto model_ps2_explorer_str     = "explorer";
-constexpr auto model_ps2_nomouse_str      = "none";
+namespace OptionCaptureType {
+	constexpr auto Seamless = "seamless";
+	constexpr auto OnClick  = "onclick";
+	constexpr auto OnStart  = "onstart";
+	constexpr auto NoMouse  = "nomouse";
+}
 
-constexpr auto model_com_2button_str      = "2button";
-constexpr auto model_com_3button_str      = "3button";
-constexpr auto model_com_wheel_str        = "wheel";
-constexpr auto model_com_msm_str          = "msm";
-constexpr auto model_com_2button_msm_str  = "2button+msm";
-constexpr auto model_com_3button_msm_str  = "3button+msm";
-constexpr auto model_com_wheel_msm_str    = "wheel+msm";
+namespace OptionModelDos {
+	constexpr auto TwoButton   = "2button";
+	constexpr auto ThreeButton = "3button";
+	constexpr auto Wheel       = "wheel";
+}
+
+namespace OptionModelPs2 {
+	constexpr auto Standard     = "standard";
+	constexpr auto Intellimouse = "intellimouse";
+	constexpr auto Explorer     = "explorer";
+	constexpr auto NoMouse      = "none";
+}
+
+namespace OptionModelCom {
+	constexpr auto TwoButton      = "2button";
+	constexpr auto ThreeButton    = "3button";
+	constexpr auto Wheel          = "wheel";
+	constexpr auto Msm            = "msm";
+	constexpr auto TwoButtonMsm   = "2button+msm";
+	constexpr auto ThreeButtonMsm = "3button+msm";
+	constexpr auto WheelMsm       = "wheel+msm";
+}
 
 static const std::vector<uint16_t> list_rates = {
         // Commented out values are probably not interesting
@@ -59,7 +64,7 @@ static const std::vector<uint16_t> list_rates = {
         //  10",  // PS/2 mouse
         //  20",  // PS/2 mouse
         //  30",  // bus/InPort mouse
-        40,  // PS/2 mouse, approx. limit for 1200 baud serial mouse
+        40, // PS/2 mouse, approx. limit for 1200 baud serial mouse
         //  50,   // bus/InPort mouse
         60,  // PS/2 mouse, used by Microsoft Mouse Driver 8.20
         80,  // PS/2 mouse, approx. limit for 2400 baud serial mouse
@@ -78,6 +83,8 @@ static const std::vector<uint16_t> list_rates = {
         // issues.
 };
 
+constexpr auto DefaultBuiltinDosMouseDriverOptions = "";
+
 const std::vector<uint16_t>& MouseConfig::GetValidMinRateList()
 {
 	return list_rates;
@@ -86,26 +93,28 @@ const std::vector<uint16_t>& MouseConfig::GetValidMinRateList()
 bool MouseConfig::ParseComModel(const std::string_view model_str,
                                 MouseModelCOM& model, bool& auto_msm)
 {
-	if (model_str == model_com_2button_str) {
-		model    = MouseModelCOM::Microsoft;
+	using enum MouseModelCOM;
+
+	if (iequals(model_str, OptionModelCom::TwoButton)) {
+		model    = Microsoft;
 		auto_msm = false;
-	} else if (model_str == model_com_3button_str) {
-		model    = MouseModelCOM::Logitech;
+	} else if (iequals(model_str, OptionModelCom::ThreeButton)) {
+		model    = Logitech;
 		auto_msm = false;
-	} else if (model_str == model_com_wheel_str) {
-		model    = MouseModelCOM::Wheel;
+	} else if (iequals(model_str, OptionModelCom::Wheel)) {
+		model    = Wheel;
 		auto_msm = false;
-	} else if (model_str == model_com_msm_str) {
-		model    = MouseModelCOM::MouseSystems;
+	} else if (iequals(model_str, OptionModelCom::Msm)) {
+		model    = MouseSystems;
 		auto_msm = false;
-	} else if (model_str == model_com_2button_msm_str) {
-		model    = MouseModelCOM::Microsoft;
+	} else if (iequals(model_str, OptionModelCom::TwoButtonMsm)) {
+		model    = Microsoft;
 		auto_msm = true;
-	} else if (model_str == model_com_3button_msm_str) {
-		model    = MouseModelCOM::Logitech;
+	} else if (iequals(model_str, OptionModelCom::ThreeButtonMsm)) {
+		model    = Logitech;
 		auto_msm = true;
-	} else if (model_str == model_com_wheel_msm_str) {
-		model    = MouseModelCOM::Wheel;
+	} else if (iequals(model_str, OptionModelCom::WheelMsm)) {
+		model    = Wheel;
 		auto_msm = true;
 	} else {
 		return false;
@@ -114,44 +123,145 @@ bool MouseConfig::ParseComModel(const std::string_view model_str,
 	return true;
 }
 
-static void SetCaptureType(const std::string_view capture_str)
+static void set_capture_type(const std::string_view capture_str)
 {
-	if (capture_str == capture_type_seamless_str) {
-		mouse_config.capture = MouseCapture::Seamless;
-	} else if (capture_str == capture_type_onclick_str) {
-		mouse_config.capture = MouseCapture::OnClick;
-	} else if (capture_str == capture_type_onstart_str) {
-		mouse_config.capture = MouseCapture::OnStart;
-	} else if (capture_str == capture_type_nomouse_str) {
-		mouse_config.capture = MouseCapture::NoMouse;
+	using enum MouseCapture;
+
+	if (iequals(capture_str, OptionCaptureType::Seamless)) {
+		mouse_config.capture = Seamless;
+	} else if (iequals(capture_str, OptionCaptureType::OnClick)) {
+		mouse_config.capture = OnClick;
+	} else if (iequals(capture_str, OptionCaptureType::OnStart)) {
+		mouse_config.capture = OnStart;
+	} else if (iequals(capture_str, OptionCaptureType::NoMouse)) {
+		mouse_config.capture = NoMouse;
 	} else {
-		assert(false);
+		assertm(false, "Invalid mouse capture value");
 	}
 }
 
-static void SetPs2Model(const std::string_view model_str)
+static void set_dos_driver_mode(const std::string_view mode_str)
 {
-	if (model_str == model_ps2_standard_str) {
-		mouse_config.model_ps2 = MouseModelPS2::Standard;
-	} else if (model_str == model_ps2_intellimouse_str) {
-		mouse_config.model_ps2 = MouseModelPS2::IntelliMouse;
-	} else if (model_str == model_ps2_explorer_str) {
-		mouse_config.model_ps2 = MouseModelPS2::Explorer;
-	} else if (model_str == model_ps2_nomouse_str) {
-		mouse_config.model_ps2 = MouseModelPS2::NoMouse;
+	if (iequals(mode_str, OptionBuiltInDosDriver::Off)) {
+		mouse_config.dos_driver_autoexec = false;
+		mouse_config.dos_driver_no_tsr   = false;
+	} else if (iequals(mode_str, OptionBuiltInDosDriver::On)) {
+		mouse_config.dos_driver_autoexec = true;
+		mouse_config.dos_driver_no_tsr   = false;
+	} else if (iequals(mode_str, OptionBuiltInDosDriver::NoTsr)) {
+		mouse_config.dos_driver_autoexec = false;
+		mouse_config.dos_driver_no_tsr   = true;
 	} else {
-		assert(false);
+		assertm(false, "Invalid mouse driver mode");
 	}
 }
 
-static void SetComModel(const std::string_view model_str)
+static void set_dos_driver_model(const std::string_view model_str)
+{
+	using enum MouseModelDos;
+
+	auto new_model = mouse_config.model_dos;
+
+	if (iequals(model_str, OptionModelDos::TwoButton)) {
+		new_model = TwoButton;
+	} else if (iequals(model_str, OptionModelDos::ThreeButton)) {
+		new_model = ThreeButton;
+	} else if (iequals(model_str, OptionModelDos::Wheel)) {
+		new_model = Wheel;
+	} else {
+		assertm(false, "Invalid DOS driver mouse model value");
+	}
+
+	if (new_model != mouse_config.model_dos) {
+		mouse_config.model_dos = new_model;
+		MOUSEDOS_NotifyModelChanged();
+	}
+}
+
+static void set_ps2_mouse_model(const std::string_view model_str)
+{
+	using enum MouseModelPS2;
+
+	if (iequals(model_str, OptionModelPs2::Standard)) {
+		mouse_config.model_ps2 = Standard;
+	} else if (iequals(model_str, OptionModelPs2::Intellimouse)) {
+		mouse_config.model_ps2 = IntelliMouse;
+	} else if (iequals(model_str, OptionModelPs2::Explorer)) {
+		mouse_config.model_ps2 = Explorer;
+	} else if (iequals(model_str, OptionModelPs2::NoMouse)) {
+		mouse_config.model_ps2 = NoMouse;
+	} else {
+		assertm(false, "Invalid PS/2 mouse model value");
+	}
+}
+
+static void set_serial_mouse_model(const std::string_view model_str)
 {
 	[[maybe_unused]] const auto result = MouseConfig::ParseComModel(
 	        model_str, mouse_config.model_com, mouse_config.model_com_auto_msm);
 	assert(result);
 }
 
-static void SetSensitivity(const std::string_view sensitivity_str)
+static void set_dos_driver_options(const std::string_view options_str)
+{
+	const std::string OptionImmediate = "immediate";
+	const std::string OptionModern    = "modern";
+
+	auto& last_options_str = mouse_config.dos_driver_last_options_str;
+	if (last_options_str == options_str) {
+		return;
+	}
+	last_options_str = options_str;
+
+	mouse_config.dos_driver_immediate = false;
+	mouse_config.dos_driver_modern    = false;
+
+	for (const auto& token : split(options_str, " ,")) {
+		if (token == OptionImmediate) {
+			mouse_config.dos_driver_immediate = true;
+		} else if (token == OptionModern) {
+			mouse_config.dos_driver_modern = true;
+		} else {
+			LOG_WARNING(
+			        "MOUSE: Invalid 'builtin_dos_mouse_driver_options' "
+			        "parameter: '%s', using defaults",
+			        token.c_str());
+
+			set_section_property_value("mouse",
+			                           "builtin_dos_mouse_driver_options",
+			                           DefaultBuiltinDosMouseDriverOptions);
+
+			set_dos_driver_options(DefaultBuiltinDosMouseDriverOptions);
+			return;
+		}
+	}
+
+	// Log new config options
+	static std::string last_logged_str = "";
+	if (options_str == last_logged_str) {
+		return;
+	}
+
+	std::string log_options = {};
+	if (mouse_config.dos_driver_immediate) {
+		log_options = OptionImmediate;
+	}
+	if (mouse_config.dos_driver_modern) {
+		if (!log_options.empty()) {
+			log_options += ", ";
+		}
+		log_options += OptionModern;
+	}
+
+	if (log_options.empty()) {
+		log_options = "none";
+	}
+
+	LOG_INFO("MOUSE (DOS): Driver options: %s", log_options.c_str());
+	last_logged_str = options_str;
+}
+
+static void set_sensitivity(const std::string_view sensitivity_str)
 {
 	// Coefficient to convert percentage in integer to float
 	constexpr float coeff = 0.01f;
@@ -249,94 +359,107 @@ static void SetSensitivity(const std::string_view sensitivity_str)
 	return;
 }
 
-static void config_read(Section *section)
+void MOUSE_Init()
 {
+	const auto section = get_section("mouse");
 	assert(section);
-	const Section_prop *conf = dynamic_cast<Section_prop *>(section);
-	assert(conf);
-	if (!conf)
-		return;
 
-	// Settings changeable during runtime
+	set_capture_type(section->GetString("mouse_capture"));
+	set_sensitivity(section->GetString("mouse_sensitivity"));
 
-	SetCaptureType(conf->Get_string("mouse_capture"));
-	SetSensitivity(conf->Get_string("mouse_sensitivity"));
+	mouse_config.multi_display_aware = section->GetBool("mouse_multi_display_aware");
 
-	mouse_config.multi_display_aware =
-		conf->Get_bool("mouse_multi_display_aware");
+	mouse_config.middle_release = section->GetBool("mouse_middle_release");
+	mouse_config.raw_input      = section->GetBool("mouse_raw_input");
 
-	mouse_config.middle_release = conf->Get_bool("mouse_middle_release");
-	mouse_config.raw_input      = conf->Get_bool("mouse_raw_input");
-	mouse_config.dos_immediate  = conf->Get_bool("dos_mouse_immediate");
+	set_dos_driver_model(section->GetString("builtin_dos_mouse_driver_model"));
+	set_dos_driver_options(section->GetString("builtin_dos_mouse_driver_options"));
 
-	// Settings below should be read only once
-
-	if (mouse_shared.ready_config) {
-
-		if (mouse_config.capture == MouseCapture::NoMouse) {
-			// If NoMouse got configured at runtime,
-			// immediately clear all the mapping
-			MouseControlAPI mouse_config_api;
-			mouse_config_api.UnMap(MouseControlAPI::ListIDs());
-		}
-
-		MOUSE_UpdateGFX();
-		return;
-	}
-
-	// DOS driver configuration
-
-	mouse_config.dos_driver = conf->Get_bool("dos_mouse_driver");
+	// Built-in DOS driver configuration
+	set_dos_driver_mode(section->GetString("builtin_dos_mouse_driver"));
 
 	// PS/2 AUX port mouse configuration
-
-	SetPs2Model(conf->Get_string("ps2_mouse_model"));
+	set_ps2_mouse_model(section->GetString("ps2_mouse_model"));
 
 	// COM port mouse configuration
-
-	SetComModel(conf->Get_string("com_mouse_model"));
+	set_serial_mouse_model(section->GetString("com_mouse_model"));
 
 	// VMM PCI interfaces
+	mouse_config.is_vmware_mouse_enabled = section->GetBool("vmware_mouse");
+	mouse_config.is_virtualbox_mouse_enabled = section->GetBool("virtualbox_mouse");
 
-	mouse_config.is_vmware_mouse_enabled = conf->Get_bool("vmware_mouse");
-	mouse_config.is_virtualbox_mouse_enabled = conf->Get_bool("virtualbox_mouse");
-
-	if (!GFX_HaveDesktopEnvironment() &&
-	    mouse_config.is_virtualbox_mouse_enabled) {
-	    	// VirtualBox guest side driver is able to request us to re-use
-	    	// host side cursor (at least the 3rd party DOS driver does so)
-	    	// and we have no way to refuse, there seems to be no easy way
-	    	// to handle the situation gracefully in a no-desktop
-	    	// environment unless we want to display our own mouse cursor.
-	    	// Therefore, it is best to block the VirtualBox mouse API - it
-	    	// wasn't designed for such a use case.
+	if (!GFX_HaveDesktopEnvironment() && mouse_config.is_virtualbox_mouse_enabled) {
+		// VirtualBox guest side driver is able to request us to re-use
+		// host side cursor (at least the 3rd party DOS driver does so)
+		// and we have no way to refuse, there seems to be no easy way
+		// to handle the situation gracefully in a no-desktop
+		// environment unless we want to display our own mouse cursor.
+		// Therefore, it is best to block the VirtualBox mouse API - it
+		// wasn't designed for such a use case.
 		LOG_WARNING("MOUSE: VirtualBox interface cannot work in a no-desktop environment");
 		mouse_config.is_virtualbox_mouse_enabled = false;
 	}
 
 	// Start mouse emulation if everything is ready
 	mouse_shared.ready_config = true;
+	mouse_shared.ready_init   = true;
 	MOUSE_StartupIfReady();
 }
 
-static void config_init(Section_prop &secprop)
+static void notify_mouse_setting_updated(SectionProp& section,
+                                         const std::string& prop_name)
 {
-	constexpr auto always        = Property::Changeable::Always;
-	constexpr auto only_at_start = Property::Changeable::OnlyAtStart;
+	if (prop_name == "builtin_dos_mouse_driver_model") {
+		set_dos_driver_model(
+		        section.GetString("builtin_dos_mouse_driver_model"));
 
-	Prop_bool* prop_bool  = nullptr;
-	Prop_string* prop_str = nullptr;
+	} else if (prop_name == "builtin_dos_mouse_driver_options") {
+		set_dos_driver_options(
+		        section.GetString("builtin_dos_mouse_driver_options"));
+
+	} else if (prop_name == "mouse_capture") {
+		set_capture_type(section.GetString("mouse_capture"));
+
+		if (mouse_config.capture == MouseCapture::NoMouse) {
+			// If NoMouse got configured at runtime,
+			// immediately clear all the mappings.
+			MouseControlAPI mouse_config_api;
+			mouse_config_api.UnMap(MouseControlAPI::ListIDs());
+		}
+		MOUSE_UpdateGFX();
+
+	} else if (prop_name == "mouse_middle_release") {
+		mouse_config.middle_release = section.GetBool("mouse_middle_release");
+
+	} else if (prop_name == "mouse_multi_display_aware") {
+		mouse_config.multi_display_aware = section.GetBool(
+		        "mouse_multi_display_aware");
+
+	} else if (prop_name == "mouse_raw_input") {
+		mouse_config.raw_input = section.GetBool("mouse_raw_input");
+
+	} else if (prop_name == "mouse_sensitivity") {
+		set_sensitivity(section.GetString("mouse_sensitivity"));
+	}
+}
+
+static void init_mouse_config_settings(SectionProp& secprop)
+{
+	using enum Property::Changeable::Value;
 
 	// General configuration
 
-	prop_str = secprop.Add_string("mouse_capture", always,
-	                              capture_type_onclick_str);
+	auto prop_str = secprop.AddString("mouse_capture",
+	                                  Always,
+	                                  OptionCaptureType::OnClick);
 	assert(prop_str);
-	prop_str->Set_values({capture_type_seamless_str,
-	                      capture_type_onclick_str,
-	                      capture_type_onstart_str,
-	                      capture_type_nomouse_str});
-	prop_str->Set_help(
+	prop_str->SetValues({
+		OptionCaptureType::Seamless,
+		OptionCaptureType::OnClick,
+		OptionCaptureType::OnStart,
+		OptionCaptureType::NoMouse
+	});
+	prop_str->SetHelp(
 	        "Set the mouse capture behaviour:\n"
 	        "  onclick:   Capture the mouse when clicking any mouse button in the window\n"
 	        "             (default).\n"
@@ -349,20 +472,22 @@ static void config_init(Section_prop &secprop)
 	        "  nomouse:   Hide the mouse and don't send mouse input to the game.\n"
 	        "For touch-screen control, use 'seamless'.");
 
-	prop_bool = secprop.Add_bool("mouse_middle_release", always, true);
-	prop_bool->Set_help("Release the captured mouse by middle-clicking, and also capture it in\n"
-	                    "seamless mode (enabled by default).");
+	auto prop_bool = secprop.AddBool("mouse_middle_release", Always, true);
+	prop_bool->SetHelp(
+	        "Release the captured mouse by middle-clicking, and also capture it in\n"
+	        "seamless mode ('on' by default).");
 
-	prop_bool = secprop.Add_bool("mouse_multi_display_aware", always, true);
-	prop_bool->Set_help("Allow seamless mouse behavior and mouse pointer release to work in fullscreen\n"
-	                    "mode on systems with more than one display (enabled by default).\n"
-	                    "Note: You should disable this if it incorrectly detects multiple displays\n"
-	                    "      when only one should actually be used. This might happen if you are\n"
-	                    "      using mirrored display mode or using an AV receiver's HDMI input for\n"
-	                    "      audio-only listening.");
+	prop_bool = secprop.AddBool("mouse_multi_display_aware", Always, true);
+	prop_bool->SetHelp(
+	        "Allow seamless mouse behavior and mouse pointer release to work in fullscreen\n"
+	        "mode on systems with more than one display ('on' by default).\n"
+	        "Note: You should disable this if it incorrectly detects multiple displays\n"
+	        "      when only one should actually be used. This might happen if you are\n"
+	        "      using mirrored display mode or using an AV receiver's HDMI input for\n"
+	        "      audio-only listening.");
 
-	prop_str = secprop.Add_string("mouse_sensitivity", always, "100");
-	prop_str->Set_help(
+	prop_str = secprop.AddString("mouse_sensitivity", Always, "100");
+	prop_str->SetHelp(
 	        "Global mouse sensitivity for the horizontal and vertical axes, as a percentage\n"
 	        "(100 by default). Values can be separated by spaces, commas, or semicolons\n"
 	        "(i.e. 100,150). Negative values invert the axis, zero disables it.\n"
@@ -370,66 +495,132 @@ static void config_init(Section_prop &secprop)
 	        "Sensitivity can be further fine-tuned per mouse interface using the internal\n"
 	        "MOUSECTL.COM tool available on the Z drive.");
 
-	prop_bool = secprop.Add_bool("mouse_raw_input", always, true);
-	prop_bool->Set_help(
+	prop_bool = secprop.AddBool("mouse_raw_input", Always, true);
+	prop_bool->SetHelp(
 	        "Enable to bypass your operating system's mouse acceleration and sensitivity\n"
-	        "settings (enabled by default). Works in fullscreen or when the mouse is\n"
-	        "captured in windowed mode.");
+	        "settings ('on' by default). Works in fullscreen or when the mouse is captured\n"
+	        "in windowed mode.");
 
-	// DOS driver configuration
+	// Built-in DOS driver configuration
 
-	prop_bool = secprop.Add_bool("dos_mouse_driver", only_at_start, true);
-	assert(prop_bool);
-	prop_bool->Set_help(
-	        "Enable built-in DOS mouse driver (enabled by default).\n"
+	prop_str = secprop.AddString("builtin_dos_mouse_driver",
+	                             OnlyAtStart,
+	                             OptionBuiltInDosDriver::On);
+	assert(prop_str);
+	prop_str->SetValues({
+		OptionBuiltInDosDriver::Off,
+		OptionBuiltInDosDriver::On,
+		OptionBuiltInDosDriver::NoTsr
+	});
+	prop_str->SetHelp(
+	        "Built-in DOS mouse driver mode ('on' by default). It bypasses the PS/2 and\n"
+	        "serial (COM) ports and communicates with the mouse directly. This results in\n"
+	        "lower input lag, smoother movement, and increased mouse responsiveness, so only\n"
+	        "disable it and load a real DOS mouse driver if it's really necessary (e.g., if a\n"
+	        "game is not compatible with the built-in driver).\n"
+	        "  on:      Simulate a mouse driver TSR program loaded from AUTOEXEC.BAT\n"
+	        "           (default). This is the most compatible way to emulate the DOS mouse\n"
+	        "           driver, but if it doesn't work with your game, try the 'no-tsr'\n"
+	        "           setting.\n"
+	        "  no-tsr:  Enable the mouse driver without simulating the TSR program. Let us\n"
+	        "           know if it fixes any software not working with the 'on' setting.\n"
+	        "  off:     Disable the built-in mouse driver. You can still start it at runtime\n"
+	        "           by executing the bundled MOUSE.COM from drive Z.\n"
 	        "Notes:\n"
-	        "  - Disable if you intend to use original MOUSE.COM driver in emulated DOS.\n"
-	        "  - When guest OS is booted, built-in driver gets disabled automatically.");
+	        "  - The `ps2_mouse_model` and `com_mouse_model` settings have no effect on the\n"
+	        "    built-in driver.\n"
+	        "  - The driver is auto-disabled if you boot into real MS-DOS or Windows 9x\n"
+	        "    under DOSBox. Under Windows 3.x, the driver is not disabled, but the\n"
+	        "    Windows 3.x mouse driver takes over.\n"
+	        "  - To use a real DOS mouse driver (e.g., MOUSE.COM or CTMOUSE.EXE), configure\n"
+	        "    the mouse type with `ps2_mouse_model` or `com_mouse_model`, then load the\n"
+	        "    driver.\n");
 
-	prop_bool = secprop.Add_bool("dos_mouse_immediate", always, false);
-	assert(prop_bool);
-	prop_bool->Set_help(
-	        "Update mouse movement counters immediately, without waiting for interrupt\n"
-	        "(disabled by default). May improve gameplay, especially in fast-paced games\n"
-	        "(arcade, FPS, etc.), as for some games it effectively boosts the mouse\n"
-	        "sampling rate to 1000 Hz, without increasing interrupt overhead.\n"
-	        "Might cause compatibility issues. List of known incompatible games:\n"
-	        "  - Ultima Underworld: The Stygian Abyss\n"
-	        "  - Ultima Underworld II: Labyrinth of Worlds\n"
-	        "Please report it if you find another incompatible game so we can update this\n"
-	        "list.");
+	prop_bool = secprop.AddBool("dos_mouse_driver", Deprecated, true);
+	prop_bool->SetHelp("Renamed to 'builtin_dos_mouse_driver'.");
+
+	prop_str = secprop.AddString("builtin_dos_mouse_driver_model",
+	                             Always,
+	                             OptionModelDos::TwoButton);
+	assert(prop_str);
+	prop_str->SetValues({
+		OptionModelDos::TwoButton,
+		OptionModelDos::ThreeButton,
+		OptionModelDos::Wheel
+	});
+	prop_str->SetHelp(
+	        "Set the mouse model to be simulated by the built-in DOS mouse driver ('2button'\n"
+	        "by default).\n"
+	        "  2button:  2 buttons, the safest option for most games. The majority of DOS\n"
+	        "            games onoly support 2 buttons, some might misbehave if the middle\n"
+	        "            button is pressed.\n"
+	        "  3button:  3 buttons, only supported by very few DOS games. Only use this if\n"
+	        "            the game is known to support a 3-button mouse.\n"
+	        "  wheel:    3 buttons + wheel, supports the CuteMouse WheelAPI version 1.0.\n"
+	        "            No DOS game uses the mouse wheel, only a handful of DOS applications\n"
+	        "            and Windows 3.x with special third-party drivers.");
+
+	prop_str = secprop.AddString("builtin_dos_mouse_driver_options",
+	                             Always,
+	                             DefaultBuiltinDosMouseDriverOptions);
+	assert(prop_str);
+	prop_str->SetHelp(
+	        "Additional built-in DOS mouse driver settings as a list of space or comma\n"
+	        "separated options (unset by default).\n"
+	        "  immediate:  Update mouse movement counters immediately, without waiting for\n"
+	        "              interrupt. May improve mouse latency in fast-paced games (arcade,\n"
+	        "              FPS, etc.), but might cause issues in some titles.\n"
+	        "              List of known incompatible games:\n"
+	        "                - Ultima Underworld: The Stygian Abyss\n"
+	        "                - Ultima Underworld II: Labyrinth of Worlds\n"
+	        "              Please report other incompatible games so we can update this list.\n"
+	        "  modern:     If provided, v7.0+ Microsoft mouse driver behaviour is emulated,\n"
+	        "              otherwise the v6.0 and earlier behaviour (the two are slightly\n"
+	        "              incompatible). Only Descent II with the official Voodoo patch has\n"
+	        "              been found to require the v7.0+ behaviour so far.");
+
+	prop_bool = secprop.AddBool("dos_mouse_immediate", Deprecated, false);
+	prop_bool->SetHelp("Configure using 'builtin_dos_mouse_driver_options'.");
 
 	// Physical mice configuration
 
 	// TODO: PS/2 mouse might be hot-pluggable
-	prop_str = secprop.Add_string("ps2_mouse_model",
-	                              only_at_start,
-	                              model_ps2_explorer_str);
+	prop_str = secprop.AddString("ps2_mouse_model",
+	                             OnlyAtStart,
+	                             OptionModelPs2::Explorer);
 	assert(prop_str);
-	prop_str->Set_values({model_ps2_standard_str,
-	                      model_ps2_intellimouse_str,
-	                      model_ps2_explorer_str,
-	                      model_ps2_nomouse_str});
-	prop_str->Set_help(
-	        "PS/2 AUX port mouse model:\n"
+	prop_str->SetValues({
+		OptionModelPs2::Standard,
+		OptionModelPs2::Intellimouse,
+		OptionModelPs2::Explorer,
+		OptionModelPs2::NoMouse
+	});
+	prop_str->SetHelp(
+	        "Set the PS/2 AUX port mouse model, or in other words, the type of the virtual\n"
+	        "mouse plugged into the emulated PS/2 mouse port ('explorer' by default).\n"
+	        "The setting has no effect on the built-in mouse driver (see 'dos_mouse_driver').\n"
 	        "  standard:      3 buttons, standard PS/2 mouse.\n"
 	        "  intellimouse:  3 buttons + wheel, Microsoft IntelliMouse.\n"
 	        "  explorer:      5 buttons + wheel, Microsoft IntelliMouse Explorer (default).\n"
-	        "  none:          no PS/2 mouse emulated.");
+	        "  none:          no PS/2 mouse.");
 
-	prop_str = secprop.Add_string("com_mouse_model",
-	                              only_at_start,
-	                              model_com_wheel_msm_str);
+	prop_str = secprop.AddString("com_mouse_model",
+	                             OnlyAtStart,
+	                             OptionModelCom::WheelMsm);
 	assert(prop_str);
-	prop_str->Set_values({model_com_2button_str,
-	                      model_com_3button_str,
-	                      model_com_wheel_str,
-	                      model_com_msm_str,
-	                      model_com_2button_msm_str,
-	                      model_com_3button_msm_str,
-	                      model_com_wheel_msm_str});
-	prop_str->Set_help(
-	        "COM (serial) port default mouse model:\n"
+	prop_str->SetValues({
+		OptionModelCom::TwoButton,
+		OptionModelCom::ThreeButton,
+		OptionModelCom::Wheel,
+		OptionModelCom::Msm,
+		OptionModelCom::TwoButtonMsm,
+		OptionModelCom::ThreeButtonMsm,
+		OptionModelCom::WheelMsm
+	});
+	prop_str->SetHelp(
+	        "Set the default COM (serial) mouse model, or in other words, the type of the\n"
+	        "virtual mouse plugged into the emulated COM ports ('wheel+msm' by default).\n"
+	        "The setting has no effect on the built-in mouse driver (see 'dos_mouse_driver').\n"
 	        "  2button:      2 buttons, Microsoft mouse.\n"
 	        "  3button:      3 buttons, Logitech mouse;\n"
 	        "                mostly compatible with Microsoft mouse.\n"
@@ -444,25 +635,25 @@ static void config_init(Section_prop &secprop)
 
 	// VMM interfaces
 
-	prop_bool = secprop.Add_bool("vmware_mouse", only_at_start, true);
-	prop_bool->Set_help("VMware mouse interface (enabled by default).\n"
-	                    "Fully compatible only with experimental 3rd party Windows 3.1x driver.\n"
-	                    "Note: Requires PS/2 mouse to be enabled.");
-	prop_bool = secprop.Add_bool("virtualbox_mouse", only_at_start, true);
-	prop_bool->Set_help("VirtualBox mouse interface (enabled by default).\n"
-	                    "Fully compatible only with 3rd party Windows 3.1x driver.\n"
-	                    "Note: Requires PS/2 mouse to be enabled.");
+	prop_bool = secprop.AddBool("vmware_mouse", OnlyAtStart, true);
+	prop_bool->SetHelp(
+	        "VMware mouse interface ('on' by default).\n"
+	        "Fully compatible only with 3rd party Windows 3.1x driver.\n"
+	        "Note: Requires PS/2 mouse to be enabled.");
+
+	prop_bool = secprop.AddBool("virtualbox_mouse", OnlyAtStart, true);
+	prop_bool->SetHelp(
+	        "VirtualBox mouse interface ('on' by default).\n"
+	        "Fully compatible only with 3rd party Windows 3.1x driver.\n"
+	        "Note: Requires PS/2 mouse to be enabled.");
 }
 
 void MOUSE_AddConfigSection(const ConfigPtr& conf)
 {
 	assert(conf);
 
-	constexpr auto changeable_at_runtime = true;
+	auto section = conf->AddSection("mouse");
+	section->AddUpdateHandler(notify_mouse_setting_updated);
 
-	Section_prop* sec = conf->AddSection_prop("mouse",
-	                                          &config_read,
-	                                          changeable_at_runtime);
-	assert(sec);
-	config_init(*sec);
+	init_mouse_config_settings(*section);
 }

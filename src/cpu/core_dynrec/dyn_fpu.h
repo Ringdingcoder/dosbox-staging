@@ -1,29 +1,14 @@
-/*
- *  Copyright (C) 2002-2021  The DOSBox Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "dosbox.h"
 
 #if C_FPU
 
-#include "cpu.h"
-#include "cross.h"
-#include "fpu.h"
-#include "mem.h"
+#include "cpu/cpu.h"
+#include "misc/cross.h"
+#include "fpu/fpu.h"
+#include "hardware/memory.h"
 #include <cmath>
 
 static void FPU_FDECSTP(){
@@ -40,15 +25,12 @@ static void FPU_FNSTCW(PhysPt addr){
 
 static void FPU_FFREE(Bitu st) {
 	fpu.tags[st] = TAG_Empty;
-#if !C_FPU_X86
-	fpu.regs_memcpy[st].reset();
-	#endif
 }
 
 	#if C_FPU_X86
-		#include "../../fpu/fpu_instructions_x86.h"
+		#include "fpu/fpu_instructions_x86.h"
 	#else
-		#include "../../fpu/fpu_instructions.h"
+		#include "fpu/fpu_instructions.h"
 	#endif
 
 static inline void dyn_fpu_top() {

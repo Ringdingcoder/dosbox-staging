@@ -1,28 +1,11 @@
-/*
- *  SPDX-License-Identifier: GPL-2.0-or-later
- *
- *  Copyright (C) 2020-2024  The DOSBox Staging Team
- *  Copyright (C) 2002-2021  The DOSBox Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2020-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 // Uncomment to enable file-open diagnostic messages
 // #define DEBUG 1
 
-#include "drives.h"
+#include "dos/drives.h"
 #include "drive_local.h"
 
 #include <cerrno>
@@ -34,12 +17,13 @@
 #include <limits>
 #include <sys/types.h>
 
-#include "dos_inc.h"
+#include "audio/disk_noise.h"
+#include "dos.h"
 #include "dos_mscdex.h"
-#include "fs_utils.h"
-#include "string_utils.h"
-#include "cross.h"
-#include "inout.h"
+#include "hardware/port.h"
+#include "misc/cross.h"
+#include "utils/fs_utils.h"
+#include "utils/string_utils.h"
 
 bool localDrive::FileIsReadOnly(const char* name)
 {
@@ -257,7 +241,7 @@ bool localDrive::FileUnlink(const char* name)
 	const char* fullname = dirCache.GetExpandNameAndNormaliseCase(newname);
 
 	// Can we remove the file without issue?
-	if (remove(fullname) == 0) {
+	if (delete_native_file(fullname)) {
 		timestamp_cache.erase(fullname);
 		dirCache.DeleteEntry(newname);
 		return true;
@@ -318,7 +302,7 @@ bool localDrive::FindFirst(const char* _dir, DOS_DTA& dta, bool fcb_findfirst)
 			// should check for a valid leading directory instead of
 			// 0 exists==true if the volume label matches the
 			// searchmask and the path is valid
-			if (WildFileCmp(dirCache.GetLabel(), tempDir)) {
+			if (wild_file_cmp(dirCache.GetLabel(), tempDir)) {
 				dta.SetResult(dirCache.GetLabel(),
 				              0,
 				              0,
@@ -349,7 +333,7 @@ bool localDrive::FindNext(DOS_DTA& dta)
 			DOS_SetError(DOSERR_NO_MORE_FILES);
 			return false;
 		}
-		if (!WildFileCmp(dir_ent, search_pattern)) {
+		if (!wild_file_cmp(dir_ent, search_pattern)) {
 			continue;
 		}
 
@@ -468,9 +452,12 @@ bool localDrive::RemoveDir(const char* dir)
 	safe_strcpy(newdir, basedir);
 	safe_strcat(newdir, dir);
 	CROSS_FILENAME(newdir);
-	int temp = rmdir(dirCache.GetExpandNameAndNormaliseCase(newdir));
-	if (temp==0) dirCache.DeleteEntry(newdir,true);
-	return (temp==0);
+
+	const auto success = local_drive_remove_dir(dirCache.GetExpandNameAndNormaliseCase(newdir));
+	if (success) {
+		dirCache.DeleteEntry(newdir, true);
+	}
+	return success;
 }
 
 bool localDrive::TestDir(const char* dir)
@@ -565,7 +552,7 @@ localDrive::localDrive(const char* startdir, uint16_t _bytes_sector,
 	dirCache.SetBaseDir(basedir);
 }
 
-bool localFile::Read(uint8_t *data, uint16_t *size)
+bool localFile::Read(uint8_t* data, uint16_t* num_bytes)
 {
 	assert(file_handle != InvalidNativeFileHandle);
 	// check if the file is opened in write-only mode
@@ -574,8 +561,18 @@ bool localFile::Read(uint8_t *data, uint16_t *size)
 		return false;
 	}
 
-	const auto ret = read_native_file(file_handle, data, *size);
-	*size          = check_cast<uint16_t>(ret.num_bytes);
+	// Store last path to enable disk noise to choose sequential vs. random
+	// access noises
+	DiskNoises* disk_noises = DiskNoises::GetInstance();
+	if (disk_noises != nullptr) {
+		disk_noises->SetLastIoPath(path.string(),
+		                           DiskNoiseIoType::Read,
+		                           DOS_GetDiskTypeFromMediaByte(
+		                                   local_drive.lock()->GetMediaByte()));
+	}
+
+	const auto ret = read_native_file(file_handle, data, *num_bytes);
+	*num_bytes     = check_cast<uint16_t>(ret.num_bytes);
 	if (ret.error) {
 		DOS_SetError(DOSERR_ACCESS_DENIED);
 		return false;
@@ -588,10 +585,11 @@ bool localFile::Read(uint8_t *data, uint16_t *size)
 	uint8_t mask = IO_Read(0x21);
 	if (mask & 0x4)
 		IO_Write(0x21, mask & 0xfb);
+
 	return true;
 }
 
-bool localFile::Write(uint8_t *data, uint16_t *size)
+bool localFile::Write(uint8_t* data, uint16_t* num_bytes)
 {
 	assert(file_handle != InvalidNativeFileHandle);
 	uint8_t lastflags = this->flags & 0xf;
@@ -606,7 +604,7 @@ bool localFile::Write(uint8_t *data, uint16_t *size)
 	set_archive_on_close = true;
 
 	// Truncate the file
-	if (*size == 0) {
+	if (*num_bytes == 0) {
 		if (!truncate_native_file(file_handle)) {
 			LOG_DEBUG("FS: Failed truncating file '%s'", name.c_str());
 			return false;
@@ -615,9 +613,19 @@ bool localFile::Write(uint8_t *data, uint16_t *size)
 		return true;
 	}
 
+	// Store last path to enable disk noise to choose sequential vs. random
+	// access noises
+	DiskNoises* disk_noises = DiskNoises::GetInstance();
+	if (disk_noises != nullptr) {
+		disk_noises->SetLastIoPath(path.string(),
+		                           DiskNoiseIoType::Write,
+		                           DOS_GetDiskTypeFromMediaByte(
+		                                   local_drive.lock()->GetMediaByte()));
+	}
+
 	// Otherwise we have some data to write
-	const auto ret = write_native_file(file_handle, data, *size);
-	*size          = check_cast<uint16_t>(ret.num_bytes);
+	const auto ret = write_native_file(file_handle, data, *num_bytes);
+	*num_bytes     = check_cast<uint16_t>(ret.num_bytes);
 	if (ret.error) {
 		DOS_SetError(DOSERR_ACCESS_DENIED);
 		return false;

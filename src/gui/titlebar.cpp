@@ -1,39 +1,27 @@
-/*
- *  SPDX-License-Identifier: GPL-2.0-or-later
- *
- *  Copyright (C) 2023-2024  The DOSBox Staging Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2023-2025 The DOSBox Staging Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "titlebar.h"
 
-#include "checks.h"
-#include "control.h"
-#include "cpu.h"
-#include "dosbox.h"
-#include "mapper.h"
-#include "sdlmain.h"
-#include "setup.h"
-#include "support.h"
-#include "unicode.h"
-#include "video.h"
+#include "private/common.h"
 
-#include <SDL.h>
 #include <map>
 #include <vector>
+
+#include "config/config.h"
+#include "config/setup.h"
+#include "cpu/cpu.h"
+#include "dosbox.h"
+#include "dosbox_config.h"
+#include "gui/mapper.h"
+#include "hardware/input/mouse.h"
+#include "misc/support.h"
+#include "misc/unicode.h"
+#include "misc/video.h"
+#include "utils/checks.h"
+
+// must be included after dosbox_config.h
+#include <SDL.h>
 
 CHECK_NARROWING();
 
@@ -135,11 +123,11 @@ static bool is_animation_running()
 	return state.timer_id != 0;
 }
 
-static uint32_t animation_tick(uint32_t /* interval */, void* /* name */)
+static uint32_t animation_tick([[maybe_unused]] uint32_t interval,
+                               [[maybe_unused]] void* name)
 {
 	SDL_Event event = {};
-	event.user.type = enum_val(SDL_DosBoxEvents::RefreshAnimatedTitle);
-	event.user.type += sdl.start_event_id;
+	event.user.type = GFX_GetUserSdlEventId(DosBoxSdlEvent::RefreshAnimatedTitle);
 
 	// We are outside of the main thread; we can't update the window title
 	// here, SDL does not like it - we have to go through the event queue
@@ -230,12 +218,9 @@ static std::string get_dosbox_version()
 
 static std::string get_mouse_hint_simple()
 {
-	// We are using 'MSG_GetRaw' here as we want messages to stay as UTF-8
-
 	if (state.mouse_hint_id == MouseHint::CapturedHotkey ||
 	    state.mouse_hint_id == MouseHint::CapturedHotkeyMiddle) {
-		// 'MSG_GetRaw' because we want messages to stay as UTF-8
-		return MSG_GetRaw("TITLEBAR_HINT_CAPTURED");
+		return MSG_GetTranslatedRaw("TITLEBAR_HINT_CAPTURED");
 	} else {
 		return {};
 	}
@@ -246,8 +231,9 @@ static std::string get_mouse_hint_full()
 	char hint_buffer[200] = {0};
 
 	auto create_hint_str = [&](const char* requested_name) {
-		// 'MSG_GetRaw' because we want messages to stay as UTF-8
-		safe_sprintf(hint_buffer, MSG_GetRaw(requested_name), PRIMARY_MOD_NAME);
+		safe_sprintf(hint_buffer,
+		             MSG_GetTranslatedRaw(requested_name).c_str(),
+		             PRIMARY_MOD_NAME);
 		return hint_buffer;
 	};
 
@@ -290,17 +276,17 @@ static std::string get_mouse_hint()
 static void maybe_add_muted_mark(std::string& title_str)
 {
 	// Do not add 'mute' tag if emulator is paused
-	if (state.is_audio_muted && !sdl.is_paused) {
-		title_str = BeginTag + MSG_GetRaw("TITLEBAR_MUTED") + EndTag +
-		            title_str;
+	if (state.is_audio_muted && !GFX_IsPaused()) {
+		title_str = BeginTag + MSG_GetTranslatedRaw("TITLEBAR_MUTED") +
+		            EndTag + title_str;
 	}
 }
 
 static void maybe_add_recording_pause_mark(std::string& title_str)
 {
-	if (sdl.is_paused) {
-		title_str = BeginTag + MSG_GetRaw("TITLEBAR_PAUSED") + EndTag +
-		            title_str;
+	if (GFX_IsPaused()) {
+		title_str = BeginTag + MSG_GetTranslatedRaw("TITLEBAR_PAUSED") +
+		            EndTag + title_str;
 		return;
 	}
 
@@ -332,12 +318,12 @@ static void set_window_title()
 	maybe_add_recording_pause_mark(new_title_str);
 
 	if (new_title_str != last_title_str) {
-		SDL_SetWindowTitle(sdl.window, new_title_str.c_str());
+		SDL_SetWindowTitle(GFX_GetWindow(), new_title_str.c_str());
 		last_title_str = new_title_str;
 	}
 }
 
-void GFX_RefreshAnimatedTitle()
+void TITLEBAR_RefreshAnimatedTitle()
 {
 	if (!is_animation_running()) {
 		return;
@@ -347,7 +333,7 @@ void GFX_RefreshAnimatedTitle()
 	set_window_title();
 }
 
-void GFX_RefreshTitle()
+void TITLEBAR_RefreshTitle()
 {
 	// Running program name
 	state.title_no_tags = get_running_program_name();
@@ -383,7 +369,7 @@ void GFX_RefreshTitle()
 
 	// Start/stop animation if needed
 	const bool is_capturing = state.is_capturing_audio || state.is_capturing_video;
-	if (config.animated_record_mark && !sdl.is_paused && is_capturing) {
+	if (config.animated_record_mark && !GFX_IsPaused() && is_capturing) {
 		maybe_start_animation();
 	} else {
 		maybe_stop_animation();
@@ -397,38 +383,38 @@ void GFX_RefreshTitle()
 // External notifications and setter functions
 // ***************************************************************************
 
-void GFX_NotifyBooting()
+void TITLEBAR_NotifyBooting()
 {
 	state.is_guest_os_booted = true;
-	GFX_RefreshTitle();
+	TITLEBAR_RefreshTitle();
 }
 
-void GFX_NotifyAudioCaptureStatus(const bool is_capturing)
+void TITLEBAR_NotifyAudioCaptureStatus(const bool is_capturing)
 {
 	if (state.is_capturing_audio != is_capturing) {
 		state.is_capturing_audio = is_capturing;
-		GFX_RefreshTitle();
+		TITLEBAR_RefreshTitle();
 	}
 }
 
-void GFX_NotifyVideoCaptureStatus(const bool is_capturing)
+void TITLEBAR_NotifyVideoCaptureStatus(const bool is_capturing)
 {
 	if (state.is_capturing_video != is_capturing) {
 		state.is_capturing_video = is_capturing;
-		GFX_RefreshTitle();
+		TITLEBAR_RefreshTitle();
 	}
 }
 
-void GFX_NotifyAudioMutedStatus(const bool is_muted)
+void TITLEBAR_NotifyAudioMutedStatus(const bool is_muted)
 {
 	if (state.is_audio_muted != is_muted) {
 		state.is_audio_muted = is_muted;
-		GFX_RefreshTitle();
+		TITLEBAR_RefreshTitle();
 	}
 }
 
-void GFX_NotifyProgramName(const std::string& segment_name,
-                           const std::string& canonical_name)
+void TITLEBAR_NotifyProgramName(const std::string& segment_name,
+                                const std::string& canonical_name)
 {
 	constexpr auto ConvertMode = DosStringConvertMode::ScreenCodesOnly;
 
@@ -445,19 +431,19 @@ void GFX_NotifyProgramName(const std::string& segment_name,
 	// Store new names as UTF-8, refresh titlebar
 	state.segment_name   = dos_to_utf8(segment_name_dos, ConvertMode);
 	state.canonical_name = dos_to_utf8(canonical_name, ConvertMode);
-	GFX_RefreshTitle();
+	TITLEBAR_RefreshTitle();
 }
 
-void GFX_NotifyCyclesChanged()
+void TITLEBAR_NotifyCyclesChanged()
 {
-	GFX_RefreshTitle();
+	TITLEBAR_RefreshTitle();
 }
 
 void GFX_SetMouseHint(const MouseHint hint_id)
 {
 	if (hint_id != state.mouse_hint_id) {
 		state.mouse_hint_id = hint_id;
-		GFX_RefreshTitle();
+		TITLEBAR_RefreshTitle();
 	}
 }
 
@@ -714,23 +700,23 @@ static void parse_config(const std::string& new_setting_str)
 	}
 }
 
-void TITLEBAR_ReadConfig(const Section_prop& secprop)
+void TITLEBAR_ReadConfig(const SectionProp& section)
 {
-	parse_config(secprop.Get_string("window_titlebar"));
+	parse_config(section.GetString("window_titlebar"));
 
-	GFX_RefreshTitle();
+	TITLEBAR_RefreshTitle();
 }
 
-void TITLEBAR_AddConfig(Section_prop& secprop)
+void TITLEBAR_AddConfigSettings(SectionProp& section)
 {
 	constexpr auto always = Property::Changeable::Always;
 
-	Prop_string* prop_str = nullptr;
+	PropString* prop_str = nullptr;
 
-	prop_str = secprop.Add_string("window_titlebar",
-	                              always,
-	                              "program=name dosbox=auto cycles=on mouse=full");
-	prop_str->Set_help(
+	prop_str = section.AddString("window_titlebar",
+	                             always,
+	                             "program=name dosbox=auto cycles=on mouse=full");
+	prop_str->SetHelp(
 	        "Space separated list of information to be displayed in the window's titlebar\n"
 	        "('program=name dosbox=auto cycles=on mouse=full' by default). If a parameter\n"
 	        "is not specified, its default value is used.\n"
@@ -771,6 +757,7 @@ void TITLEBAR_AddConfig(Section_prop& secprop)
 void TITLEBAR_AddMessages()
 {
 	MSG_Add("TITLEBAR_CYCLES_MS", "cycles/ms");
+	MSG_Add("TITLEBAR_CYCLES_THROTTLED", "throttled");
 	MSG_Add("TITLEBAR_MUTED", "MUTED");
 	MSG_Add("TITLEBAR_PAUSED", "PAUSED");
 
@@ -778,9 +765,11 @@ void TITLEBAR_AddMessages()
 	MSG_Add("TITLEBAR_HINT_CAPTURED_HOTKEY", "mouse captured, %s+F10 to release");
 	MSG_Add("TITLEBAR_HINT_CAPTURED_HOTKEY_MIDDLE",
 	        "mouse captured, %s+F10 or middle-click to release");
+
 	MSG_Add("TITLEBAR_HINT_RELEASED_HOTKEY", "to capture the mouse press %s+F10");
 	MSG_Add("TITLEBAR_HINT_RELEASED_HOTKEY_MIDDLE",
 	        "to capture the mouse press %s+F10 or middle-click");
+
 	MSG_Add("TITLEBAR_HINT_RELEASED_HOTKEY_ANY_BUTTON",
 	        "to capture the mouse press %s+F10 or click any button");
 	MSG_Add("TITLEBAR_HINT_SEAMLESS_HOTKEY", "seamless mouse, %s+F10 to capture");

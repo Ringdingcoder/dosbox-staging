@@ -1,32 +1,15 @@
-/*
- *  SPDX-License-Identifier: GPL-2.0-or-later
- *
- *  Copyright (C) 2022-2024  The DOSBox Staging Team
- *  Copyright (C) 2002-2022  The DOSBox Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2022-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2002-2022 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
-#include "intel8255.h"
+#include "private/intel8255.h"
+
+#include "audio/mixer.h"
 #include "dosbox.h"
-
-#include "bitops.h"
-#include "checks.h"
-#include "inout.h"
-#include "mixer.h"
-#include "timer.h"
+#include "hardware/port.h"
+#include "hardware/timer.h"
+#include "utils/bitops.h"
+#include "utils/checks.h"
 
 CHECK_NARROWING();
 
@@ -70,7 +53,7 @@ static void write_p61(io_port_t, io_val_t value, io_width_t)
 	// Update the state
 	port_b.data = new_port_b.data;
 
-	if (machine < MCH_EGA && port_b.xt_clear_keyboard) {
+	if (!is_machine_ega_or_better() && port_b.xt_clear_keyboard) {
 		// On XT only, bit 7 is a request to clear keyboard. This is
 		// only a pulse, and is normally kept at 0. We "ack" the
 		// request by switching the bit back normal (0) state. However,
@@ -111,7 +94,7 @@ static uint8_t read_p61(io_port_t, io_width_t)
 	port_b.read_toggle.flip();
 
 	// On PC/AT systems, bit 5 sets the timer 2 output status
-	if (is_machine(MCH_EGA | MCH_VGA)) {
+	if (is_machine_ega_or_better()) {
 		port_b.timer2_gating_alias = TIMER_GetOutput2();
 	} else {
 		// On XT systems always toggle bit 5 (Spellicopter CGA)
@@ -154,7 +137,7 @@ void I8255_Init()
 {
 	IO_RegisterWriteHandler(port_num_i8255_1, write_p61, io_width_t::byte);
 	IO_RegisterReadHandler(port_num_i8255_1, read_p61, io_width_t::byte);
-	if (machine == MCH_CGA || machine == MCH_HERC) {
+	if (is_machine_cga() || is_machine_hercules()) {
 		IO_RegisterReadHandler(port_num_i8255_2,
 		                       read_p62,
 		                       io_width_t::byte);

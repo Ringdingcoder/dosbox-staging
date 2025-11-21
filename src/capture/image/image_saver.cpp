@@ -1,22 +1,5 @@
-/*
- *  SPDX-License-Identifier: GPL-2.0-or-later
- *
- *  Copyright (C) 2023-2023  The DOSBox Staging Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2023-2025 The DOSBox Staging Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <cassert>
 #include <cstdlib>
@@ -25,10 +8,10 @@
 
 #include "image_saver.h"
 
-#include "../capture.h"
-#include "checks.h"
+#include "capture/capture.h"
+#include "misc/support.h"
 #include "png_writer.h"
-#include "support.h"
+#include "utils/checks.h"
 
 CHECK_NARROWING();
 
@@ -141,7 +124,7 @@ static void write_upscaled_png(FILE* outfile, PngWriter& png_writer,
 			return;
 		}
 		break;
-	};
+	}
 
 	auto rows_to_write = image_scaler.GetOutputHeight();
 	while (rows_to_write--) {
@@ -184,7 +167,7 @@ void ImageSaver::SaveRawImage(const RenderedImage& image)
 		                             src.video_mode,
 		                             image.palette_data)) {
 			return;
-		};
+		}
 	} else {
 		if (!png_writer.InitRgb888(outfile,
 		                           output_width,
@@ -192,7 +175,7 @@ void ImageSaver::SaveRawImage(const RenderedImage& image)
 		                           pixel_aspect_ratio,
 		                           src.video_mode)) {
 			return;
-		};
+		}
 	}
 
 	constexpr uint8_t MaxBytesPerPixel = 3;
@@ -255,12 +238,12 @@ void ImageSaver::SaveRenderedImage(const RenderedImage& image)
 	// rendered images as the "non-squaredness" is "baked into" the image
 	// data.
 	if (!png_writer.InitRgb888(outfile,
-	                           src.width,
-	                           src.height,
+	                           check_cast<uint16_t>(src.width),
+	                           check_cast<uint16_t>(src.height),
 	                           square_pixel_aspect_ratio,
 	                           src.video_mode)) {
 		return;
-	};
+	}
 
 	// We always write the final rendered image displayed on the host monitor
 	// as-is.

@@ -1,25 +1,10 @@
-/*
- *  Copyright (C) 2002-2021  The DOSBox Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "int10.h"
 
-#include "mem.h"
-#include "inout.h"
+#include "hardware/memory.h"
+#include "hardware/port.h"
 
 const uint8_t vparams[] = {
 	// 40x25 mode 0 and 1 crtc registers
@@ -516,8 +501,9 @@ static uint8_t video_parameter_table_ega[0x40*0x17]={
 };
 
 
-uint16_t INT10_SetupVideoParameterTable(PhysPt basepos) {
-	if (IS_VGA_ARCH) {
+uint16_t INT10_SetupVideoParameterTable(PhysPt basepos)
+{
+	if (is_machine_vga_or_better()) {
 		for (Bitu i=0;i<0x40*0x1d;i++) {
 			phys_writeb(basepos+i,video_parameter_table_vga[i]);
 		}
@@ -534,12 +520,12 @@ void INT10_SetupBasicVideoParameterTable(void) {
 	/* video parameter table at F000:F0A4 */
 	RealSetVec(0x1d,RealMake(0xF000, 0xF0A4));
 	switch (machine) {
-	case MCH_TANDY:
+	case MachineType::Tandy:
 		for (uint16_t i = 0; i < sizeof(vparams_tandy); i++) {
 			phys_writeb(0xFF0A4+i,vparams_tandy[i]);
 		}
 		break;
-	case MCH_PCJR:
+	case MachineType::Pcjr:
 		for (uint16_t i = 0; i < sizeof(vparams_pcjr); i++) {
 			phys_writeb(0xFF0A4+i,vparams_pcjr[i]);
 		}
@@ -554,7 +540,7 @@ void INT10_SetupBasicVideoParameterTable(void) {
 
 #if 0
 void INT10_GenerateVideoParameterTable(void) {
-	if (!IS_VGA_ARCH) E_Exit("Be sure that all graphics registers are readable!");
+	if (!is_machine_vga_or_better()) E_Exit("Be sure that all graphics registers are readable!");
 	Bitu i;
 	for (i=0; i<4; i++) {
 		LOG_MSG("// video parameter table for mode %x (cga emulation)",i);
@@ -678,7 +664,7 @@ void INT10_GenerateVideoParameterTable(void) {
 			gfx_regs[0x04],gfx_regs[0x05],gfx_regs[0x06],gfx_regs[0x07],gfx_regs[0x08]);
 	}
 	for (i=0; i<4; i++) {
-		if (IS_VGA_ARCH) {
+		if (is_machine_vga_or_better()) {
 			LOG_MSG("// video parameter table for mode %x (350 lines)",i);
 			LOG_MSG("  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,");
 			LOG_MSG("  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,");
@@ -735,7 +721,7 @@ void INT10_GenerateVideoParameterTable(void) {
 				gfx_regs[0x04],gfx_regs[0x05],gfx_regs[0x06],gfx_regs[0x07],gfx_regs[0x08]);
 		}
 	}
-	if (IS_VGA_ARCH) {
+	if (is_machine_vga_or_better()) {
 		for (i=0x0e; i<0x14; i++) {
 			Bitu ct=i;
 			if (i==0x0e) ct=1;

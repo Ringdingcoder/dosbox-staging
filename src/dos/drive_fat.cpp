@@ -1,33 +1,18 @@
-/*
- *  Copyright (C) 2002-2021  The DOSBox Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
-#include "drives.h"
+#include "dos/drives.h"
 
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
 
-#include "bios.h"
-#include "bios_disk.h"
-#include "dos_inc.h"
-#include "string_utils.h"
-#include "support.h"
+#include "dos.h"
+#include "ints/bios.h"
+#include "ints/bios_disk.h"
+#include "misc/support.h"
+#include "utils/string_utils.h"
 
 #define IMGTYPE_FLOPPY 0
 #define IMGTYPE_ISO    1
@@ -1359,7 +1344,9 @@ nextfile:
 	}
 
 	/* Compare name to search pattern */
-	if(!WildFileCmp(find_name, search_pattern)) goto nextfile;
+	if (!wild_file_cmp(find_name, search_pattern)) {
+		goto nextfile;
+	}
 
 	copyDirEntry(&sectbuf[entryoffset], foundEntry);
 

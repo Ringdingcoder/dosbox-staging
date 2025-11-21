@@ -1,33 +1,19 @@
-/*
- *  Copyright (C) 2020-2024  The DOSBox Staging Team
- *  Copyright (C) 2002-2021  The DOSBox Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2020-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
-#include "autoexec.h"
+#include "shell/autoexec.h"
 
-#include "checks.h"
-#include "control.h"
+#include "utils/checks.h"
+#include "config/config.h"
 #include "dosbox.h"
-#include "fs_utils.h"
-#include "keyboard.h"
-#include "setup.h"
-#include "shell.h"
-#include "string_utils.h"
-#include "unicode.h"
+#include "utils/fs_utils.h"
+#include "hardware/input/keyboard.h"
+#include "hardware/input/mouse.h"
+#include "config/setup.h"
+#include "shell/shell.h"
+#include "utils/string_utils.h"
+#include "misc/unicode.h"
 
 #include <algorithm>
 #include <iostream>
@@ -46,6 +32,7 @@ static const std::string AutoexecFileName = "AUTOEXEC.BAT";
 static const std::string CmdBoot          = "@Z:\\BOOT.COM ";
 static const std::string CmdConfig        = "@Z:\\CONFIG.COM ";
 static const std::string CmdMount         = "@Z:\\MOUNT.COM ";
+static const std::string CmdMouse         = "@Z:\\MOUSE.COM ";
 static const std::string CmdImgMount      = "@Z:\\IMGMOUNT.COM ";
 static const std::string CmdEchoOff       = "@ECHO OFF";
 static const std::string CmdSet           = "@SET ";
@@ -62,12 +49,12 @@ constexpr char char_cr = 0x0d; // carriage return
 // AUTOEXEC.BAT data - both source and binary
 // ***************************************************************************
 
-// Generated AUTOEXEC.BAT, un UTF-8 format
-static std::string autoexec_bat_utf8 = {};
-// Whether AUTOEXEC.BAT is already registered on the Z: drive
-static bool is_vfile_registered = false;
-// Code page used to generate Z:\AUTOEXEC.BAT from the internal UTF-8 version
-static uint16_t vfile_code_page = 0;
+// Generated AUTOEXEC.BAT, in UTF-8 format
+static std::optional<std::string> autoexec_bat_utf8 = {};
+// Generated AUTOEXEC.BAT, in DOS encoding, in a binary format,
+static std::vector<uint8_t> autoexec_bat_bin = {};
+// Code page used to generate 'autoexec_bat_bin'
+static std::optional<uint16_t> vfile_code_page = {};
 
 // Data to be used to generate AUTOEXEC.BAT
 
@@ -96,15 +83,21 @@ static std::map<Placement, std::list<std::string>> autoexec_lines;
 // AUTOEXEC.BAT generation code
 // ***************************************************************************
 
-std::string create_autoexec_bat_utf8()
+// Warning: only execute this once, when the initial AUTOEXEC.BAT is being
+// created. Data used to generate the file might change at runtime, affecting
+// the length of strings; if this happens when executing the AUTOEXEC.BAT,
+// changed offsets might confuse our COMMAND.COM, leading to errors.
+static void create_autoexec_bat_utf8()
 {
-	std::string out;
+	assert(!autoexec_bat_utf8);
+	autoexec_bat_utf8 = std::string();
 
-	// Helper lamdbas
+	// Helper lambdas
 
-	auto push_new_line = [&] { // DOS line ending is CR+LF
-		out.push_back(char_cr);
-		out.push_back(char_lf);
+	auto push_new_line = [&] {
+		// DOS line ending is CR+LF
+		autoexec_bat_utf8->push_back(char_cr);
+		autoexec_bat_utf8->push_back(char_lf);
 	};
 
 	auto push_string = [&](const std::string& line) {
@@ -114,13 +107,13 @@ std::string create_autoexec_bat_utf8()
 		}
 
 		for (const auto& character : line) {
-			out.push_back(character);
+			autoexec_bat_utf8->push_back(character);
 		}
 		push_new_line();
 	};
 
 	auto push_header = [&](const std::string& comment) {
-		if (!out.empty()) {
+		if (!autoexec_bat_utf8->empty()) {
 			push_new_line();
 		}
 		push_string(comment);
@@ -132,17 +125,20 @@ std::string create_autoexec_bat_utf8()
 	// If currently printed lines are generated from configuration files and
 	// command line options
 	bool is_pushing_generated = false;
+
 	// If currently printed lines are from '[autoexec]' section(s)
 	bool is_pushing_autoexec_section = false;
 
-	// We want unprocessed UTF8 form of messages here (thus 'MSG_GetRaw'
+	// We want unprocessed UTF8 form of messages here (thus 'MSG_GetEnglishRaw'
 	// calls, not 'MSG_Get'), they will be converted to DOS code page later,
 	// together with the '[autoexec]' section content
-	static const std::string comment_start    = ":: ";
-	static const std::string header_generated = comment_start +
-		MSG_GetRaw("AUTOEXEC_BAT_GENERATED");
-	static const std::string header_autoexec_section = comment_start +
-		MSG_GetRaw("AUTOEXEC_BAT_CONFIG_SECTION");
+	static const std::string comment_start = ":: ";
+
+	const auto header_generated = comment_start +
+	                              MSG_GetEnglishRaw("AUTOEXEC_BAT_GENERATED");
+
+	const auto header_autoexec_section =
+	        comment_start + MSG_GetEnglishRaw("AUTOEXEC_BAT_CONFIG_SECTION");
 
 	// Put 'ECHO OFF' and 'SET variable=value' if needed
 
@@ -205,33 +201,23 @@ std::string create_autoexec_bat_utf8()
 	}
 
 #ifdef DEBUG_AUTOEXEC
-	LOG_INFO("AUTOEXEC: New file content\n\n%s", out.c_str());
+	LOG_INFO("AUTOEXEC: New file content\n\n%s", autoexec_bat_utf8->c_str());
 #endif // DEBUG_AUTOEXEC
-
-	return out;
 }
 
-static void create_autoexec_bat_dos(const std::string& input_utf8,
-                                    const uint16_t code_page)
+static void create_autoexec_bat_bin(const uint16_t code_page)
 {
+	assert(autoexec_bat_utf8);
+
 	// Convert UTF-8 AUTOEXEC.BAT to DOS code page
-	const auto autoexec_bat_dos = utf8_to_dos(input_utf8,
+	const auto autoexec_bat_dos = utf8_to_dos(*autoexec_bat_utf8,
 	                                          DosStringConvertMode::WithControlCodes,
 	                                          UnicodeFallback::Box,
 	                                          code_page);
 
 	// Convert the result to a binary format
-	auto autoexec_bat_bin = std::vector<uint8_t>(autoexec_bat_dos.begin(),
-	                                             autoexec_bat_dos.end());
-
-	// Register/refresh Z:\AUTOEXEC.BAT file
-	if (is_vfile_registered) {
-		VFILE_Update(AutoexecFileName.c_str(), std::move(autoexec_bat_bin));
-	} else {
-		VFILE_Register(AutoexecFileName.c_str(),
-		               std::move(autoexec_bat_bin));
-		is_vfile_registered = true;
-	}
+	autoexec_bat_bin = std::vector<uint8_t>(autoexec_bat_dos.begin(),
+	                                        autoexec_bat_dos.end());
 
 	// Store current code page for caching purposes
 	vfile_code_page = code_page;
@@ -241,18 +227,18 @@ static void create_autoexec_bat_dos(const std::string& input_utf8,
 // AUTOEXEC class declaration and implementation
 // ***************************************************************************
 
-class AutoExecModule final : public Module_base {
+class AutoExecModule final {
 public:
 	AutoExecModule(Section* configuration);
 
 private:
-	void ProcessConfigFile(const Section_line& section,
+	void ProcessConfigFile(const SectionLine& section,
 	                       const std::string& source_name);
 
 	void AddLine(const Placement placement, const std::string& line);
 
 	// Mount drives from standard location in host filesystem
-	void AutoMountDrive(const std::string& dir_letter);
+	void AutoMountDetectedDrive(const std::string& dir_letter);
 	// Mount drive C from a directory
 	void AutoMountDriveC(const std::string& directory,
 	                     const Placement placement = Placement::InitialAutogeneratedCommands);
@@ -267,33 +253,46 @@ private:
 	void AddMessages();
 };
 
+struct AutoMountSettings {
+	std::string override_drive = {};
+	std::string type           = {};
+	std::string label          = {};
+	bool readonly              = false;
+	std::string path           = {};
+	bool verbose               = false;
+};
+
 AutoExecModule::AutoExecModule(Section* configuration)
-        : Module_base(configuration)
 {
 	AddMessages();
 
 	// Get the [dosbox] conf section
-	const auto sec = static_cast<Section_prop*>(control->GetSection("dosbox"));
+	const auto sec = static_cast<SectionProp*>(control->GetSection("dosbox"));
 	assert(sec);
 
+	// Start mouse driver
+	if (MOUSEDOS_NeedsAutoexecEntry()) {
+		AddLine(Placement::InitialAutogeneratedCommands, CmdMouse + ToNul);
+	}
+
 	// Auto-mount drives (except for DOSBox's Z:) prior to [autoexec]
-	if (sec->Get_bool("automount")) {
+	if (sec->GetBool("automount")) {
 		for (char letter = 'a'; letter < 'z'; ++letter) {
-			AutoMountDrive({letter});
+			AutoMountDetectedDrive({letter});
 		}
 	}
 
 	// Check -securemode switch to disable mount/imgmount/boot after
 	// running autoexec.bat
-	const auto cmdline = control->cmdline; // short-lived copy
-	const auto arguments = &control->arguments;
+	const auto cmdline               = control->cmdline; // short-lived copy
+	const auto arguments             = &control->arguments;
 	const bool has_option_securemode = arguments->securemode;
 
 	// Are autoexec sections permitted?
 	const bool has_option_no_autoexec = arguments->noautoexec;
 
 	// Should autoexec sections be joined or overwritten?
-	const std::string section_pref = sec->Get_string("autoexec_section");
+	const std::string section_pref   = sec->GetString("autoexec_section");
 	const bool should_join_autoexecs = (section_pref == "join");
 
 	// Check to see for extra command line options to be added
@@ -326,9 +325,7 @@ AutoExecModule::AutoExecModule(Section* configuration)
 	const bool exit_arg_exists = arguments->exit;
 
 	// Check if instant-launch is active
-	const bool using_instant_launch_with_executable =
-	        control->GetStartupVerbosity() == Verbosity::InstantLaunch &&
-	        cmdline->HasExecutableName();
+	const bool using_instant_launch_with_executable = cmdline->HasExecutableName();
 
 	// Should we add an 'exit' call to the end of autoexec.bat?
 	const bool should_add_exit = exit_call_exists || exit_arg_exists ||
@@ -352,12 +349,12 @@ AutoExecModule::AutoExecModule(Section* configuration)
 		std_fs::path path = argument;
 		bool is_directory = std_fs::is_directory(path);
 		if (!is_directory) {
-			path = std_fs::current_path() / path;
+			path         = std_fs::current_path() / path;
 			is_directory = std_fs::is_directory(path);
 		}
 
 		if (is_directory) {
-			drive_c_directory = Quote + argument + Quote;
+			drive_c_directory  = argument;
 			has_dir_or_command = true;
 			continue;
 		}
@@ -408,20 +405,17 @@ AutoExecModule::AutoExecModule(Section* configuration)
 	}
 
 	// Mount drives
-
 	if (!drive_c_directory.empty()) {
 		AutoMountDriveC(drive_c_directory);
 	}
-
 	if (!cdrom_images.empty()) {
 		AutoMountDriveD(cdrom_images);
 	}
 
 	// Fetch [autoexec] sections
-
 	if (!has_option_no_autoexec) {
 		if (should_join_autoexecs) {
-			ProcessConfigFile(*static_cast<const Section_line*>(configuration),
+			ProcessConfigFile(*static_cast<const SectionLine*>(configuration),
 			                  "one or more joined sections");
 		} else if (!has_dir_or_command) {
 			ProcessConfigFile(control->GetOverwrittenAutoexecSection(),
@@ -432,7 +426,6 @@ AutoExecModule::AutoExecModule(Section* configuration)
 	}
 
 	// Enable secure boot if needed
-
 	if (has_option_securemode) {
 		if (has_boot_image) {
 			// Secure mode does not allow booting - so skip it
@@ -448,16 +441,12 @@ AutoExecModule::AutoExecModule(Section* configuration)
 	}
 
 	// Add exit command if needed
-
 	if (should_add_exit) {
 		AddLine(Placement::CommandsAfterAutoexecSection, "@EXIT");
 	}
-
-	// Register the AUTOEXEC.BAT file if not already done
-	AUTOEXEC_RegisterFile();
 }
 
-void AutoExecModule::ProcessConfigFile(const Section_line& section,
+void AutoExecModule::ProcessConfigFile(const SectionLine& section,
                                        const std::string& source_name)
 {
 	if (section.data.empty()) {
@@ -477,7 +466,7 @@ void AutoExecModule::ProcessConfigFile(const Section_line& section,
 		}
 
 		lowcase(tmp);
-		if (tmp.substr(0, 4) != "echo" || !tmp.ends_with("off")) {
+		if (!tmp.starts_with("echo") || !tmp.ends_with("off")) {
 			return false;
 		}
 
@@ -520,31 +509,200 @@ void AutoExecModule::AddLine(const Placement placement, const std::string& line)
 	autoexec_lines[placement].push_back(line);
 }
 
+// Specify a 'Drive' config object with allowed key and value types
+std::unique_ptr<Config> specify_drive_conf()
+{
+	auto conf = std::make_unique<Config>();
+
+	// Define the [drive] section
+	const AutoMountSettings defaults = {};
+
+	const auto prop = conf->AddSection("drive");
+
+	// Define the allowed keys and types
+	constexpr auto OnStartup = Property::Changeable::OnlyAtStart;
+
+	prop->AddString("type", OnStartup, defaults.type.c_str())
+	        ->SetValues({"dir", "floppy", "cdrom", "overlay"});
+
+	prop->AddString("label", OnStartup, defaults.label.c_str());
+	prop->AddString("path", OnStartup, defaults.path.c_str());
+
+	prop->AddString("override_drive", OnStartup, defaults.override_drive.c_str());
+
+	prop->AddBool("verbose", OnStartup, defaults.verbose);
+	prop->AddBool("readonly", OnStartup, defaults.readonly);
+
+	return conf;
+}
+
+// Parse a 'Drive' config file and return object with allowed key and
+// value types
+std::optional<AutoMountSettings> parse_drive_conf(const std_fs::path& conf_path)
+{
+	AutoMountSettings settings = {};
+
+	// If the conf path doesn't exist, at least return the default quiet arg
+	if (!path_exists(conf_path)) {
+		return settings;
+	}
+
+	// If we couldn't parse it, return the defaults
+	const auto conf = specify_drive_conf();
+	assert(conf);
+	if (!conf->ParseConfigFile("auto-mounted drive", conf_path.string())) {
+		return settings;
+	}
+
+	const auto section = static_cast<SectionProp*>(conf->GetSection("drive"));
+
+	const auto override_drive = section->GetString("override_drive");
+	if (override_drive.length() == 1 && override_drive[0] >= 'a' &&
+	    override_drive[0] <= 'y') {
+		settings.override_drive = override_drive;
+	} else if (!override_drive.empty()) {
+		LOG_ERR("AUTOMOUNT: %s: setting 'override_drive = %s' is invalid",
+		        conf_path.string().c_str(),
+		        override_drive.c_str());
+		LOG_ERR("AUTOMOUNT: The override_drive setting can be left empty or a drive letter from 'a' to 'y'");
+	}
+
+	settings.readonly = section->GetBool("readonly");
+	settings.label    = section->GetString("label");
+	settings.type     = section->GetString("type");
+	settings.path     = section->GetString("path");
+	settings.verbose  = section->GetBool("verbose");
+
+	return settings;
+}
+
+// Build a command to mount a drive from a directory, based on the
+// provided settings
+std::string build_auto_mount_dir_cmd(const std::string_view dir_letter,
+                                     const std_fs::path& drive_path,
+                                     const std::optional<AutoMountSettings>& settings)
+{
+	auto command = CmdMount;
+
+	if (!settings.has_value() || settings->override_drive.empty()) {
+		command += dir_letter;
+	} else {
+		command += settings->override_drive;
+	}
+
+	command += " " + Quote + simplify_path(drive_path).string() + Quote;
+
+	if (settings.has_value()) {
+		if (!settings->type.empty()) {
+			command += " -t " + settings->type;
+		}
+
+		if (!settings->label.empty()) {
+			command += " -label " + settings->label;
+		}
+
+		if (settings->readonly) {
+			command += " -ro";
+		}
+
+		if (!settings->verbose) {
+			command += ToNul;
+		}
+	}
+
+	return command;
+}
+
+// Get all files in the given directory that have the specified extensions
+std::vector<std_fs::path> get_files_by_ext(const std_fs::path& drive_path,
+                                           const std::vector<std::string_view>& extensions)
+{
+	std::vector<std_fs::path> paths = {};
+
+	for (const auto& entry : std_fs::directory_iterator(drive_path)) {
+		if (entry.exists() && entry.is_regular_file()) {
+			const auto& path = entry.path();
+			std::string ext  = path.extension().string();
+			lowcase(ext);
+			if (std::ranges::find(extensions, ext) != extensions.end()) {
+				paths.push_back(path);
+			}
+		}
+	}
+
+	std::ranges::sort(paths, [](const std_fs::path& a, const std_fs::path& b) {
+		return natural_compare(a.filename().string(), b.filename().string());
+	});
+
+	return paths;
+}
+
+// Build a command to mount CD images in a folder, based on the
+// provided settings
+std::string build_auto_mount_cd_images_cmd(const std::string_view dir_letter,
+                                           const std::vector<std_fs::path>& image_paths,
+                                           const std::optional<AutoMountSettings>& settings)
+{
+	auto command = CmdImgMount;
+
+	if (!settings.has_value() || settings->override_drive.empty()) {
+		command += dir_letter;
+	} else {
+		command += settings->override_drive;
+	}
+
+	for (const auto& path : image_paths) {
+		command += " " + Quote + simplify_path(path).string() + Quote;
+	}
+
+	command += " -t iso -fs iso";
+
+	// When mounting CD images via imgmount, we ignore the type
+	// (always cdrom), the readonly flag (implied) and the label settings
+	// (derived from the CD images themselves)
+	if (settings.has_value() && !settings->verbose) {
+		command += ToNul;
+	}
+
+	return command;
+}
+
 // Takes in a drive letter (eg: 'c') and attempts to mount the 'drives/c',
 // extends system path if needed
-void AutoExecModule::AutoMountDrive(const std::string& dir_letter)
+void AutoExecModule::AutoMountDetectedDrive(const std::string& dir_letter)
 {
 	// Does drives/[x] exist?
-	const auto drive_path = GetResourcePath("drives", dir_letter);
+	const auto drive_path = get_resource_path("drives", dir_letter);
 	if (!path_exists(drive_path)) {
 		return;
 	}
 
 	// Try parsing the [x].conf file
-	const auto conf_path  = drive_path.string() + ".conf";
-	const auto [drive_letter, mount_args, path_val, is_verbose] =
-	        parse_drive_conf(dir_letter, conf_path);
+	const auto conf_path = drive_path.string() + ".conf";
+	const auto settings  = parse_drive_conf(conf_path);
 
-	// Install mount as an autoexec command
-	AddLine(Placement::InitialAutogeneratedCommands,
-	        CmdMount + drive_letter + " " + Quote +
-	                simplify_path(drive_path).string() + Quote +
-	                mount_args + (is_verbose ? "" : ToNul));
+	// See if there are mountable images in drive_path
+	const std::vector<std::string_view> cd_image_extensions = {".cue", ".iso"};
+	const auto cd_image_paths = get_files_by_ext(drive_path, cd_image_extensions);
+
+	// Explicitly setting the drive type to anything but 'cdrom' will force
+	// dosbox to mount the path as a directory, even if there are mountable
+	// images in the path
+	if (cd_image_paths.empty() ||
+	    (!settings->type.empty() && settings->type != "cdrom")) {
+		// Install mount as an autoexec command
+		AddLine(Placement::InitialAutogeneratedCommands,
+		        build_auto_mount_dir_cmd(dir_letter, drive_path, settings));
+	} else {
+		// Install imgmount as an autoexec command
+		AddLine(Placement::InitialAutogeneratedCommands,
+		        build_auto_mount_cd_images_cmd(dir_letter, cd_image_paths, settings));
+	}
 
 	// Install PATH as an autoexec command
-	if (!path_val.empty()) {
+	if (settings.has_value() && !settings->path.empty()) {
 		AddLine(Placement::InitialAutogeneratedCommands,
-		        CmdSetPath + path_val);
+		        CmdSetPath + settings->path);
 	}
 }
 
@@ -555,7 +713,8 @@ void AutoExecModule::AutoMountDriveC(const std::string& directory,
 	if (directory.empty()) {
 		AddLine(placement, CmdMount + "C ." + ToNul);
 	} else {
-		AddLine(placement, CmdMount + "C " + Quote + directory + Quote + ToNul);
+		AddLine(placement,
+		        CmdMount + "C " + Quote + directory + Quote + ToNul);
 	}
 	AddLine(placement, CmdDriveC);
 }
@@ -579,28 +738,9 @@ void AutoExecModule::AddMessages()
 	MSG_Add("AUTOEXEC_BAT_CONFIG_SECTION", "from [autoexec] section");
 }
 
-void AUTOEXEC_NotifyNewCodePage()
-{
-	// No need to do anything during the shutdown or if Z:\AUTOEXEC.BAT file
-	// does not exist yet
-	if (shutdown_requested || !is_vfile_registered) {
-		return;
-	}
-
-	// No need to do anything if the code page used by UTF-8 engine is still
-	// the same as when Z:\AUTOEXEC.BAT was generated/refreshed
-	const auto code_page = get_utf8_code_page();
-	if (code_page == vfile_code_page) {
-		return;
-	}
-
-	// Recreate the AUTOEXEC.BAT file as visible on DOS side
-	create_autoexec_bat_dos(autoexec_bat_utf8, code_page);
-}
-
 void AUTOEXEC_SetVariable(const std::string& name, const std::string& value)
 {
-#if C_DEBUG
+#if C_DEBUGGER
 	if (!std::all_of(name.cbegin(), name.cend(), is_printable_ascii)) {
 		E_Exit("AUTOEXEC: Variable name is not a printable ASCII");
 	}
@@ -613,8 +753,8 @@ void AUTOEXEC_SetVariable(const std::string& name, const std::string& value)
 	upcase(name_upcase);
 
 	// If shell is already running, refresh variable content
-	if (first_shell) {
-		first_shell->SetEnv(name_upcase.c_str(), value.c_str());
+	if (auto shell = DOS_GetFirstShell()) {
+		shell->SetEnv(name_upcase, value);
 	}
 
 	// Update our internal list of variables to set in AUTOEXEC.BAT
@@ -625,15 +765,43 @@ void AUTOEXEC_SetVariable(const std::string& name, const std::string& value)
 	}
 }
 
-void AUTOEXEC_RegisterFile()
-{
-	autoexec_bat_utf8 = create_autoexec_bat_utf8();
-	create_autoexec_bat_dos(autoexec_bat_utf8, get_utf8_code_page());
-}
-
 static std::unique_ptr<AutoExecModule> autoexec_module{};
 
-void AUTOEXEC_Init(Section* sec)
+void AUTOEXEC_RefreshFile()
 {
-	autoexec_module = std::make_unique<AutoExecModule>(sec);
+	// No need to do anything during the shutdown
+	if (DOSBOX_IsShutdownRequested()) {
+		return;
+	}
+
+	// Don't do anything if we did not collect the config data yet
+	if (!autoexec_module) {
+		return;
+	}
+
+	// Create the UTF-8 version of the file, if necesary
+	if (!autoexec_bat_utf8) {
+		create_autoexec_bat_utf8();
+	}
+
+	// No need to do anything if the code page used by UTF-8 engine is still
+	// the same as when Z:\AUTOEXEC.BAT was generated/refreshed
+	const auto code_page = get_utf8_code_page();
+	if (!vfile_code_page || code_page != *vfile_code_page) {
+		create_autoexec_bat_bin(code_page);
+	}
+
+	// Register/refresh Z:\AUTOEXEC.BAT file
+	if (!VFILE_Update(AutoexecFileName.c_str(), autoexec_bat_bin)) {
+		VFILE_Register(AutoexecFileName.c_str(), autoexec_bat_bin);
+	}
+}
+
+void AUTOEXEC_Init()
+{
+	auto section = get_section("autoexec");
+	assert(section);
+
+	autoexec_module = std::make_unique<AutoExecModule>(section);
+	AUTOEXEC_RefreshFile();
 }

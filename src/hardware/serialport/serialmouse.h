@@ -1,28 +1,13 @@
-/*
- *  Copyright (C) 2022-2023  The DOSBox Staging Team
- *  Copyright (C) 2002-2021  The DOSBox Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2022-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #ifndef DOSBOX_SERIALMOUSE_H
 #define DOSBOX_SERIALMOUSE_H
 
 #include "serialport.h"
 
-#include "../input/mouse_config.h"
+#include "hardware/input/mouse_config.h"
 
 class CSerialMouse : public CSerial {
 public:
@@ -32,7 +17,7 @@ public:
 	void NotifyMoved(const float x_rel, const float y_rel);
 	void NotifyButton(const uint8_t new_buttons,
 	                  const MouseButtonId id); // changed button
-	void NotifyWheel(const int16_t w_rel);
+	void NotifyWheel(const float w_rel);
 
 	void BoostRate(const uint16_t rate_hz); // 0 = standard rate
 
@@ -47,7 +32,9 @@ public:
 	void handleUpperEvent(const uint16_t event_type) override;
 
 private:
-	void HandleDeprecatedOptions(CommandLine *cmd);
+	void LogMouseModel();
+
+	void HandleDeprecatedOptions(CommandLine* cmd);
 	void SetModel(const MouseModelCOM new_type);
 	void AbortPacket();
 	void ClearCounters();
@@ -86,12 +73,17 @@ private:
 	                                 // received mouse move event
 	bool got_another_button = false; // true = while transmitting a packet
 	                                 // we received mouse button event
-	uint8_t buttons  = 0;    // bit 0 = left, bit 1 = right, bit 2 = middle
-	float delta_x    = 0.0f; // accumulated movements not yet reported
-	float delta_y    = 0.0f;
-	int8_t counter_x = 0;    // position counters, as visible on guest size
-	int8_t counter_y = 0;
-	int8_t counter_w = 0;
+	uint8_t buttons = 0; // bit 0 = left, bit 1 = right, bit 2 = middle
+
+	// Accumulated mouse movement, waiting to be reported
+	float delta_x     = 0.0f;
+	float delta_y     = 0.0f;
+	float delta_wheel = 0.0f;
+
+	// Position counters, as visible on the guest size
+	int8_t counter_x     = 0;
+	int8_t counter_y     = 0;
+	int8_t counter_wheel = 0;
 };
 
 #endif // DOSBOX_SERIALMOUSE_H

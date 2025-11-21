@@ -1,9 +1,10 @@
 name: Debian package build
+permissions: read-all
 
 on:
-  pull_request:
-    branches: [ main ]
-    types: [ closed ]
+  push:
+    branches:
+      - main
     paths-ignore:
       - '.clang-format'
       - '.mdl-styles'
@@ -18,7 +19,6 @@ concurrency:
 
 jobs:
   build:
-    if: ${{ github.event.pull_request.merged }}
     name: Release package ${{ matrix.arch }}
     runs-on: ubuntu-22.04
     strategy:
@@ -27,7 +27,7 @@ jobs:
           - amd64
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install dependencies
         run: |
@@ -37,7 +37,7 @@ jobs:
 
       - name: Inject versioned package name
         run: |
-          VERSION=$(./scripts/get-version.sh version-and-hash)
+          VERSION=$(./scripts/ci/get-version.sh version-and-hash)
 
           # Debianize the package version by replacing the first dash after
           # the numbered tag with a tilde. Subsequence dashes are ok.
@@ -57,12 +57,12 @@ jobs:
 
       - name: Build the package
         run: |
-          ./scripts/build-debian-package.sh
+          ./scripts/packaging/linux/build-debian-package.sh
 
           # Move the package into the repo so the uploader can access it
           mv ../${{ env.PACKAGE_NAME }}.deb .
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: ${{ env.PACKAGE_NAME }}
           path: ${{ env.PACKAGE_NAME }}.deb

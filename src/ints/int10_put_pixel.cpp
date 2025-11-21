@@ -1,27 +1,12 @@
-/*
- *  Copyright (C) 2021-2024  The DOSBox Staging Team
- *  Copyright (C) 2002-2021  The DOSBox Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2021-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "int10.h"
 
-#include "inout.h"
-#include "mem.h"
-#include "pci_bus.h"
+#include "hardware/port.h"
+#include "hardware/memory.h"
+#include "hardware/pci_bus.h"
 
 static uint8_t cga_masks[4]={0x3f,0xcf,0xf3,0xfc};
 static uint8_t cga_masks2[8]={0x7f,0xbf,0xdf,0xef,0xf7,0xfb,0xfd,0xfe};
@@ -48,7 +33,7 @@ void INT10_PutPixel(uint16_t x,uint16_t y,uint8_t page,uint8_t color) {
 		} else {
 			// a 32k mode: PCJr special case (see M_TANDY16)
 			uint16_t seg;
-			if (machine==MCH_PCJR) {
+			if (is_machine_pcjr()) {
 				Bitu cpupage =
 					(real_readb(BIOSMEM_SEG, BIOSMEM_CRTCPU_PAGE) >> 3) & 0x7;
 				seg = cpupage << 10; // A14-16 to addr bits 14-16
@@ -93,7 +78,7 @@ void INT10_PutPixel(uint16_t x,uint16_t y,uint8_t page,uint8_t color) {
 
 		uint16_t segment, offset;
 		if (is_32k) {
-			if (machine==MCH_PCJR) {
+			if (is_machine_pcjr()) {
 				Bitu cpupage =
 					(real_readb(BIOSMEM_SEG, BIOSMEM_CRTCPU_PAGE) >> 3) & 0x7;
 				segment = cpupage << 10; // A14-16 to addr bits 14-16
@@ -129,8 +114,8 @@ void INT10_PutPixel(uint16_t x,uint16_t y,uint8_t page,uint8_t color) {
 	}
 	break;
 	case M_LIN4:
-		if ((machine!=MCH_VGA) || (svgaCard!=SVGA_TsengET4K) ||
-				(CurMode->swidth>800)) {
+		if (!is_machine_vga_or_better() || svga_type != SvgaType::TsengEt4k ||
+		    (CurMode->swidth > 800)) {
 			// the ET4000 BIOS supports text output in 800x600 SVGA
 			// (Gateway 2)
 			putpixelwarned = true;
@@ -229,7 +214,7 @@ void INT10_GetPixel(uint16_t x,uint16_t y,uint8_t page,uint8_t * color) {
 			bool is_32k = (real_readb(BIOSMEM_SEG, BIOSMEM_CURRENT_MODE) >= 9)?true:false;
 			uint16_t segment, offset;
 			if (is_32k) {
-				if (machine==MCH_PCJR) {
+				if (is_machine_pcjr()) {
 					Bitu cpupage = (real_readb(BIOSMEM_SEG, BIOSMEM_CRTCPU_PAGE) >> 3) & 0x7;
 					segment = cpupage << 10;
 				} else segment = 0xb800;

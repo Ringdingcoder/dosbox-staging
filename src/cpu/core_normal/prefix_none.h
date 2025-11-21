@@ -1,20 +1,5 @@
-/*
- *  Copyright (C) 2002-2021  The DOSBox Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+// SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 	CASE_B(0x00)												/* ADD Eb,Gb */
 		RMEbGb(ADDB);break;
@@ -749,7 +734,7 @@
 		CPU_RET(false,0,GETIP);
 		continue;
 	CASE_B(0xcc)												/* INT3 */
-#if C_DEBUG	
+#if C_DEBUGGER	
 		FillFlags();
 		if (DEBUG_Breakpoint())
 			return debugCallback;
@@ -762,7 +747,7 @@
 	CASE_B(0xcd)												/* INT Ib */	
 		{
 			uint8_t num=Fetchb();
-#if C_DEBUG
+#if C_DEBUGGER
 			FillFlags();
 			if (DEBUG_IntBreakpoint(num)) {
 				return debugCallback;
@@ -1103,7 +1088,7 @@
 			case 0x01:										/* DEC Eb */
 				RMEb(DECB);
 				break;
-			case 0x07:										/* CallBack */
+			case 0x07:										/* Callback */
 				{
 					Bitu cb=Fetchw();
 					FillFlags();SAVEIP;
