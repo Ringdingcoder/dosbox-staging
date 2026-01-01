@@ -1219,6 +1219,8 @@ if get_option('enable_debugger') != 'none'
     third_party_deps += libpdcurses_dep
 endif
 
+third_party_deps += dependency('liblz4')
+
 # generate dosbox_config.h
 configure_file(
     input: 'src/dosbox_config.h.in',

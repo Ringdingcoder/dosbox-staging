@@ -2461,7 +2461,7 @@ static bool replacement_poll_event(SDL_Event *event)
         event->type = globl_kbd_exchange.state == 0 ? SDL_KEYUP : SDL_KEYDOWN;
         event->key.type = event->type;
         event->key.state = event->type == SDL_KEYUP ? SDL_RELEASED : SDL_PRESSED;
-        event->key.keysym.scancode = globl_kbd_exchange.scancode;
+        event->key.keysym.scancode = (SDL_Scancode) globl_kbd_exchange.scancode;
         memcpy(&event->key.keysym.sym, &globl_kbd_exchange.sym, 4);
         memcpy(&event->key.keysym.mod, &globl_kbd_exchange.mod, 2);
 

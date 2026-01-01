@@ -89,7 +89,7 @@ static bool send_init()
     if (!sock_init(&sock_kbd, 5678))
         return false;
 
-    if (!SDL_CreateThread(kbd_reader_thread, 0))
+    if (!SDL_CreateThread(kbd_reader_thread, "kbd render", 0))
         return false;
 
     LZ4_streamHC_t *streamt = LZ4_initStreamHC(&stream, sizeof(stream));
@@ -132,7 +132,7 @@ static int complete_write(int fd, const char *buf, size_t count)
 static int kbd_reader_thread(void *)
 {
     for (;;) {
-        Bit8u buf[8];
+        uint8_t buf[8];
         if (complete_read(sock_kbd, (char*) buf, 8))
             return 1;
 
@@ -353,14 +353,14 @@ static void halt_render()
 }
 
 typedef struct input_buf_t {
-    Bit8u buf[32+1024+320*224];
-    Bit32u spacing;
+    uint8_t buf[32+1024+320*224];
+    uint32_t spacing;
 } input_buf;
 struct {
     input_buf ibuf[2];
     int which;
 } ibufs;
-Bit8u real_sendbuf[140000];
+uint8_t real_sendbuf[140000];
 
 void RENDER_EndUpdate([[maybe_unused]] bool abort)
 {
@@ -397,14 +397,14 @@ void RENDER_EndUpdate([[maybe_unused]] bool abort)
 	}
 
         if (render.src.width==320 && render.src.height==224) {
-            Bit32u sendlen= 320*224 + 32;
-            Bit32u sendflags = 0;
-            Bit64u timebits[2];
+            uint32_t sendlen= 320*224 + 32;
+            uint32_t sendflags = 0;
+            uint64_t timebits[2];
             if (render.pal.changed) {
                 sendlen += 1024;
                 sendflags |= 1;
             }
-            Bit8u *sendbuf = ibufs.ibuf[ibufs.which].buf;
+            uint8_t *sendbuf = ibufs.ibuf[ibufs.which].buf;
             ibufs.which = !ibufs.which;
             memcpy(sendbuf, &sendflags, 4);
             if (sendflags & 1)

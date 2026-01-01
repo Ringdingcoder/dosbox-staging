@@ -246,9 +246,9 @@ struct kbd_event_exchange {
     SDL_cond *cond;
     int state;                  // 0 .. keyup, 1 .. keydown
     int turn;                   // 0 .. receiver's turn, else sender's turn
-    Bit8u scancode;
-    Bit32u sym;
-    Bit16u mod;
+    uint8_t scancode;
+    uint32_t sym;
+    uint16_t mod;
 };
 
 extern kbd_event_exchange globl_kbd_exchange;
