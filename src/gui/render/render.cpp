@@ -396,7 +396,8 @@ void RENDER_EndUpdate([[maybe_unused]] bool abort)
 		CAPTURE_AddFrame(image, frames_per_second);
 	}
 
-        if (render.src.width==320 && render.src.height==224) {
+        if (render.src.width==320 && render.src.height==448) {
+            printf("pitch %d, %d\n", (int) render.scale.cachePitch, (int) render.src.pixel_format);
             uint32_t sendlen= 320*224 + 32;
             uint32_t sendflags = 0;
             uint64_t timebits[2];
@@ -409,7 +410,7 @@ void RENDER_EndUpdate([[maybe_unused]] bool abort)
             memcpy(sendbuf, &sendflags, 4);
             if (sendflags & 1)
                 memcpy(sendbuf+32, &render.pal.rgb, 1024);
-            memcpy(sendbuf+32+(sendflags&1?1024:0), &scalerSourceCache, 320*224);
+            memcpy(sendbuf+32+(sendflags&1?1024:0), render.framebuf, 320*224);
             timespec ts;
             clock_gettime(CLOCK_REALTIME, &ts);
             timebits[0] = ts.tv_sec;

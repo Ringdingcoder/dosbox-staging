@@ -121,6 +121,8 @@ struct Render {
 	bool active    = false;
 	bool fullFrame = true;
 
+    uint8_t framebuf[320*224];
+
 	IntegerScalingMode integer_scaling_mode = {};
 };
 
