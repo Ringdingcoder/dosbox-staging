@@ -396,7 +396,7 @@ void RENDER_EndUpdate([[maybe_unused]] bool abort)
 		CAPTURE_AddFrame(image, frames_per_second);
 	}
 
-        if (render.src.width==320 && render.src.height==448) {
+        if (render.src.width==320 && (render.src.height==448 || render.src.height==224)) {
             printf("pitch %d, %d\n", (int) render.scale.cachePitch, (int) render.src.pixel_format);
             uint32_t sendlen= 320*224 + 32;
             uint32_t sendflags = 0;

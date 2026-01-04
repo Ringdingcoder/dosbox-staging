@@ -1043,9 +1043,11 @@ static void VGA_DrawPart(uint32_t lines)
     // lines_done goes from 0->447
     // parts_left opposite
 	while (lines--) {
-            if (!(vga.draw.lines_done & 1) && render.src.width==320 && render.src.height==448)
+            if ((!(vga.draw.lines_done & 1) && render.src.height==448 || render.src.height==224) && render.src.width==320) {
 
-                memcpy(render.framebuf + vga.draw.lines_done * 160, vga.draw.linear_base + vga.draw.address, 320);
+                int factor = vga.draw.image_info.double_height ? 1 : 2;
+                memcpy(render.framebuf + vga.draw.lines_done * factor * 160, vga.draw.linear_base + vga.draw.address, 320);
+            }
 		uint8_t * data=VGA_DrawLine( vga.draw.address, vga.draw.address_line );
 		ReelMagic_RENDER_DrawLine(data);
 		++vga.draw.address_line;
