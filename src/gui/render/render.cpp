@@ -143,7 +143,7 @@ static int kbd_reader_thread(void *)
             SDL_CondWait(globl_kbd_exchange.cond, globl_kbd_exchange.lock);
         globl_kbd_exchange.turn = 0;
         globl_kbd_exchange.state = buf[0];
-        globl_kbd_exchange.scancode = buf[1] + 8;
+        globl_kbd_exchange.scancode = buf[1];
         // memcpy(&globl_kbd_exchange.sym, buf+2, 4);
         // memcpy(&globl_kbd_exchange.mod, buf+6, 2);
         globl_kbd_exchange.sym = SDLK_UNKNOWN;
