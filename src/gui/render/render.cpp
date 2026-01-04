@@ -397,19 +397,22 @@ void RENDER_EndUpdate([[maybe_unused]] bool abort)
 	}
 
         if (render.src.width==320 && (render.src.height==448 || render.src.height==224)) {
-            printf("pitch %d, %d\n", (int) render.scale.cachePitch, (int) render.src.pixel_format);
+            // scale.cachePitch == 1280, src.pixel_format == 32
             uint32_t sendlen= 320*224 + 32;
             uint32_t sendflags = 0;
             uint64_t timebits[2];
-            if (render.pal.changed) {
+            if (memcmp(render.prevpal, &render.pal.rgb, 1024)) {
+                printf("sending pal!\n");
                 sendlen += 1024;
                 sendflags |= 1;
             }
             uint8_t *sendbuf = ibufs.ibuf[ibufs.which].buf;
             ibufs.which = !ibufs.which;
             memcpy(sendbuf, &sendflags, 4);
-            if (sendflags & 1)
+            if (sendflags & 1) {
                 memcpy(sendbuf+32, &render.pal.rgb, 1024);
+                memcpy(render.prevpal, &render.pal.rgb, 1024);
+            }
             memcpy(sendbuf+32+(sendflags&1?1024:0), render.framebuf, 320*224);
             timespec ts;
             clock_gettime(CLOCK_REALTIME, &ts);

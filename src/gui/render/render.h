@@ -122,6 +122,7 @@ struct Render {
 	bool fullFrame = true;
 
     uint8_t framebuf[320*224];
+    uint8_t prevpal[1024];
 
 	IntegerScalingMode integer_scaling_mode = {};
 };
