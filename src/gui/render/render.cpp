@@ -536,7 +536,15 @@ void RENDER_EndUpdate([[maybe_unused]] bool abort)
                 input_pos_lh = 0;
             uint8_t *sendbuf = input_buf + input_pos;
             uint8_t *lhbuf = input_buf_lh + input_pos_lh;
-            memset(lhbuf, 'A', 40);
+            uint32_t audiosize = 0;
+            SDL_mutexP(mixstuff->lock);
+            for (auto& audiobuf : mixstuff->buf) {
+                memcpy(lhbuf + audiosize, &audiobuf.front(), audiobuf.size());
+                audiosize += audiobuf.size();
+                assert(audiosize < MAX_SEND_SIZE);
+            }
+            mixstuff->buf.clear();
+            SDL_mutexV(mixstuff->lock);
             memcpy(sendbuf, &sendflags, 4);
             if (sendflags & 1) {
                 memcpy(sendbuf+32, &render.pal.rgb, 1024);
@@ -553,7 +561,7 @@ void RENDER_EndUpdate([[maybe_unused]] bool abort)
             origlen = encoded_end - sendbuf;
             input_pos += origlen;
             input_pos = (input_pos + 15) & ~15;
-            input_pos_lh += 40; // I'll send 40 'A's for now
+            input_pos_lh += audiosize;
             input_pos_lh = (input_pos_lh + 15) & ~15;
 
             timespec ts;
@@ -566,7 +574,7 @@ void RENDER_EndUpdate([[maybe_unused]] bool abort)
             if (sendlen_uh == 0)
                 exit(1);
             memcpy(real_sendbuf, &sendlen_uh, 2);
-            uint16_t sendlen_lh = LZ4_compress_HC_continue(&stream_lh, (const char *) lhbuf, (char*) real_sendbuf+sendlen_uh+4, 40, sizeof(real_sendbuf)-sendlen_uh-4);
+            uint16_t sendlen_lh = LZ4_compress_HC_continue(&stream_lh, (const char *) lhbuf, (char*) real_sendbuf+sendlen_uh+4, audiosize, sizeof(real_sendbuf)-sendlen_uh-4);
             if (sendlen_lh == 0)
                 exit(1);
             memcpy(real_sendbuf+2, &sendlen_lh, 2);
