@@ -120,6 +120,7 @@ struct Render {
 	bool updating  = false;
 	bool active    = false;
 	bool fullFrame = true;
+    bool was_sending = false;
 
     uint8_t framebuf[320*224];
     uint8_t prevpal[1024];

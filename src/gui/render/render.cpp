@@ -538,11 +538,12 @@ void RENDER_EndUpdate([[maybe_unused]] bool abort)
             uint8_t *lhbuf = input_buf_lh + input_pos_lh;
             uint32_t audiosize = 0;
             SDL_mutexP(mixstuff->lock);
-            for (auto& audiobuf : mixstuff->buf) {
-                memcpy(lhbuf + audiosize, &audiobuf.front(), audiobuf.size());
-                audiosize += audiobuf.size();
-                assert(audiosize < MAX_SEND_SIZE);
-            }
+            if (render.was_sending)
+                for (auto& audiobuf : mixstuff->buf) {
+                    memcpy(lhbuf + audiosize, &audiobuf.front(), audiobuf.size());
+                    audiosize += audiobuf.size();
+                    assert(audiosize < MAX_SEND_SIZE);
+                }
             mixstuff->buf.clear();
             SDL_mutexV(mixstuff->lock);
             memcpy(sendbuf, &sendflags, 4);
@@ -583,6 +584,7 @@ void RENDER_EndUpdate([[maybe_unused]] bool abort)
                 pr_error();
             if (ret != 0)
                 exit(1);
+            render.was_sending = true;
         }
 
 	GFX_EndUpdate();
