@@ -28,6 +28,7 @@
 #include "gui/render/opengl_renderer.h"
 #include "gui/render/sdl_renderer.h"
 #include "gui/titlebar.h"
+#include "hardware/input/joystick.h"
 #include "hardware/input/keyboard.h"
 #include "hardware/input/mouse.h"
 #include "hardware/timer.h"
@@ -2537,7 +2538,12 @@ bool GFX_PollAndHandleEvents()
 			break;
 
 		case SDL_QUIT: GFX_RequestExit(true); break;
-		default: MAPPER_CheckEvent(&event);
+		default:
+                    if (event.type == SDL_KEYDOWN && event.key.keysym.scancode == SDL_SCANCODE_KP_8)
+                        MAPPER_SetJ(7000);
+                    if (event.type == SDL_KEYDOWN && event.key.keysym.scancode == SDL_SCANCODE_KP_9)
+                        MAPPER_SetJ(25000);
+                    MAPPER_CheckEvent(&event);
 		}
 	}
 	return !DOSBOX_IsShutdownRequested();

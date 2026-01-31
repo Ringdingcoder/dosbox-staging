@@ -283,6 +283,7 @@ static void write_p201_timed(io_port_t, io_val_t, io_width_t)
 	// Newer calculation, derived from joycheck measurements
 	auto position_to_ticks = [&](const auto position,
 	                             const AxisRateConstants &axis_rate) {
+            printf("p %.5g -> %.5g\n", position, now + (position + 1.0) * axis_rate.scalar + axis_rate.offset);
 		return now + (position + 1.0) * axis_rate.scalar + axis_rate.offset;
 	};
 

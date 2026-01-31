@@ -88,4 +88,6 @@ constexpr int MaxBindNameLength = 100;
  */
 void MAPPER_HandleJoyDeviceEvent(SDL_JoyDeviceEvent* event);
 
+void MAPPER_SetJ(int16_t);
+
 #endif // DOSBOX_MAPPER_H

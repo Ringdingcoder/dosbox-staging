@@ -476,6 +476,12 @@ static struct {
 	bool button_pressed[MAX_VJOY_BUTTONS] = {false};
 } virtual_joysticks[2];
 
+void MAPPER_SetJ(int16_t v)
+{
+    printf("setting J %d\n", (int) v);
+    virtual_joysticks[0].axis_pos[0] = v;
+}
+
 
 class CJAxisBind;
 class CJButtonBind;
