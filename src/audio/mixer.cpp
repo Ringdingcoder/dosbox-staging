@@ -2549,7 +2549,7 @@ static void mix_samples(const int frames_requested)
                 mixer.output_buffer[i+1].right +
                 mixer.output_buffer[i+2].right +
                 mixer.output_buffer[i+3].right;
-            sbuf.push_back((uint8_t) (int) v / 256 / 8 + 128);
+            sbuf.push_back((uint8_t) (int) (v / 256 / 8) + 128);
         }
 
         SDL_mutexP(sendfeed.lock);
