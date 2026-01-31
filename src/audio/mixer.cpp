@@ -212,6 +212,13 @@ struct MixerSettings {
 
 static struct MixerSettings mixer = {};
 
+static struct mixer_send_feed sendfeed;
+
+mixer_send_feed *MIXER_GetFeed()
+{
+    return &sendfeed;
+}
+
 [[maybe_unused]] static const char* to_string(const ResampleMethod m)
 {
 	switch (m) {
@@ -2530,6 +2537,26 @@ static void mix_samples(const int frames_requested)
 		mixer.capture_queue.NonblockingBulkEnqueue(mixer.capture_buffer);
 	}
 
+        send_audio_block sbuf;
+        sbuf.reserve(mixer.output_buffer.size()/4);
+
+        for (int i=0; i<mixer.output_buffer.size(); i+=4) {
+            float v = mixer.output_buffer[i].left +
+                mixer.output_buffer[i+1].left +
+                mixer.output_buffer[i+2].left +
+                mixer.output_buffer[i+3].left +
+                mixer.output_buffer[i].right +
+                mixer.output_buffer[i+1].right +
+                mixer.output_buffer[i+2].right +
+                mixer.output_buffer[i+3].right;
+            sbuf.push_back((uint8_t) (int) v / 256 / 8 + 128);
+        }
+
+        SDL_mutexP(sendfeed.lock);
+        sendfeed.buf.push_back(send_audio_block());
+        sendfeed.buf.back().swap(sbuf);
+        SDL_mutexV(sendfeed.lock);
+
 	// Normalize the final output before sending to SDL
 	for (auto& frame : mixer.output_buffer) {
 		frame.left  = normalize_sample(frame.left);
@@ -2981,6 +3008,8 @@ void MIXER_Init()
 	MIXER_SetCrossfeedPreset(new_crossfeed_preset);
 
 	MIXER_UnlockMixerThread();
+
+        sendfeed.lock = SDL_CreateMutex();
 }
 
 void MIXER_Destroy()

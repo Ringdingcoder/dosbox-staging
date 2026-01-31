@@ -21,6 +21,7 @@
 
 #include <lz4hc.h>
 
+#include "audio/mixer.h"
 #include "capture/capture.h"
 #include "config/config.h"
 #include "config/setup.h"
@@ -49,7 +50,7 @@ static void pr_error()
 }
 
 static int sock, sock_kbd;
-LZ4_streamHC_t stream_uh;
+LZ4_streamHC_t stream_uh, stream_lh;
 
 static bool sock_init(int *sock, int port)
 {
@@ -95,6 +96,10 @@ static bool send_init()
     LZ4_streamHC_t *streamt = LZ4_initStreamHC(&stream_uh, sizeof(stream_uh));
     assert(streamt == &stream_uh);
     LZ4_resetStreamHC_fast(&stream_uh, 9);
+
+    streamt = LZ4_initStreamHC(&stream_lh, sizeof(stream_lh));
+    assert(streamt == &stream_lh);
+    LZ4_resetStreamHC_fast(&stream_lh, 9);
 
     return true;
 }
@@ -516,6 +521,7 @@ void RENDER_EndUpdate([[maybe_unused]] bool abort)
 	}
 
         if (render.src.width==320 && (render.src.height==448 || render.src.height==224)) {
+            mixer_send_feed *mixstuff = MIXER_GetFeed();
             // scale.cachePitch == 1280, src.pixel_format == 32
             uint32_t sendflags = 0;
             uint64_t timebits[2];
@@ -549,13 +555,14 @@ void RENDER_EndUpdate([[maybe_unused]] bool abort)
             timebits[0] = ts.tv_sec;
             timebits[1] = ts.tv_nsec;
             memcpy(sendbuf+8, timebits, sizeof(timebits));
+            memset(sendbuf+24, 0, 8); // 8 bytes free
             uint16_t sendlen_uh = LZ4_compress_HC_continue(&stream_uh, (const char *) sendbuf, (char*) real_sendbuf+4, origlen, sizeof(real_sendbuf)-4);
             if (sendlen_uh == 0)
                 exit(1);
             memcpy(real_sendbuf, &sendlen_uh, 2);
             uint16_t sendlen_lh = 0;
             memcpy(real_sendbuf+2, &sendlen_lh, 2);
-            int ret = complete_write(sock, (const char*) real_sendbuf, (unsigned) sendlen_uh+4);
+            int ret = complete_write(sock, (const char*) real_sendbuf, (unsigned) sendlen_uh+sendlen_lh+4);
             if (ret < 0)
                 pr_error();
             if (ret != 0)
