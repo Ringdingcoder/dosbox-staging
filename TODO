@@ -1,4 +1,6 @@
 - headless
+- copyless reuse of partially consumed audio buffers
+- drop superfluous audio buffers
 - integrate it using config options
 - integrate remote display into dosbox
 - multiple connections
