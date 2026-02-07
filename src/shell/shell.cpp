@@ -16,7 +16,9 @@
 #include "cpu/registers.h"
 #include "dos/programs/more_output.h"
 #include "dos/programs/setver.h"
+#include "gui/common.h"
 #include "gui/mapper.h"
+#include "gui/render/render.h"
 #include "hardware/timer.h"
 #include "misc/support.h"
 #include "shell/autoexec.h"
@@ -1363,4 +1365,18 @@ void SHELL_InitAndRun()
 	first_shell->Run();
 	delete first_shell;
 	first_shell = nullptr; // Make clear that it shouldn't be used anymore
+}
+
+void SHELL_AlternativeRun()
+{
+    ImageInfo image_info;
+    image_info.width = 320;
+    image_info.height = 224;
+    image_info.pixel_aspect_ratio = Fraction(1, 1);
+    image_info.pixel_format = PixelFormat::BGRX32_ByteArray;
+    image_info.video_mode.pixel_aspect_ratio = Fraction(1, 1);
+    RENDER_SetSize(image_info, 60.);
+    for (;;) {
+        GFX_AlternatePresent();
+    }
 }

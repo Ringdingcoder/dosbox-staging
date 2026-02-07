@@ -687,7 +687,8 @@ int main(int argc, char* argv[])
 		}
 
 		// Start emulation
-		SHELL_InitAndRun();
+		SHELL_AlternativeRun();
+                // SHELL_InitAndRun();
 
 		// Shutdown and release
 		DOSBOX_DestroyModules();

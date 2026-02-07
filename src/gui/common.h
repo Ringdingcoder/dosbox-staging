@@ -43,6 +43,7 @@ double GFX_GetHostRefreshRate();
 PresentationMode GFX_GetPresentationMode();
 
 void GFX_MaybePresentFrame();
+void GFX_AlternatePresent();
 
 bool GFX_PollAndHandleEvents();
 
