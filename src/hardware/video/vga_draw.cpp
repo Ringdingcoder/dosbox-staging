@@ -19,6 +19,7 @@
 #include "hardware/video/reelmagic/reelmagic.h"
 #include "ints/int10.h"
 #include "misc/video.h"
+#include "shell/shell.h"
 #include "utils/bitops.h"
 #include "utils/math_utils.h"
 #include "utils/mem_unaligned.h"
@@ -2947,6 +2948,8 @@ static const int SCREEN_HEIGHT = 448;
 
 void fix_image_info(ImageInfo& image_info)
 {
+    if (!shell_isaccepter)
+        return;
     image_info.width = SCREEN_WIDTH/2;
     image_info.height = SCREEN_HEIGHT;
     image_info.double_width = true;
