@@ -1635,6 +1635,8 @@ void SHELL_AlternativeRun()
     if (sock_kbd_comm < 0)
         return;
 
+    shell_networkinit = true;
+
     stream_uh = LZ4_createStreamDecode();
     stream_lh = LZ4_createStreamDecode();
     initPalette();
