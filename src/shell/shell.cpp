@@ -1670,9 +1670,20 @@ void SHELL_AlternativeRun()
             }
 
             case SDL_KEYDOWN:
+            case SDL_KEYUP:
             {
-                if (e.key.keysym.scancode == SDL_SCANCODE_RETURN && e.key.keysym.mod & KMOD_ALT)
+                if (e.type == SDL_KEYDOWN && e.key.keysym.scancode == SDL_SCANCODE_RETURN && e.key.keysym.mod & KMOD_ALT)
                     toggle_fullscreen();
+                else if (!e.key.repeat) {
+                    uint8_t buf[8];
+                    buf[0] = e.type == SDL_KEYDOWN;
+                    buf[1] = e.key.keysym.scancode;
+                    memcpy(buf+2, &e.key.keysym.sym, 4);
+                    memcpy(buf+6, &e.key.keysym.mod, 2);
+                    if (complete_write(sock_kbd_comm, (char*) buf, 8))
+                        quit = true;
+                    printf("wrote kbd event!\n");
+                }
                 break;
             }
             }
