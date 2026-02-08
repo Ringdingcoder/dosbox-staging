@@ -1573,7 +1573,7 @@ static int listen_prepare(int port)
     memset(&servaddr, 0, sizeof(servaddr));
 
     servaddr.sin_family = AF_INET;
-    servaddr.sin_addr.s_addr = 0x0100007f;
+    servaddr.sin_addr.s_addr = 0;
     servaddr.sin_port = htons(port);
 
     if (bind(sock, (struct sockaddr *) &servaddr, sizeof(servaddr)) != 0) {
