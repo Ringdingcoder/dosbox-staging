@@ -687,8 +687,12 @@ int main(int argc, char* argv[])
 		}
 
 		// Start emulation
-		SHELL_AlternativeRun();
-                // SHELL_InitAndRun();
+                if (shell_isaccepter) {
+                    SHELL_AlternativeRun();
+                    if (!shell_networkinit)
+                        printf("network init error!\n");
+                } else
+                    SHELL_InitAndRun();
 
 		// Shutdown and release
 		DOSBOX_DestroyModules();

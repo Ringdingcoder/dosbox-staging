@@ -11,6 +11,16 @@
 #include <memory>
 #include <regex>
 
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+#include <arpa/inet.h>
+
+#include <lz4.h>
+
+#include <vector>
+#include <deque>
+
 #include "config/config.h"
 #include "cpu/callback.h"
 #include "cpu/registers.h"
@@ -1367,6 +1377,241 @@ void SHELL_InitAndRun()
 	first_shell = nullptr; // Make clear that it shouldn't be used anymore
 }
 
+static void pr_error(const char *s)
+{
+    char buf[1024];
+    char *err = strerror_r(errno, buf, 1024);
+    fprintf(stderr, "Error %s: %s\n", s, err);
+}
+
+//Screen dimension constants
+const int SCREEN_WIDTH = 640;
+const int SCREEN_HEIGHT = 448;
+
+static LZ4_streamDecode_t *stream_uh, *stream_lh;
+SDL_AudioDeviceID adev;
+
+typedef std::vector<uint8_t> send_audio_block;
+static std::deque<send_audio_block> aqueue;
+
+static void translateInplace(uint8_t *blt, int dx, int dy)
+{
+    if (!dy && !dx)
+        return;
+    if (dy > 0) {
+        // lines from bottom to top
+        int loffsTgt = 320*223;
+        int loffsSrc = loffsTgt - 320*dy;
+        for (int y=223; y>=dy; y--) {
+            if (dx > 0) {
+                // move right
+                memcpy(blt + loffsTgt + dx, blt + loffsSrc, 320 - dx);
+            } else {
+                memcpy(blt + loffsTgt, blt + loffsSrc - dx, 320 + dx);
+            }
+            loffsTgt -= 320;
+            loffsSrc -= 320;
+        }
+    } else {
+        int loffsTgt = 0;
+        int loffsSrc = -320*dy;
+        for (int y=0; y<224+dy; y++) {
+            if (dx > 0) {
+                // move right
+                memmove(blt + loffsTgt + dx, blt + loffsSrc, 320 - dx);
+            } else {
+                memmove(blt + loffsTgt, blt + loffsSrc - dx, 320 + dx);
+            }
+            loffsTgt += 320;
+            loffsSrc += 320;
+        }
+    }
+}
+
+static int decode_diff(uint8_t *tgt, uint8_t *src)
+{
+    int input_latch;
+    int input_shift = 0;
+    int input_blockval;
+    int input_blockpos = 0;
+    uint8_t *pixsrc = src + 320*224/64;
+
+    for (int i=0; i<320*224; i++) {
+        if (input_blockpos == 0) {
+            if (input_shift == 0)
+                input_latch = *src++;
+            input_blockval = input_latch & 0x80;
+            input_latch <<= 1;
+            input_shift = (input_shift+1) & 7;
+        }
+        input_blockpos = (input_blockpos+1) & 7;
+        if (input_blockval)
+            *tgt = *pixsrc++;
+        tgt++;
+    }
+    return pixsrc - src;
+}
+
+static void audio_callback(void *_userdata, Uint8 *stream, int todo)
+{
+    while (todo) {
+        if (aqueue.empty()) {
+            printf("gap!\n");
+            memset(stream, 128, todo);
+            return;
+        }
+        send_audio_block &abuf(aqueue.front());
+        int bsize = abuf.size();
+        int use_size = bsize <= todo ? bsize : todo;
+        memcpy(stream, &abuf.front(), use_size);
+        // for (int i=0; i<use_size; i++)
+        //     printf("%d ", stream[i]);
+        // printf("\n");
+        stream += use_size;
+        todo -= use_size;
+        if (bsize > use_size) {
+            memmove(&abuf.front(), &abuf.front() + use_size, bsize - use_size);
+            abuf.resize(bsize - use_size);
+        } else
+            aqueue.pop_front();
+    }
+}
+
+static uint32_t lut[256];
+static uint8_t *pix8;
+
+static void initPalette()
+{
+    pix8 = (uint8_t*) malloc(SCREEN_WIDTH*SCREEN_HEIGHT/4);
+    memset(pix8, 0, SCREEN_WIDTH*SCREEN_HEIGHT/4);
+    for (int i=0; i<256; i++)
+        lut[i] = (i << 16) | (i << 8) | i | 0xff000000;
+}
+
+static void updatePal(const char *p)
+{
+    uint32_t *rgb = (uint32_t*) p;
+    for (int i=0; i<256; i++) {
+        uint32_t palv = rgb[i];
+        unsigned r = palv & 0xff;
+        unsigned b = (palv >> 16) & 0xff;
+        lut[i] = palv & 0xff00 | (r << 16) | b | 0xff000000;
+    }
+}
+
+static void drawPixels(void *pixels)
+{
+    uint8_t *p8 = pix8;
+    uint32_t *pd= (uint32_t*) pixels;
+    for (int y=0; y<SCREEN_HEIGHT/2; y++) {
+        uint8_t *pt8 = p8;
+        for (int j=0; j<2; j++) {
+            p8 = pt8;
+            for (int x=0; x<SCREEN_WIDTH/2; x++) {
+                uint32_t pixval = lut[*p8++];
+                *pd++ = pixval;
+                *pd++ = pixval;
+            }
+        }
+    }
+}
+
+static int complete_read(int fd, char *buf, size_t count)
+{
+    int ret;
+    while (count) {
+        ret = read(fd, buf, count);
+        if (ret < 0)
+            return ret;
+        if (ret == 0)
+            return count;
+        buf += ret;
+        count -= ret;
+    }
+    return 0;
+}
+
+static int complete_write(int fd, const char *buf, size_t count)
+{
+    int ret;
+    while (count) {
+        ret = write(fd, buf, count);
+        if (ret < 0)
+            return ret;
+        if (ret == 0)
+            return count;
+        buf += ret;
+        count -= ret;
+    }
+    return 0;
+}
+
+
+constexpr int MAX_SEND_SIZE = 32 + 1024 + 320*224 + 320*224/64; // must be larger than 64kb window size for lz4!
+
+static uint8_t decomp_buf[3*MAX_SEND_SIZE], decomp_buf_lh[3*MAX_SEND_SIZE];
+static int decomp_pos, decomp_pos_lh;
+static char real_sendbuf[140000];
+
+static int listen_prepare(int port)
+{
+    int sock;
+    struct sockaddr_in servaddr;
+    int val = 1;
+
+    sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) {
+        pr_error("socket");
+        return -1;
+    }
+
+    if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &val, sizeof(val)) != 0) {
+        pr_error("setsockopt");
+        return -1;
+    }
+
+    memset(&servaddr, 0, sizeof(servaddr));
+
+    servaddr.sin_family = AF_INET;
+    servaddr.sin_addr.s_addr = 0x0100007f;
+    servaddr.sin_port = htons(port);
+
+    if (bind(sock, (struct sockaddr *) &servaddr, sizeof(servaddr)) != 0) {
+        pr_error("bind");
+        return -1;
+    }
+
+    if (listen(sock, 128) != 0) {
+        pr_error("listen");
+        return -1;
+    }
+
+    return sock;
+}
+
+static int full_accept(int sock)
+{
+    struct sockaddr_in servaddr;
+    socklen_t addrlen = sizeof(servaddr);
+    int sock_comm = accept4(sock, (struct sockaddr *) &servaddr, &addrlen, SOCK_CLOEXEC);
+
+    if (sock_comm < 0) {
+        pr_error("accept");
+        return sock_comm;
+    }
+
+    int delayval = 1;
+    if (setsockopt(sock_comm, IPPROTO_TCP, TCP_NODELAY, &delayval, sizeof(int)) < 0) {
+        pr_error("nodelay");
+        return -1;
+    }
+
+    return sock_comm;
+}
+
+bool shell_isaccepter = true;
+bool shell_networkinit;
+
 void SHELL_AlternativeRun()
 {
     ImageInfo image_info;
@@ -1376,7 +1621,120 @@ void SHELL_AlternativeRun()
     image_info.pixel_format = PixelFormat::BGRX32_ByteArray;
     image_info.video_mode.pixel_aspect_ratio = Fraction(1, 1);
     RENDER_SetSize(image_info, 60.);
-    for (;;) {
-        GFX_AlternatePresent();
+
+    shell_networkinit = false;
+
+    int sock_comm = listen_prepare(5677);
+    if (sock_comm < 0)
+        return;
+
+    int sock_kbd_comm = listen_prepare(5678);
+    if (sock_kbd_comm < 0)
+        return;
+
+    sock_comm = full_accept(sock_comm);
+    if (sock_comm < 0)
+        return;
+
+    sock_kbd_comm = full_accept(sock_kbd_comm);
+    if (sock_kbd_comm < 0)
+        return;
+
+    stream_uh = LZ4_createStreamDecode();
+    stream_lh = LZ4_createStreamDecode();
+
+    bool quit = false;
+    while (!quit) {
+        SDL_Event e;
+
+        while( SDL_PollEvent( &e ) != 0 )
+        {
+            if( e.type == SDL_QUIT )
+            {
+                quit = true;
+            }
+        }
+
+        uint8_t *pixels;
+        int pitch;
+
+        if (complete_read(sock_comm, real_sendbuf, 16)) {
+            quit = true;
+            continue;
+        }
+        uint16_t sendlen_uh, sendlen_lh;
+        uint32_t sendflags;
+        memcpy(&sendlen_uh, real_sendbuf, 2);
+        memcpy(&sendlen_lh, real_sendbuf+2, 2);
+        assert((unsigned) sendlen_uh+sendlen_lh >= 12);
+        if (complete_read(sock_comm, real_sendbuf+16, (unsigned) sendlen_uh+sendlen_lh-12))
+        {
+            quit = true;
+            continue;
+        }
+        if (decomp_pos >= 2*MAX_SEND_SIZE)
+            decomp_pos = 0;
+        if (decomp_pos_lh >= 2*MAX_SEND_SIZE)
+            decomp_pos_lh = 0;
+        uint8_t *decompbuf = decomp_buf + decomp_pos;
+        uint8_t *lhbuf = decomp_buf_lh + decomp_pos_lh;
+        uint8_t *picbuf = decompbuf + 32;
+        int decompsize = LZ4_decompress_safe_continue(stream_uh, real_sendbuf+4, (char*) decompbuf, sendlen_uh, MAX_SEND_SIZE);
+        decomp_pos += decompsize;
+        decomp_pos = (decomp_pos + 15) & ~15;
+        decompsize = LZ4_decompress_safe_continue(stream_lh, real_sendbuf+sendlen_uh+4, (char*) lhbuf, sendlen_lh, MAX_SEND_SIZE);
+        decomp_pos_lh += decompsize;
+        decomp_pos_lh = (decomp_pos_lh + 15) & ~15;
+        if (decompsize)
+            aqueue.push_back(send_audio_block(lhbuf, lhbuf+decompsize));
+        memcpy(&sendflags, decompbuf, 4);
+        int16_t translate_x, translate_y;
+        memcpy(&translate_x, decompbuf+4, 2);
+        memcpy(&translate_y, decompbuf+6, 2);
+        if (sendflags & 1) {
+            updatePal((const char *) picbuf);
+            picbuf += 1024;
+        }
+        translateInplace(pix8, translate_x, translate_y);
+        int pixbuf_consumed = decode_diff(pix8, picbuf);
+        timespec ts;
+        clock_gettime(CLOCK_REALTIME, &ts);
+        uint64_t timebits[2];
+        memcpy(timebits, decompbuf+8, sizeof(timebits));
+        double theirtime = timebits[0] + timebits[1] / 1000000000.;
+        double ourtime = ts.tv_sec + ts.tv_nsec / 1000000000.;
+        static double delay_avg = 0.;
+        static int delaycnt;
+        static int compsize;
+        static int samplecnt;
+        static int dumpnextsample;
+        delay_avg = (delay_avg * 3 + (ourtime-theirtime)) / 4;
+        compsize += (unsigned) sendlen_uh + sendlen_lh;
+        if (dumpnextsample) {
+            FILE *f = fopen("nextpicdump.dat", "w");
+            fwrite(pixels, 320*224, 1, f);
+            fclose(f);
+            printf("dumped! ---------------\n");
+            dumpnextsample = 0;
+        }
+        if (++delaycnt >= 5) {
+            printf("delay %.3f, compsize %d\n", delay_avg*1000., compsize/5);
+            if (compsize >= 100000 && compsize <= 120000 && samplecnt < 100) {
+                if (++samplecnt == 100) {
+                    dumpnextsample = 1;
+                    FILE *f = fopen("picdump.dat", "w");
+                    fwrite(pixels, 320*224, 1, f);
+                    fclose(f);
+                }
+            }
+            delaycnt = 0;
+            compsize = 0;
+        }
+        assert(!quit);
+        drawPixels(pixels);
+
+        if (!GFX_StartUpdate(pixels, pitch))
+            continue;
+        GFX_EndUpdate();
     }
 }

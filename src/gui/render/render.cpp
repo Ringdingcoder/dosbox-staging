@@ -50,7 +50,7 @@ static void pr_error()
 }
 
 static int sock, sock_kbd;
-LZ4_streamHC_t stream_uh, stream_lh;
+static LZ4_streamHC_t stream_uh, stream_lh;
 
 static bool sock_init(int *sock, int port)
 {
@@ -520,7 +520,7 @@ void RENDER_EndUpdate([[maybe_unused]] bool abort)
 		CAPTURE_AddFrame(image, frames_per_second);
 	}
 
-        if (render.src.width==320 && (render.src.height==448 || render.src.height==224)) {
+        if (!shell_isaccepter && render.src.width==320 && (render.src.height==448 || render.src.height==224)) {
             mixer_send_feed *mixstuff = MIXER_GetFeed();
             // scale.cachePitch == 1280, src.pixel_format == 32
             uint32_t sendflags = 0;
@@ -1816,8 +1816,9 @@ void RENDER_SyncMonochromePaletteSetting(const enum MonochromePalette palette)
 
 void RENDER_Init()
 {
-    if (!send_init())
-        exit(1);
+    if (!shell_isaccepter)
+        if (!send_init())
+            exit(1);
 
     memset(prevScreen, 0, 320*224);
 
