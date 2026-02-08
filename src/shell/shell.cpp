@@ -1653,6 +1653,25 @@ void SHELL_AlternativeRun()
     stream_lh = LZ4_createStreamDecode();
     initPalette();
 
+    SDL_AudioInit(nullptr);
+
+    SDL_AudioSpec want, have;
+    SDL_zero(want);
+    want.freq = 12000;
+    want.format = AUDIO_U8;
+    want.channels = 1;
+    want.samples = 256;
+    want.callback = audio_callback;
+    want.userdata = nullptr;
+    // Instead of the callback, I could use SDL_QueueAudio!
+    adev = SDL_OpenAudioDevice(NULL, 0, &want, &have, 0);
+    if (!adev) {
+        fprintf(stderr, "open audio\n");
+        return;
+    }
+    printf("samples: %d\n", have.samples);
+    SDL_PauseAudioDevice(adev, 0);
+
     bool quit = false;
     while (!quit) {
         SDL_Event e;
