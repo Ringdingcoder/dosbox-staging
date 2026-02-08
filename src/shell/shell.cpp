@@ -1385,8 +1385,8 @@ static void pr_error(const char *s)
 }
 
 //Screen dimension constants
-const int SCREEN_WIDTH = 640;
-const int SCREEN_HEIGHT = 448;
+const int SCREEN_WIDTH = 320;
+const int SCREEN_HEIGHT = 224;
 
 static LZ4_streamDecode_t *stream_uh, *stream_lh;
 SDL_AudioDeviceID adev;
@@ -1482,8 +1482,8 @@ static uint8_t *pix8;
 
 static void initPalette()
 {
-    pix8 = (uint8_t*) malloc(SCREEN_WIDTH*SCREEN_HEIGHT/4);
-    memset(pix8, 0, SCREEN_WIDTH*SCREEN_HEIGHT/4);
+    pix8 = (uint8_t*) malloc(SCREEN_WIDTH*SCREEN_HEIGHT);
+    memset(pix8, 0, SCREEN_WIDTH*SCREEN_HEIGHT);
     for (int i=0; i<256; i++)
         lut[i] = (i << 16) | (i << 8) | i | 0xff000000;
 }
@@ -1503,11 +1503,11 @@ static void drawPixels(void *pixels)
 {
     uint8_t *p8 = pix8;
     uint32_t *pd= (uint32_t*) pixels;
-    for (int y=0; y<SCREEN_HEIGHT/2; y++) {
+    for (int y=0; y<SCREEN_HEIGHT; y++) {
         uint8_t *pt8 = p8;
         for (int j=0; j<2; j++) {
             p8 = pt8;
-            for (int x=0; x<SCREEN_WIDTH/2; x++) {
+            for (int x=0; x<SCREEN_WIDTH; x++) {
                 uint32_t pixval = lut[*p8++];
                 *pd++ = pixval;
                 *pd++ = pixval;
@@ -1642,6 +1642,7 @@ void SHELL_AlternativeRun()
 
     stream_uh = LZ4_createStreamDecode();
     stream_lh = LZ4_createStreamDecode();
+    initPalette();
 
     bool quit = false;
     while (!quit) {
@@ -1657,6 +1658,9 @@ void SHELL_AlternativeRun()
 
         uint8_t *pixels;
         int pitch;
+
+        if (!GFX_StartUpdate(pixels, pitch))
+            continue;
 
         if (complete_read(sock_comm, real_sendbuf, 16)) {
             quit = true;
@@ -1733,8 +1737,6 @@ void SHELL_AlternativeRun()
         assert(!quit);
         drawPixels(pixels);
 
-        if (!GFX_StartUpdate(pixels, pitch))
-            continue;
         GFX_EndUpdate();
     }
 }
