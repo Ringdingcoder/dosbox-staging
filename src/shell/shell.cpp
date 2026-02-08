@@ -1385,8 +1385,8 @@ static void pr_error(const char *s)
 }
 
 //Screen dimension constants
-const int SCREEN_WIDTH = 640;
-const int SCREEN_HEIGHT = 448;
+static const int SCREEN_WIDTH = 640;
+static const int SCREEN_HEIGHT = 448;
 
 static LZ4_streamDecode_t *stream_uh, *stream_lh;
 SDL_AudioDeviceID adev;
@@ -1626,6 +1626,7 @@ void SHELL_AlternativeRun()
     image_info.video_mode.graphics_standard = GraphicsStandard::Vga;
     image_info.video_mode.is_double_scanned_mode = true;
     image_info.video_mode.pixel_aspect_ratio = Fraction(1, 1);
+    vga.draw.lines_scaled = 1;
     RENDER_SetSize(image_info, 60.);
 
     shell_networkinit = false;
@@ -1657,12 +1658,24 @@ void SHELL_AlternativeRun()
         SDL_Event e;
 
         while( SDL_PollEvent( &e ) != 0 )
-        {
-            if( e.type == SDL_QUIT )
+            switch (e.type) {
+            case SDL_QUIT:
             {
                 quit = true;
+                break;
             }
-        }
+            case SDL_WINDOWEVENT: {
+                handle_sdl_windowevent(e);
+                break;
+            }
+
+            case SDL_KEYDOWN:
+            {
+                if (e.key.keysym.scancode == SDL_SCANCODE_RETURN && e.key.keysym.mod & KMOD_ALT)
+                    toggle_fullscreen();
+                break;
+            }
+            }
 
         uint8_t *pixels;
         int pitch;

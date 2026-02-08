@@ -47,4 +47,7 @@ void GFX_AlternatePresent();
 
 bool GFX_PollAndHandleEvents();
 
+bool handle_sdl_windowevent(const SDL_Event& event);
+void toggle_fullscreen();
+
 #endif // DOSBOX_GUI_COMMON_H

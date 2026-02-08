@@ -1061,7 +1061,7 @@ static void focus_input()
 	SDL_SetWindowInputFocus(sdl.window);
 }
 
-static void toggle_fullscreen()
+void toggle_fullscreen()
 {
 	assert(sdl.renderer);
 
@@ -2155,7 +2155,7 @@ static void handle_pause_when_inactive(const SDL_Event& event)
 	}
 }
 
-static bool handle_sdl_windowevent(const SDL_Event& event)
+bool handle_sdl_windowevent(const SDL_Event& event)
 {
 	switch (event.window.event) {
 	case SDL_WINDOWEVENT_RESTORED:

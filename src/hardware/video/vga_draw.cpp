@@ -2942,6 +2942,24 @@ ImageInfo setup_drawing()
 	return img_info;
 }
 
+static const int SCREEN_WIDTH = 640;
+static const int SCREEN_HEIGHT = 448;
+
+void fix_image_info(ImageInfo& image_info)
+{
+    image_info.width = SCREEN_WIDTH/2;
+    image_info.height = SCREEN_HEIGHT;
+    image_info.double_width = true;
+    image_info.pixel_aspect_ratio = Fraction(1, 1);
+    image_info.pixel_format = PixelFormat::BGRX32_ByteArray;
+    image_info.video_mode.width = SCREEN_WIDTH/2;
+    image_info.video_mode.height = SCREEN_HEIGHT/2;
+    image_info.video_mode.is_graphics_mode = true;
+    image_info.video_mode.graphics_standard = GraphicsStandard::Vga;
+    image_info.video_mode.is_double_scanned_mode = true;
+    image_info.video_mode.pixel_aspect_ratio = Fraction(1, 1);
+}
+
 void VGA_SetupDrawing(uint32_t /*val*/)
 {
 	if (vga.mode == M_ERROR) {
@@ -2952,6 +2970,7 @@ void VGA_SetupDrawing(uint32_t /*val*/)
 	}
 
 	auto image_info = setup_drawing();
+        fix_image_info(image_info);
 
 	// need to change the vertical timing?
 	bool fps_changed = false;
@@ -2985,6 +3004,7 @@ void VGA_SetupDrawing(uint32_t /*val*/)
 
 		if (shader_changed) {
 			image_info = setup_drawing();
+                        fix_image_info(image_info);
 		}
 
 		vga.draw.image_info = image_info;
