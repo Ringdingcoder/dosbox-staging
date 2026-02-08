@@ -1504,14 +1504,9 @@ static void drawPixels(void *pixels)
     uint8_t *p8 = pix8;
     uint32_t *pd= (uint32_t*) pixels;
     for (int y=0; y<SCREEN_HEIGHT; y++) {
-        uint8_t *pt8 = p8;
-        for (int j=0; j<2; j++) {
-            p8 = pt8;
-            for (int x=0; x<SCREEN_WIDTH; x++) {
-                uint32_t pixval = lut[*p8++];
-                *pd++ = pixval;
-                *pd++ = pixval;
-            }
+        for (int x=0; x<SCREEN_WIDTH; x++) {
+            uint32_t pixval = lut[*p8++];
+            *pd++ = pixval;
         }
     }
 }
