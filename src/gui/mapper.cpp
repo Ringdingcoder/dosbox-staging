@@ -479,7 +479,8 @@ static struct {
 static struct {
     bool left_pressed;
     bool right_pressed;
-    bool button_pressed;
+    bool button0_pressed;
+    bool button1_pressed;
 } fake_joy[2];
 
 
@@ -2664,7 +2665,11 @@ void MAPPER_CheckEvent(SDL_Event *event)
                 update = true;
                 break;
             case SDL_SCANCODE_A:
-                fake_joy[0].button_pressed = event->type == SDL_KEYDOWN;
+                fake_joy[0].button0_pressed = event->type == SDL_KEYDOWN;
+                update = true;
+                break;
+            case SDL_SCANCODE_S:
+                fake_joy[0].button1_pressed = event->type == SDL_KEYDOWN;
                 update = true;
                 break;
             case SDL_SCANCODE_SEMICOLON:
@@ -2676,7 +2681,7 @@ void MAPPER_CheckEvent(SDL_Event *event)
                 update = true;
                 break;
             case SDL_SCANCODE_COMMA:
-                fake_joy[1].button_pressed = event->type == SDL_KEYDOWN;
+                fake_joy[1].button0_pressed = event->type == SDL_KEYDOWN;
                 update = true;
                 break;
             default:
@@ -2687,11 +2692,12 @@ void MAPPER_CheckEvent(SDL_Event *event)
                 virtual_joysticks[0].axis_pos[0] =
                     fake_joy[0].left_pressed == fake_joy[0].right_pressed ?
                     16384 : (fake_joy[0].left_pressed ? 0 : 32767);
-                virtual_joysticks[0].button_pressed[0] = fake_joy[0].button_pressed;
+                virtual_joysticks[0].button_pressed[0] = fake_joy[0].button0_pressed;
+                virtual_joysticks[0].button_pressed[1] = fake_joy[0].button1_pressed;
                 virtual_joysticks[1].axis_pos[0] =
                     fake_joy[1].left_pressed == fake_joy[1].right_pressed ?
                     16384 : (fake_joy[1].left_pressed ? 0 : 32767);
-                virtual_joysticks[1].button_pressed[0] = fake_joy[1].button_pressed;
+                virtual_joysticks[1].button_pressed[0] = fake_joy[1].button0_pressed;
                 printf("set j %d %d\n", virtual_joysticks[1].axis_pos[0], virtual_joysticks[1].button_pressed[0]);
             }
         }
