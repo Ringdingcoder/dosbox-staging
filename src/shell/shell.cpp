@@ -1385,8 +1385,8 @@ static void pr_error(const char *s)
 }
 
 //Screen dimension constants
-const int SCREEN_WIDTH = 320;
-const int SCREEN_HEIGHT = 224;
+const int SCREEN_WIDTH = 640;
+const int SCREEN_HEIGHT = 448;
 
 static LZ4_streamDecode_t *stream_uh, *stream_lh;
 SDL_AudioDeviceID adev;
@@ -1482,8 +1482,8 @@ static uint8_t *pix8;
 
 static void initPalette()
 {
-    pix8 = (uint8_t*) malloc(SCREEN_WIDTH*SCREEN_HEIGHT);
-    memset(pix8, 0, SCREEN_WIDTH*SCREEN_HEIGHT);
+    pix8 = (uint8_t*) malloc(SCREEN_WIDTH*SCREEN_HEIGHT/4);
+    memset(pix8, 0, SCREEN_WIDTH*SCREEN_HEIGHT/4);
     for (int i=0; i<256; i++)
         lut[i] = (i << 16) | (i << 8) | i | 0xff000000;
 }
@@ -1503,10 +1503,15 @@ static void drawPixels(void *pixels)
 {
     uint8_t *p8 = pix8;
     uint32_t *pd= (uint32_t*) pixels;
-    for (int y=0; y<SCREEN_HEIGHT; y++) {
-        for (int x=0; x<SCREEN_WIDTH; x++) {
-            uint32_t pixval = lut[*p8++];
-            *pd++ = pixval;
+    for (int y=0; y<SCREEN_HEIGHT/2; y++) {
+        uint8_t *pt8 = p8;
+        for (int j=0; j<2; j++) {
+            p8 = pt8;
+            for (int x=0; x<SCREEN_WIDTH/2; x++) {
+                uint32_t pixval = lut[*p8++];
+                *pd++ = pixval;
+                *pd++ = pixval;
+            }
         }
     }
 }
@@ -1610,10 +1615,16 @@ bool shell_networkinit;
 void SHELL_AlternativeRun()
 {
     ImageInfo image_info;
-    image_info.width = 320;
-    image_info.height = 224;
+    image_info.width = SCREEN_WIDTH/2;
+    image_info.height = SCREEN_HEIGHT;
+    image_info.double_width = true;
     image_info.pixel_aspect_ratio = Fraction(1, 1);
     image_info.pixel_format = PixelFormat::BGRX32_ByteArray;
+    image_info.video_mode.width = SCREEN_WIDTH/2;
+    image_info.video_mode.height = SCREEN_HEIGHT/2;
+    image_info.video_mode.is_graphics_mode = true;
+    image_info.video_mode.graphics_standard = GraphicsStandard::Vga;
+    image_info.video_mode.is_double_scanned_mode = true;
     image_info.video_mode.pixel_aspect_ratio = Fraction(1, 1);
     RENDER_SetSize(image_info, 60.);
 
