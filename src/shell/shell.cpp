@@ -1391,7 +1391,19 @@ static const int SCREEN_HEIGHT = 448;
 static LZ4_streamDecode_t *stream_uh, *stream_lh;
 SDL_AudioDeviceID adev;
 
-typedef std::vector<uint8_t> send_audio_block;
+struct send_audio_block {
+    std::vector<uint8_t> data;
+    int startpos;
+
+    send_audio_block(const uint8_t *begin, const uint8_t *end);
+};
+
+send_audio_block::send_audio_block(const uint8_t *begin, const uint8_t *end):
+    data(begin, end),
+    startpos(0)
+{
+}
+
 static std::deque<send_audio_block> aqueue;
 
 static void translateInplace(uint8_t *blt, int dx, int dy)
@@ -1461,17 +1473,16 @@ static void audio_callback(void *_userdata, Uint8 *stream, int todo)
             return;
         }
         send_audio_block &abuf(aqueue.front());
-        int bsize = abuf.size();
+        int bsize = abuf.data.size() - abuf.startpos;
         int use_size = bsize <= todo ? bsize : todo;
-        memcpy(stream, &abuf.front(), use_size);
+        memcpy(stream, &abuf.data.front() + abuf.startpos, use_size);
         // for (int i=0; i<use_size; i++)
         //     printf("%d ", stream[i]);
         // printf("\n");
         stream += use_size;
         todo -= use_size;
         if (bsize > use_size) {
-            memmove(&abuf.front(), &abuf.front() + use_size, bsize - use_size);
-            abuf.resize(bsize - use_size);
+            abuf.startpos += use_size;
         } else
             aqueue.pop_front();
     }
