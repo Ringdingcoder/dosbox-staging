@@ -685,6 +685,7 @@ int main(int argc, char* argv[])
 		if (arguments->startmapper) {
 			MAPPER_DisplayUI();
 		}
+                shell_isaccepter = get_sdl_section()->GetBool("client_mode");
 
 		// Start emulation
                 if (shell_isaccepter) {

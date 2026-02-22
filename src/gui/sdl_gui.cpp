@@ -2835,6 +2835,10 @@ static void init_sdl_config_settings(SectionProp& section)
 	        "variable which usually blocks the OS screensaver while the emulator is\n"
 	        "running ('auto' by default).");
 	pstring->SetValues({"auto", "allow", "block"});
+
+	pbool = section.AddBool("client_mode", OnlyAtStart, false);
+	pbool->SetHelp(
+            "Run in MM2 client mode.");
 }
 
 void GFX_AddConfigSection()

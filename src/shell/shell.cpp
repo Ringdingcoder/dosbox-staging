@@ -1620,7 +1620,7 @@ static int full_accept(int sock)
     return sock_comm;
 }
 
-bool shell_isaccepter = true;
+bool shell_isaccepter;
 bool shell_networkinit;
 
 void SHELL_AlternativeRun()
