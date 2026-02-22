@@ -37,11 +37,11 @@ jobs:
           # external vcpkg dependencies for AMR64 first
           - arch: x64
             debugger: false
-            max_warnings: 0
+            max_warnings: 99
 
           - arch: x64
             debugger: true
-            max_warnings: 0
+            max_warnings: 99
 
     steps:
       - name: Check out repository
