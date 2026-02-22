@@ -2,4 +2,5 @@
 - drop superfluous audio buffers
 - integrate it using config options
 - multiple connections
+- feed received audio into the correct audio pipeline?
 - move joystick emulation to mapper (enable mapper in receiver)
