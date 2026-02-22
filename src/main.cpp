@@ -672,6 +672,7 @@ int main(int argc, char* argv[])
 		maybe_create_resource_directories();
 
 		GFX_InitSdl();
+                shell_isaccepter = get_sdl_section()->GetBool("client_mode");
 
 		DOSBOX_InitModules();
 
@@ -685,7 +686,6 @@ int main(int argc, char* argv[])
 		if (arguments->startmapper) {
 			MAPPER_DisplayUI();
 		}
-                shell_isaccepter = get_sdl_section()->GetBool("client_mode");
 
 		// Start emulation
                 if (shell_isaccepter) {
