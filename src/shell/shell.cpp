@@ -11,10 +11,14 @@
 #include <memory>
 #include <regex>
 
+#ifdef WIN32
+#include <winsock2.h>
+#else
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <arpa/inet.h>
+#endif
 
 #include <lz4.h>
 
