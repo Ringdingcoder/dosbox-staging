@@ -8,6 +8,7 @@
     "iir1",
     "libmt32emu",
     "libpng",
+    "lz4",
     "opusfile",
     "fluidsynth",
     {
