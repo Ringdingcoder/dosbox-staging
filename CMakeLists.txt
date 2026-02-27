@@ -398,6 +398,7 @@ if (C_ALSA)
   find_package(ALSA REQUIRED)
 endif()
 pkg_check_modules(SPEEXDSP REQUIRED IMPORTED_TARGET speexdsp)
+pkg_check_modules(lz4 REQUIRED IMPORTED_TARGET liblz4)
 
 add_executable(dosbox src/main.cpp src/dosbox.cpp)
 target_include_directories(
@@ -461,6 +462,7 @@ target_link_libraries(dosbox PRIVATE
   libdosboxcommon
   $<TARGET_NAME_IF_EXISTS:SDL2::SDL2main>
   $<IF:$<TARGET_EXISTS:SDL2::SDL2>,SDL2::SDL2,SDL2::SDL2-static>
+  PkgConfig::lz4
 )
 
 # Add installation rules
