@@ -191,6 +191,7 @@ std::string format_number(const size_t num);
 std::string shorten_path(const std::string& path, const size_t max_len);
 
 extern bool shell_isaccepter;
+extern bool shell_ishost;
 extern bool shell_networkinit;
 
 void SHELL_InitAndRun();

@@ -524,7 +524,7 @@ void RENDER_EndUpdate([[maybe_unused]] bool abort)
 		CAPTURE_AddFrame(image, frames_per_second);
 	}
 
-        if (!shell_isaccepter && render.src.width==320 && (render.src.height==448 || render.src.height==224)) {
+        if (shell_ishost && render.src.width==320 && (render.src.height==448 || render.src.height==224)) {
             mixer_send_feed *mixstuff = MIXER_GetFeed();
             // scale.cachePitch == 1280, src.pixel_format == 32
             uint32_t sendflags = 0;
@@ -1820,7 +1820,7 @@ void RENDER_SyncMonochromePaletteSetting(const enum MonochromePalette palette)
 
 void RENDER_Init()
 {
-    if (!shell_isaccepter)
+    if (shell_ishost)
         if (!send_init())
             exit(1);
 

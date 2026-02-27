@@ -1625,6 +1625,7 @@ static int full_accept(int sock)
 }
 
 bool shell_isaccepter;
+bool shell_ishost;
 bool shell_networkinit;
 
 void SHELL_AlternativeRun()

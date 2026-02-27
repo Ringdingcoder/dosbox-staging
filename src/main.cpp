@@ -672,7 +672,8 @@ int main(int argc, char* argv[])
 		maybe_create_resource_directories();
 
 		GFX_InitSdl();
-                shell_isaccepter = get_sdl_section()->GetBool("client_mode");
+                shell_isaccepter = get_sdl_section()->GetString("multi_mode") == "player";
+                shell_ishost = get_sdl_section()->GetString("multi_mode") == "host";
 
 		DOSBOX_InitModules();
 

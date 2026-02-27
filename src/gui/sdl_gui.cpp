@@ -2836,9 +2836,10 @@ static void init_sdl_config_settings(SectionProp& section)
 	        "running ('auto' by default).");
 	pstring->SetValues({"auto", "allow", "block"});
 
-	pbool = section.AddBool("client_mode", OnlyAtStart, false);
-	pbool->SetHelp(
-            "Run in MM2 client mode.");
+	pstring = section.AddString("multi_mode", OnlyAtStart, "off");
+	pstring->SetValues({"host", "player", "off"});
+	pstring->SetHelp(
+            "MM2 multiplayer mode.");
 }
 
 void GFX_AddConfigSection()
