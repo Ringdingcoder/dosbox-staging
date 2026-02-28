@@ -59,9 +59,8 @@ static void pr_error()
     int wsa_error = WSAGetLastError();
     fprintf(stderr, "Socket error: %d\n", wsa_error);
 #else
-    char buf[1024];
-    char *err = strerror_r(errno, buf, 1024);
-    fprintf(stderr, "Error: %s\n", err);
+    std::string err = safe_strerror(errno);
+    fprintf(stderr, "Error: %s\n", err.c_str());
 #endif
 }
 

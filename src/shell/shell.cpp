@@ -1393,9 +1393,8 @@ static void pr_error(const char *s)
     int wsa_error = WSAGetLastError();
     fprintf(stderr, "Error %s: WSA error code %d\n", s, wsa_error);
 #else
-    char buf[1024];
-    char *err = strerror_r(errno, buf, 1024);
-    fprintf(stderr, "Error %s: %s\n", s, err);
+    std::string err = safe_strerror(errno);
+    fprintf(stderr, "Error %s: %s\n", s, err.c_str());
 #endif
 }
 
@@ -1585,7 +1584,7 @@ static int full_accept(int sock)
 {
     struct sockaddr_in servaddr;
     socklen_t addrlen = sizeof(servaddr);
-#ifdef WIN32
+#if defined(WIN32) || defined(MACOSX)
     int sock_comm = accept(sock, (struct sockaddr *) &servaddr, &addrlen);
 #else
     int sock_comm = accept4(sock, (struct sockaddr *) &servaddr, &addrlen, SOCK_CLOEXEC);
