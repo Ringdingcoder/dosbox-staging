@@ -79,7 +79,7 @@ static bool sock_init(int *sock, int port)
     }
 
     int delayval = 1;
-    if (setsockopt(*sock, IPPROTO_TCP, TCP_NODELAY, &delayval, sizeof(int)) < 0) {
+    if (setsockopt(*sock, IPPROTO_TCP, TCP_NODELAY, (const char*) &delayval, sizeof(int)) < 0) {
         pr_error();
         return false;
     }

@@ -1557,7 +1557,7 @@ static int listen_prepare(int port)
         return -1;
     }
 
-    if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &val, sizeof(val)) != 0) {
+    if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, (const char*) &val, sizeof(val)) != 0) {
         pr_error("setsockopt");
         return -1;
     }
@@ -1597,7 +1597,7 @@ static int full_accept(int sock)
     }
 
     int delayval = 1;
-    if (setsockopt(sock_comm, IPPROTO_TCP, TCP_NODELAY, &delayval, sizeof(int)) < 0) {
+    if (setsockopt(sock_comm, IPPROTO_TCP, TCP_NODELAY, (const char*) &delayval, sizeof(int)) < 0) {
         pr_error("nodelay");
         return -1;
     }
