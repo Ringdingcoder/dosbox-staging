@@ -4,6 +4,7 @@
 
 #include "shell/shell.h"
 
+#include <chrono>
 #include <cstdarg>
 #include <cstdlib>
 #include <cstring>
@@ -11,8 +12,13 @@
 #include <memory>
 #include <regex>
 
+#include <errno.h>
+
 #ifdef WIN32
 #include <winsock2.h>
+#include <ws2tcpip.h>
+// Windows doesn't define socklen_t
+typedef int socklen_t;
 #else
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -1383,14 +1389,23 @@ void SHELL_InitAndRun()
 
 static void pr_error(const char *s)
 {
+#ifdef WIN32
+    // Windows socket errors use WSAGetLastError, not errno
+    int wsa_error = WSAGetLastError();
+    fprintf(stderr, "Error %s: WSA error code %d\n", s, wsa_error);
+#else
     char buf[1024];
     char *err = strerror_r(errno, buf, 1024);
     fprintf(stderr, "Error %s: %s\n", s, err);
+#endif
 }
 
 //Screen dimension constants
 static const int SCREEN_WIDTH = 640;
 static const int SCREEN_HEIGHT = 448;
+
+// Time conversion constant
+static constexpr double NANOSECONDS_PER_SECOND = 1000000000.0;
 
 static LZ4_streamDecode_t *stream_uh, *stream_lh;
 SDL_AudioDeviceID adev;
@@ -1535,7 +1550,11 @@ static int complete_read(int fd, char *buf, size_t count)
 {
     int ret;
     while (count) {
+#ifdef WIN32
+        ret = recv(fd, buf, count, 0);
+#else
         ret = read(fd, buf, count);
+#endif
         if (ret < 0)
             return ret;
         if (ret == 0)
@@ -1550,7 +1569,11 @@ static int complete_write(int fd, const char *buf, size_t count)
 {
     int ret;
     while (count) {
+#ifdef WIN32
+        ret = send(fd, buf, count, 0);
+#else
         ret = write(fd, buf, count);
+#endif
         if (ret < 0)
             return ret;
         if (ret == 0)
@@ -1580,7 +1603,11 @@ static int listen_prepare(int port)
         return -1;
     }
 
+#ifdef WIN32
+    if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, (const char*)&val, sizeof(val)) != 0) {
+#else
     if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &val, sizeof(val)) != 0) {
+#endif
         pr_error("setsockopt");
         return -1;
     }
@@ -1608,7 +1635,11 @@ static int full_accept(int sock)
 {
     struct sockaddr_in servaddr;
     socklen_t addrlen = sizeof(servaddr);
+#ifdef WIN32
+    int sock_comm = accept(sock, (struct sockaddr *) &servaddr, &addrlen);
+#else
     int sock_comm = accept4(sock, (struct sockaddr *) &servaddr, &addrlen, SOCK_CLOEXEC);
+#endif
 
     if (sock_comm < 0) {
         pr_error("accept");
@@ -1616,7 +1647,11 @@ static int full_accept(int sock)
     }
 
     int delayval = 1;
+#ifdef WIN32
+    if (setsockopt(sock_comm, IPPROTO_TCP, TCP_NODELAY, (const char*)&delayval, sizeof(int)) < 0) {
+#else
     if (setsockopt(sock_comm, IPPROTO_TCP, TCP_NODELAY, &delayval, sizeof(int)) < 0) {
+#endif
         pr_error("nodelay");
         return -1;
     }
@@ -1768,12 +1803,14 @@ void SHELL_AlternativeRun()
         }
         translateInplace(pix8, translate_x, translate_y);
         int pixbuf_consumed = decode_diff(pix8, picbuf);
-        timespec ts;
-        clock_gettime(CLOCK_REALTIME, &ts);
+
+        // Get current time using C++ chrono (cross-platform)
+        const auto now = std::chrono::system_clock::now();
+        const double ourtime = std::chrono::duration<double>(now.time_since_epoch()).count();
+
         uint64_t timebits[2];
         memcpy(timebits, decompbuf+8, sizeof(timebits));
-        double theirtime = timebits[0] + timebits[1] / 1000000000.;
-        double ourtime = ts.tv_sec + ts.tv_nsec / 1000000000.;
+        double theirtime = timebits[0] + timebits[1] / NANOSECONDS_PER_SECOND;
         static double delay_avg = 0.;
         static int delaycnt;
         static int compsize;
