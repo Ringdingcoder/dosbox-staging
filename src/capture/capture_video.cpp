@@ -426,7 +426,7 @@ static void compress_raw_frame(const RenderedImage& image)
 void capture_video_add_frame(const RenderedImage& image, const float frames_per_second)
 {
 	const auto& src = image.params;
-	assert(src.width <= SCALER_MAXWIDTH);
+	assert(src.width <= ScalerMaxWidth);
 
 	// To reconstruct the raw image, we must skip every second row when
 	// dealing with "baked-in" double scanning.
@@ -460,9 +460,19 @@ void capture_video_add_frame(const RenderedImage& image, const float frames_per_
 
 	const auto codec_flags = (video.frames % 300 == 0) ? 1 : 0;
 
+	static uint8_t palette_data[NumVgaColors * 4] = {};
+
+	for (auto i = 0; i < NumVgaColors; ++i) {
+		const auto color = image.palette[i];
+
+		palette_data[i * 4]     = color.red;
+		palette_data[i * 4 + 1] = color.green;
+		palette_data[i * 4 + 2] = color.blue;
+	}
+
 	if (!video.codec->PrepareCompressFrame(codec_flags,
 	                                       zmbv_format,
-	                                       image.palette_data,
+	                                       palette_data,
 	                                       video.buf.data(),
 	                                       video.buf_size)) {
 		return;

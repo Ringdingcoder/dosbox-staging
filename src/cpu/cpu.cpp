@@ -280,7 +280,7 @@ void CPU_RestoreRealModeCyclesConfig()
 
 void Descriptor::Load(PhysPt address) {
 	cpu.mpl=0;
-	uint32_t* data = (uint32_t*)&saved;
+	auto data = (uint32_t*)&saved;
 	*data	  = mem_readd(address);
 	*(data+1) = mem_readd(address+4);
 	cpu.mpl=3;
@@ -288,7 +288,7 @@ void Descriptor::Load(PhysPt address) {
 
 void Descriptor::Save(PhysPt address) {
 	cpu.mpl=0;
-	uint32_t* data = (uint32_t*)&saved;
+	auto data = (uint32_t*)&saved;
 	mem_writed(address,*data);
 	mem_writed(address+4,*(data+1));
 	cpu.mpl=03;
@@ -2331,7 +2331,7 @@ void CPU_ENTER(bool use32,Bitu bytes,Bitu level) {
 		}
 	}
 	sp_index-=bytes;
-	reg_esp=(reg_esp&cpu.stack.notmask)|((sp_index)&cpu.stack.mask);
+	reg_esp=(reg_esp & cpu.stack.notmask) | (sp_index & cpu.stack.mask);
 }
 
 // Estimate the CPU speed in MHz given the amount of cycles emulated
@@ -2758,7 +2758,7 @@ public:
 		modern_cycles_config = {};
 
 		auto clamp_and_sync_cycles =
-		        [](const int cycles, const std::string& setting_name) -> int {
+		        [](const int cycles, const std::string& setting_name) {
 			if (cycles < CpuCyclesMin || cycles > CpuCyclesMax) {
 				const auto new_cycles = clamp(cycles,
 				                              CpuCyclesMin,
@@ -3151,10 +3151,10 @@ public:
 		}
 
 		if (CPU_ArchitectureType >= ArchitectureType::Intel486NewSlow) {
-			cpu_extflags_toggle = (FLAG_ID | FLAG_AC);
+			cpu_extflags_toggle = FLAG_ID | FLAG_AC;
 
 		} else if (CPU_ArchitectureType >= ArchitectureType::Intel486OldSlow) {
-			cpu_extflags_toggle = (FLAG_AC);
+			cpu_extflags_toggle = FLAG_AC;
 
 		} else {
 			cpu_extflags_toggle = 0;
@@ -3168,7 +3168,7 @@ public:
 		CPU_Cycles          = 0;
 		auto_determine_mode = {};
 
-		SectionProp* secprop = static_cast<SectionProp*>(sec);
+		auto secprop = static_cast<SectionProp*>(sec);
 
 		const std::string cpu_core = secprop->GetString("core");
 		const std::string cpu_type = secprop->GetString("cputype");

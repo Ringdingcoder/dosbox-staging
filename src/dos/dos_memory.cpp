@@ -49,7 +49,7 @@ void DOS_SetMcbFaultStrategy(const char * mcb_fault_strategy_pref)
 // returns true if the MCB block needed triaging
 static bool triage_block(DOS_MCB &mcb, const uint8_t repair_type)
 {
-	auto mcb_type_is_valid = [&]() -> bool {
+	auto mcb_type_is_valid = [&]() {
 		const auto t = mcb.GetType();
 		return t == middle_mcb_type || t == ending_mcb_type;
 	};
@@ -399,7 +399,7 @@ void DOS_BuildUMBChain(bool umb_active, bool ems_active)
 
 		/* A system MCB has to cover the space between the
 		   regular MCB-chain and the UMBs */
-		uint16_t cover_mcb=(uint16_t)(mcb_segment+mcb.GetSize()+1);
+		auto cover_mcb = static_cast<uint16_t>(mcb_segment+mcb.GetSize() + 1);
 		mcb.SetPt(cover_mcb);
 		mcb.SetType(middle_mcb_type);
 		mcb.SetPSPSeg(0x0008);

@@ -1,14 +1,14 @@
 // SPDX-FileCopyrightText:  2022-2025 The DOSBox Staging Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#include "mouse_config.h"
-
+#include "private/mouse_config.h"
 #include "private/mouse_common.h"
-#include "mouse_interfaces.h"
+#include "private/mouse_interfaces.h"
 
 #include "config/config.h"
 #include "config/setup.h"
 #include "gui/common.h"
+#include "misc/notifications.h"
 #include "misc/support.h"
 #include "misc/video.h"
 #include "utils/checks.h"
@@ -19,44 +19,55 @@
 
 CHECK_NARROWING();
 
+static const std::string SectionName = "mouse";
+
 MouseConfig mouse_config;
-MousePredefined mouse_predefined;
+
+static bool is_serial_mouse_model_read = false;
 
 namespace OptionBuiltInDosDriver {
-	constexpr auto Off   = "off";
-	constexpr auto On    = "on";
-	constexpr auto NoTsr = "no-tsr";
-}
+
+constexpr auto NoTsr = "no-tsr";
+
+} // namespace OptionBuiltInDosDriver
 
 namespace OptionCaptureType {
-	constexpr auto Seamless = "seamless";
-	constexpr auto OnClick  = "onclick";
-	constexpr auto OnStart  = "onstart";
-	constexpr auto NoMouse  = "nomouse";
-}
+
+constexpr auto Seamless = "seamless";
+constexpr auto OnClick  = "onclick";
+constexpr auto OnStart  = "onstart";
+constexpr auto NoMouse  = "nomouse";
+
+} // namespace OptionCaptureType
 
 namespace OptionModelDos {
-	constexpr auto TwoButton   = "2button";
-	constexpr auto ThreeButton = "3button";
-	constexpr auto Wheel       = "wheel";
-}
+
+constexpr auto TwoButton   = "2button";
+constexpr auto ThreeButton = "3button";
+constexpr auto Wheel       = "wheel";
+
+} // namespace OptionModelDos
 
 namespace OptionModelPs2 {
-	constexpr auto Standard     = "standard";
-	constexpr auto Intellimouse = "intellimouse";
-	constexpr auto Explorer     = "explorer";
-	constexpr auto NoMouse      = "none";
-}
+
+constexpr auto Standard     = "standard";
+constexpr auto Intellimouse = "intellimouse";
+constexpr auto Explorer     = "explorer";
+constexpr auto NoMouse      = "none";
+
+} // namespace OptionModelPs2
 
 namespace OptionModelCom {
-	constexpr auto TwoButton      = "2button";
-	constexpr auto ThreeButton    = "3button";
-	constexpr auto Wheel          = "wheel";
-	constexpr auto Msm            = "msm";
-	constexpr auto TwoButtonMsm   = "2button+msm";
-	constexpr auto ThreeButtonMsm = "3button+msm";
-	constexpr auto WheelMsm       = "wheel+msm";
-}
+
+constexpr auto TwoButton      = "2button";
+constexpr auto ThreeButton    = "3button";
+constexpr auto Wheel          = "wheel";
+constexpr auto Msm            = "msm";
+constexpr auto TwoButtonMsm   = "2button+msm";
+constexpr auto ThreeButtonMsm = "3button+msm";
+constexpr auto WheelMsm       = "wheel+msm";
+
+} // namespace OptionModelCom
 
 static const std::vector<uint16_t> list_rates = {
         // Commented out values are probably not interesting
@@ -83,37 +94,39 @@ static const std::vector<uint16_t> list_rates = {
         // issues.
 };
 
-constexpr auto DefaultBuiltinDosMouseDriverOptions = "";
-
 const std::vector<uint16_t>& MouseConfig::GetValidMinRateList()
 {
 	return list_rates;
 }
 
-bool MouseConfig::ParseComModel(const std::string_view model_str,
-                                MouseModelCOM& model, bool& auto_msm)
+bool MOUSECOM_ParseComModel(const std::string& model_str,
+                            MouseModelCom& model,
+                            bool& auto_msm)
 {
-	using enum MouseModelCOM;
+	using enum MouseModelCom;
 
-	if (iequals(model_str, OptionModelCom::TwoButton)) {
+	std::string model_lowcase = model_str;
+	lowcase(model_lowcase);
+
+	if (model_lowcase == OptionModelCom::TwoButton) {
 		model    = Microsoft;
 		auto_msm = false;
-	} else if (iequals(model_str, OptionModelCom::ThreeButton)) {
+	} else if (model_lowcase == OptionModelCom::ThreeButton) {
 		model    = Logitech;
 		auto_msm = false;
-	} else if (iequals(model_str, OptionModelCom::Wheel)) {
+	} else if (model_lowcase == OptionModelCom::Wheel) {
 		model    = Wheel;
 		auto_msm = false;
-	} else if (iequals(model_str, OptionModelCom::Msm)) {
+	} else if (model_lowcase == OptionModelCom::Msm) {
 		model    = MouseSystems;
 		auto_msm = false;
-	} else if (iequals(model_str, OptionModelCom::TwoButtonMsm)) {
+	} else if (model_lowcase == OptionModelCom::TwoButtonMsm) {
 		model    = Microsoft;
 		auto_msm = true;
-	} else if (iequals(model_str, OptionModelCom::ThreeButtonMsm)) {
+	} else if (model_lowcase == OptionModelCom::ThreeButtonMsm) {
 		model    = Logitech;
 		auto_msm = true;
-	} else if (iequals(model_str, OptionModelCom::WheelMsm)) {
+	} else if (model_lowcase == OptionModelCom::WheelMsm) {
 		model    = Wheel;
 		auto_msm = true;
 	} else {
@@ -123,50 +136,86 @@ bool MouseConfig::ParseComModel(const std::string_view model_str,
 	return true;
 }
 
-static void set_capture_type(const std::string_view capture_str)
+static void log_invalid_parameter(const std::string& setting_name,
+                                  const std::string_view option_str,
+                                  const std::string& adapted_value)
 {
+	NOTIFY_DisplayWarning(Notification::Source::Console,
+	                      "MOUSE",
+	                      "PROGRAM_CONFIG_INVALID_SETTING",
+	                      setting_name.c_str(),
+	                      std::string(option_str).c_str(),
+	                      adapted_value.c_str());
+}
+
+static void set_capture_type(const SectionProp& section)
+{
+	const std::string SettingName = "mouse_capture";
+
+	const auto option_str = section.GetStringLowCase(SettingName);
+
 	using enum MouseCapture;
 
-	if (iequals(capture_str, OptionCaptureType::Seamless)) {
+	if (option_str == OptionCaptureType::Seamless) {
 		mouse_config.capture = Seamless;
-	} else if (iequals(capture_str, OptionCaptureType::OnClick)) {
+	} else if (option_str == OptionCaptureType::OnClick) {
 		mouse_config.capture = OnClick;
-	} else if (iequals(capture_str, OptionCaptureType::OnStart)) {
+	} else if (option_str == OptionCaptureType::OnStart) {
 		mouse_config.capture = OnStart;
-	} else if (iequals(capture_str, OptionCaptureType::NoMouse)) {
+	} else if (option_str == OptionCaptureType::NoMouse) {
 		mouse_config.capture = NoMouse;
 	} else {
 		assertm(false, "Invalid mouse capture value");
 	}
 }
 
-static void set_dos_driver_mode(const std::string_view mode_str)
+static void set_dos_driver(const SectionProp& section)
 {
-	if (iequals(mode_str, OptionBuiltInDosDriver::Off)) {
+	const std::string SettingName = "builtin_dos_mouse_driver";
+
+	const auto option_str = section.GetStringLowCase(SettingName);
+
+	if (has_false(option_str)) {
 		mouse_config.dos_driver_autoexec = false;
 		mouse_config.dos_driver_no_tsr   = false;
-	} else if (iequals(mode_str, OptionBuiltInDosDriver::On)) {
-		mouse_config.dos_driver_autoexec = true;
-		mouse_config.dos_driver_no_tsr   = false;
-	} else if (iequals(mode_str, OptionBuiltInDosDriver::NoTsr)) {
+
+	} else if (has_true(option_str)) {
+		if (is_machine_tandy() || is_machine_pcjr()) {
+			// The mouse TSR simulation currently does not work
+			// correctly with PCJr or Tandy memory layout - MCB
+			// corruption occurs (TODO: to be fixed).
+			LOG_INFO("MOUSE (DOS): Forced no-TSR mode due to Tandy/PCJr machine type");
+			mouse_config.dos_driver_autoexec = false;
+			mouse_config.dos_driver_no_tsr   = true;
+		} else {
+			mouse_config.dos_driver_autoexec = true;
+			mouse_config.dos_driver_no_tsr   = false;
+		}
+
+	} else if (option_str == OptionBuiltInDosDriver::NoTsr) {
 		mouse_config.dos_driver_autoexec = false;
 		mouse_config.dos_driver_no_tsr   = true;
+
 	} else {
 		assertm(false, "Invalid mouse driver mode");
 	}
 }
 
-static void set_dos_driver_model(const std::string_view model_str)
+static void set_dos_driver_model(const SectionProp& section)
 {
+	const std::string SettingName = "builtin_dos_mouse_driver_model";
+
+	const auto option_str = section.GetStringLowCase(SettingName);
+
 	using enum MouseModelDos;
 
 	auto new_model = mouse_config.model_dos;
 
-	if (iequals(model_str, OptionModelDos::TwoButton)) {
+	if (option_str == OptionModelDos::TwoButton) {
 		new_model = TwoButton;
-	} else if (iequals(model_str, OptionModelDos::ThreeButton)) {
+	} else if (option_str == OptionModelDos::ThreeButton) {
 		new_model = ThreeButton;
-	} else if (iequals(model_str, OptionModelDos::Wheel)) {
+	} else if (option_str == OptionModelDos::Wheel) {
 		new_model = Wheel;
 	} else {
 		assertm(false, "Invalid DOS driver mouse model value");
@@ -178,67 +227,127 @@ static void set_dos_driver_model(const std::string_view model_str)
 	}
 }
 
-static void set_ps2_mouse_model(const std::string_view model_str)
+static void set_ps2_mouse_model(const SectionProp& section)
 {
-	using enum MouseModelPS2;
+	const std::string SettingName = "ps2_mouse_model";
 
-	if (iequals(model_str, OptionModelPs2::Standard)) {
+	const auto option_str = section.GetStringLowCase(SettingName);
+
+	using enum MouseModelPs2;
+
+	if (option_str == OptionModelPs2::Standard) {
 		mouse_config.model_ps2 = Standard;
-	} else if (iequals(model_str, OptionModelPs2::Intellimouse)) {
+	} else if (option_str == OptionModelPs2::Intellimouse) {
 		mouse_config.model_ps2 = IntelliMouse;
-	} else if (iequals(model_str, OptionModelPs2::Explorer)) {
+	} else if (option_str == OptionModelPs2::Explorer) {
 		mouse_config.model_ps2 = Explorer;
-	} else if (iequals(model_str, OptionModelPs2::NoMouse)) {
+	} else if (option_str == OptionModelPs2::NoMouse) {
 		mouse_config.model_ps2 = NoMouse;
 	} else {
 		assertm(false, "Invalid PS/2 mouse model value");
 	}
 }
 
-static void set_serial_mouse_model(const std::string_view model_str)
+static void set_serial_mouse_model(const SectionProp& section)
 {
-	[[maybe_unused]] const auto result = MouseConfig::ParseComModel(
-	        model_str, mouse_config.model_com, mouse_config.model_com_auto_msm);
+	const std::string SettingName = "com_mouse_model";
+
+	const auto option_str = section.GetString(SettingName);
+
+	[[maybe_unused]] const auto result = MOUSECOM_ParseComModel(
+	        option_str, mouse_config.model_com, mouse_config.model_com_auto_msm);
 	assert(result);
+
+	is_serial_mouse_model_read = true;
 }
 
-static void set_dos_driver_options(const std::string_view options_str)
+static void set_dos_driver_move_threshold(const SectionProp& section)
 {
-	const std::string OptionImmediate = "immediate";
-	const std::string OptionModern    = "modern";
+	const std::string SettingName = "builtin_dos_mouse_driver_move_threshold";
 
-	auto& last_options_str = mouse_config.dos_driver_last_options_str;
-	if (last_options_str == options_str) {
+	const auto option_str = section.GetString(SettingName);
+	const auto DefaultStr = std::to_string(Mouse::DefaultMoveThreshold);
+
+	auto set_new_value = [&](const std::string& value) {
+		log_invalid_parameter(SettingName, option_str, value);
+		set_section_property_value(SectionName, SettingName, value);
+		set_dos_driver_move_threshold(section);
+	};
+
+	const auto tokens = split(option_str, " \t,;");
+	if (tokens.empty() || tokens.size() > 2) {
+		set_new_value(DefaultStr);
 		return;
 	}
-	last_options_str = options_str;
 
-	mouse_config.dos_driver_immediate = false;
-	mouse_config.dos_driver_modern    = false;
+	const auto value_x = parse_int(tokens[0]);
+	const auto value_y = (tokens.size() >= 2) ? parse_int(tokens[1]) : value_x;
 
-	for (const auto& token : split(options_str, " ,")) {
+	if (!value_x || !value_y) {
+		set_new_value(DefaultStr);
+		return;
+	}
+
+	const auto clamped_x = std::clamp(*value_x,
+	                                  Mouse::MinMoveThreshold,
+	                                  Mouse::MaxMoveThreshold);
+	const auto clamped_y = std::clamp(*value_y,
+	                                  Mouse::MinMoveThreshold,
+	                                  Mouse::MaxMoveThreshold);
+
+	if (*value_x != clamped_x || *value_y != clamped_y) {
+		auto adapted = std::to_string(clamped_x);
+		if (tokens.size() > 1) {
+			adapted += ",";
+			adapted += std::to_string(clamped_y);
+		}
+
+		set_new_value(adapted);
+		return;
+	}
+
+	mouse_config.dos_driver_move_threshold_x = static_cast<float>(*value_x);
+	mouse_config.dos_driver_move_threshold_y = static_cast<float>(*value_y);
+}
+
+static void set_dos_driver_options(const SectionProp& section)
+{
+	const std::string SettingName = "builtin_dos_mouse_driver_options";
+
+	const auto option_str = section.GetString(SettingName);
+
+	constexpr auto DefaultValue = Mouse::DefaultDriverOptions;
+
+	const std::string OptionImmediate     = "immediate";
+	const std::string OptionModern        = "modern";
+	const std::string OptionNoGranularity = "no-granularity";
+
+	auto set_new_value = [&](const std::string& value) {
+		log_invalid_parameter(SettingName, option_str, value);
+		set_section_property_value(SectionName, SettingName, value);
+		set_dos_driver_options(section);
+	};
+
+	mouse_config.dos_driver_immediate      = false;
+	mouse_config.dos_driver_modern         = false;
+	mouse_config.dos_driver_no_granularity = false;
+
+	for (const auto& token : split(option_str, " \t,;")) {
 		if (token == OptionImmediate) {
 			mouse_config.dos_driver_immediate = true;
 		} else if (token == OptionModern) {
 			mouse_config.dos_driver_modern = true;
+		} else if (token == OptionNoGranularity) {
+			mouse_config.dos_driver_no_granularity = true;
 		} else {
-			LOG_WARNING(
-			        "MOUSE: Invalid 'builtin_dos_mouse_driver_options' "
-			        "parameter: '%s', using defaults",
-			        token.c_str());
-
-			set_section_property_value("mouse",
-			                           "builtin_dos_mouse_driver_options",
-			                           DefaultBuiltinDosMouseDriverOptions);
-
-			set_dos_driver_options(DefaultBuiltinDosMouseDriverOptions);
+			set_new_value(DefaultValue);
 			return;
 		}
 	}
 
 	// Log new config options
 	static std::string last_logged_str = "";
-	if (options_str == last_logged_str) {
+	if (option_str == last_logged_str) {
 		return;
 	}
 
@@ -258,135 +367,100 @@ static void set_dos_driver_options(const std::string_view options_str)
 	}
 
 	LOG_INFO("MOUSE (DOS): Driver options: %s", log_options.c_str());
-	last_logged_str = options_str;
+	last_logged_str = option_str;
 }
 
-static void set_sensitivity(const std::string_view sensitivity_str)
+static void set_mouse_sensitivity(const SectionProp& section)
 {
-	// Coefficient to convert percentage in integer to float
-	constexpr float coeff = 0.01f;
+	constexpr auto SettingName = "mouse_sensitivity";
 
-	// Default sensitivity value
-	const auto& user_default = mouse_predefined.sensitivity_user_default;
-	const auto default_value = coeff * user_default;
+	const auto option_str = section.GetString(SettingName);
+	const auto DefaultStr = std::to_string(Mouse::DefaultSensitivity);
 
-	auto set_mouse_sensitivity_setting = [](const int value) {
-		set_section_property_value("mouse",
-		                           "mouse_sensitivity",
-		                           format_str("%d", value));
-	};
-	auto set_mouse_sensitivity_settings = [](const int val_x, const int val_y) {
-		set_section_property_value("mouse",
-		                           "mouse_sensitivity",
-		                           format_str("%d %d", val_x, val_y));
+	auto set_value = [&](const std::string& value) {
+		set_section_property_value(SectionName, SettingName, value);
+		set_mouse_sensitivity(section);
 	};
 
-	// Split input string into values
-	auto values_str = split(sensitivity_str, " \t,;");
-	if (values_str.size() > 2) {
-		LOG_WARNING("MOUSE: Too many values in 'mouse_sensitivity', using '%d'",
-		            user_default);
-		mouse_config.sensitivity_coeff_x = default_value;
-		mouse_config.sensitivity_coeff_y = default_value;
-
-		set_mouse_sensitivity_setting(user_default);
+	auto tokens = split(option_str, " \t,;");
+	if (tokens.empty() || tokens.size() > 2) {
+		log_invalid_parameter(SettingName, option_str, DefaultStr);
+		set_value(DefaultStr);
 		return;
 	}
 
-	// If no values given, use defaults
-	if (values_str.empty()) {
-		mouse_config.sensitivity_coeff_x = default_value;
-		mouse_config.sensitivity_coeff_y = default_value;
+	const auto value_x = parse_int(tokens[0]);
+	const auto value_y = (tokens.size() >= 2) ? parse_int(tokens[1]) : value_x;
 
-		set_mouse_sensitivity_setting(user_default);
+	if (!value_x || !value_y) {
+		log_invalid_parameter(SettingName, option_str, DefaultStr);
+		set_value(DefaultStr);
 		return;
 	}
 
-	// Convert values to integers
-	std::vector<int> values_int = {};
+	const auto clamped_x = std::clamp(*value_x,
+	                                  Mouse::MinSensitivity,
+	                                  Mouse::MaxSensitivity);
+	const auto clamped_y = std::clamp(*value_y,
+	                                  Mouse::MinSensitivity,
+	                                  Mouse::MaxSensitivity);
 
-	bool out_of_range   = false;
-	const int value_min = -mouse_predefined.sensitivity_user_max;
-	const int value_max = mouse_predefined.sensitivity_user_max;
-
-	for (auto& value_str : values_str) {
-		// Remove trailing '%' signs, if present
-		if (value_str.ends_with('%')) {
-			value_str.pop_back();
+	if (*value_x != clamped_x || *value_y != clamped_y) {
+		auto adapted = std::to_string(clamped_x);
+		if (tokens.size() > 1) {
+			adapted += ",";
+			adapted += std::to_string(clamped_y);
 		}
 
-		const auto value = parse_int(value_str);
-		if (!value) {
-			LOG_WARNING("MOUSE: Invalid 'mouse_sensitivity' setting: '%s', using '%d'",
-			            value_str.c_str(),
-			            user_default);
-			mouse_config.sensitivity_coeff_x = default_value;
-			mouse_config.sensitivity_coeff_y = default_value;
-
-			set_mouse_sensitivity_setting(user_default);
-			return;
-		}
-
-		const auto value_clamped = clamp(*value, value_min, value_max);
-		if (value_clamped != *value) {
-			out_of_range = true;
-		}
-		values_int.push_back(value_clamped);
+		log_invalid_parameter(SettingName, option_str, adapted);
+		set_value(adapted);
+		return;
 	}
 
-	if (out_of_range) {
-		LOG_WARNING("MOUSE: 'mouse_sensitivity' adjusted to range %+d - %+d",
-		            value_min,
-		            value_max);
-	}
+	auto convert_value = [](const int value) {
+		// Coefficient to convert percentage in integer to float
+		constexpr float Coefficient = 0.01f;
 
-	// Set the actual values
-	assert(values_int.size() == 1 || values_int.size() == 2);
-	const auto value_float_0         = static_cast<float>(values_int[0]);
-	mouse_config.sensitivity_coeff_x = coeff * value_float_0;
+		return Coefficient * static_cast<float>(value);
+	};
 
-	if (values_int.size() == 2) {
-		const auto value_float_1 = static_cast<float>(values_int[1]);
-		mouse_config.sensitivity_coeff_y = coeff * value_float_1;
-
-		set_mouse_sensitivity_settings(values_int[0], values_int[1]);
-	} else {
-		mouse_config.sensitivity_coeff_y = mouse_config.sensitivity_coeff_x;
-
-		set_mouse_sensitivity_setting(values_int[0]);
-	}
-
-	return;
+	mouse_config.sensitivity_coeff_x = convert_value(*value_x);
+	mouse_config.sensitivity_coeff_y = convert_value(*value_y);
 }
 
-void MOUSE_Init()
+static void set_multi_display_aware(const SectionProp& section)
 {
-	const auto section = get_section("mouse");
-	assert(section);
+	const std::string OptionStr = "mouse_multi_display_aware";
 
-	set_capture_type(section->GetString("mouse_capture"));
-	set_sensitivity(section->GetString("mouse_sensitivity"));
+	mouse_config.multi_display_aware = section.GetBool(OptionStr);
+}
 
-	mouse_config.multi_display_aware = section->GetBool("mouse_multi_display_aware");
+static void set_middle_release(const SectionProp& section)
+{
+	const std::string OptionStr = "mouse_middle_release";
 
-	mouse_config.middle_release = section->GetBool("mouse_middle_release");
-	mouse_config.raw_input      = section->GetBool("mouse_raw_input");
+	mouse_config.middle_release = section.GetBool(OptionStr);
+}
 
-	set_dos_driver_model(section->GetString("builtin_dos_mouse_driver_model"));
-	set_dos_driver_options(section->GetString("builtin_dos_mouse_driver_options"));
+static void set_raw_input(const SectionProp& section)
+{
+	const std::string OptionStr = "mouse_raw_input";
 
-	// Built-in DOS driver configuration
-	set_dos_driver_mode(section->GetString("builtin_dos_mouse_driver"));
+	mouse_config.raw_input = section.GetBool(OptionStr);
+}
 
-	// PS/2 AUX port mouse configuration
-	set_ps2_mouse_model(section->GetString("ps2_mouse_model"));
+static void set_vmware_mouse(const SectionProp& section)
+{
+	const std::string OptionStr = "vmware_mouse";
 
-	// COM port mouse configuration
-	set_serial_mouse_model(section->GetString("com_mouse_model"));
+	mouse_config.is_vmware_mouse_enabled = section.GetBool(OptionStr);
+}
 
-	// VMM PCI interfaces
-	mouse_config.is_vmware_mouse_enabled = section->GetBool("vmware_mouse");
-	mouse_config.is_virtualbox_mouse_enabled = section->GetBool("virtualbox_mouse");
+static void set_virtualbox_mouse(const SectionProp& section)
+{
+	const std::string OptionStr = "virtualbox_mouse";
+
+	mouse_config.is_virtualbox_mouse_enabled = section.GetBool(OptionStr);
 
 	if (!GFX_HaveDesktopEnvironment() && mouse_config.is_virtualbox_mouse_enabled) {
 		// VirtualBox guest side driver is able to request us to re-use
@@ -399,6 +473,36 @@ void MOUSE_Init()
 		LOG_WARNING("MOUSE: VirtualBox interface cannot work in a no-desktop environment");
 		mouse_config.is_virtualbox_mouse_enabled = false;
 	}
+}
+
+void MOUSE_Init()
+{
+	const auto section = get_section(SectionName.c_str());
+	assert(section);
+
+	set_capture_type(*section);
+	set_mouse_sensitivity(*section);
+	set_multi_display_aware(*section);
+	set_middle_release(*section);
+	set_raw_input(*section);
+
+	// Built-in DOS driver configuration
+	set_dos_driver(*section);
+	set_dos_driver_model(*section);
+	set_dos_driver_move_threshold(*section);
+	set_dos_driver_options(*section);
+
+	// PS/2 AUX port mouse configuration
+	set_ps2_mouse_model(*section);
+
+	// COM port mouse configuration
+	if (!is_serial_mouse_model_read) {
+		set_serial_mouse_model(*section);
+	}
+
+	// Virtual Machine Manager (VMM) mouse interfaces
+	set_vmware_mouse(*section);
+	set_virtualbox_mouse(*section);
 
 	// Start mouse emulation if everything is ready
 	mouse_shared.ready_config = true;
@@ -410,15 +514,16 @@ static void notify_mouse_setting_updated(SectionProp& section,
                                          const std::string& prop_name)
 {
 	if (prop_name == "builtin_dos_mouse_driver_model") {
-		set_dos_driver_model(
-		        section.GetString("builtin_dos_mouse_driver_model"));
+		set_dos_driver_model(section);
+
+	} else if (prop_name == "builtin_dos_mouse_driver_move_threshold") {
+		set_dos_driver_move_threshold(section);
 
 	} else if (prop_name == "builtin_dos_mouse_driver_options") {
-		set_dos_driver_options(
-		        section.GetString("builtin_dos_mouse_driver_options"));
+		set_dos_driver_options(section);
 
 	} else if (prop_name == "mouse_capture") {
-		set_capture_type(section.GetString("mouse_capture"));
+		set_capture_type(section);
 
 		if (mouse_config.capture == MouseCapture::NoMouse) {
 			// If NoMouse got configured at runtime,
@@ -429,17 +534,16 @@ static void notify_mouse_setting_updated(SectionProp& section,
 		MOUSE_UpdateGFX();
 
 	} else if (prop_name == "mouse_middle_release") {
-		mouse_config.middle_release = section.GetBool("mouse_middle_release");
+		set_middle_release(section);
 
 	} else if (prop_name == "mouse_multi_display_aware") {
-		mouse_config.multi_display_aware = section.GetBool(
-		        "mouse_multi_display_aware");
+		set_multi_display_aware(section);
 
 	} else if (prop_name == "mouse_raw_input") {
-		mouse_config.raw_input = section.GetBool("mouse_raw_input");
+		set_raw_input(section);
 
 	} else if (prop_name == "mouse_sensitivity") {
-		set_sensitivity(section.GetString("mouse_sensitivity"));
+		set_mouse_sensitivity(section);
 	}
 }
 
@@ -492,7 +596,9 @@ static void init_mouse_config_settings(SectionProp& secprop)
 	        "      using mirrored display mode or using an AV receiver's HDMI input for\n"
 	        "      audio-only listening.");
 
-	prop_str = secprop.AddString("mouse_sensitivity", Always, "100");
+	prop_str = secprop.AddString("mouse_sensitivity",
+	                             Always,
+	                             std::to_string(Mouse::DefaultSensitivity).c_str());
 	prop_str->SetHelp(
 	        "Global mouse sensitivity for the horizontal and vertical axes, as a percentage\n"
 	        "(100 by default). Values can be separated by spaces, commas, or semicolons\n"
@@ -509,13 +615,11 @@ static void init_mouse_config_settings(SectionProp& secprop)
 
 	// Built-in DOS driver configuration
 
-	prop_str = secprop.AddString("builtin_dos_mouse_driver",
-	                             OnlyAtStart,
-	                             OptionBuiltInDosDriver::On);
+	prop_str = secprop.AddString("builtin_dos_mouse_driver", OnlyAtStart, "on");
 	assert(prop_str);
 	prop_str->SetValues({
-		OptionBuiltInDosDriver::Off,
-		OptionBuiltInDosDriver::On,
+		"off",
+		"on",
 		OptionBuiltInDosDriver::NoTsr
 	});
 	prop_str->SetHelp(
@@ -565,7 +669,7 @@ static void init_mouse_config_settings(SectionProp& secprop)
 	        "by default). Possible values:\n"
 	        "\n"
 	        "  2button:  2 buttons, the safest option for most games. The majority of DOS\n"
-	        "            games onoly support 2 buttons, some might misbehave if the middle\n"
+	        "            games only support 2 buttons, some might misbehave if the middle\n"
 	        "            button is pressed.\n"
 	        "\n"
 	        "  3button:  3 buttons, only supported by very few DOS games. Only use this if\n"
@@ -575,26 +679,54 @@ static void init_mouse_config_settings(SectionProp& secprop)
 	        "            No DOS game uses the mouse wheel, only a handful of DOS applications\n"
 	        "            and Windows 3.x with special third-party drivers.");
 
+	prop_str = secprop.AddString("builtin_dos_mouse_driver_move_threshold",
+	                             Always,
+	                             std::to_string(Mouse::DefaultMoveThreshold).c_str());
+	assert(prop_str);
+	prop_str->SetHelp(
+	        "The smallest amount of mouse movement that will be reported to the guest\n"
+	        "(1 by default). Some DOS games cannot properly respond to small movements, which\n"
+	        "were hard to achieve using the imprecise ball mice of the era; in such case\n"
+	        "increase the amount to the smallest value that results in a proper cursor\n"
+	        "motion. Possible values:\n"
+	        "\n"
+	        "  1-9:  The smallest amount of movement to report, for both horizontal and\n"
+	        "        vertical axes. 1 reports all the movements (default).\n"
+	        "\n"
+	        "  x,y:  Separate values for horizontal and vertical axes, can be separated by\n"
+	        "        spaces, commas, or semicolons.\n"
+	        "\n"
+	        "List of known games requiring the threshold to be set to 2:\n"
+	        "  - Ultima Underworld: The Stygian Abyss\n"
+	        "  - Ultima Underworld II: Labyrinth of Worlds");
+
 	prop_str = secprop.AddString("builtin_dos_mouse_driver_options",
 	                             Always,
-	                             DefaultBuiltinDosMouseDriverOptions);
+	                             Mouse::DefaultDriverOptions);
 	assert(prop_str);
 	prop_str->SetHelp(
 	        "Additional built-in DOS mouse driver settings as a list of space or comma\n"
 	        "separated options (unset by default). Possible values:\n"
 	        "\n"
-	        "  immediate:  Update mouse movement counters immediately, without waiting for\n"
-	        "              interrupt. May improve mouse latency in fast-paced games (arcade,\n"
-	        "              FPS, etc.), but might cause issues in some titles.\n"
-	        "              List of known incompatible games:\n"
-	        "                - Ultima Underworld: The Stygian Abyss\n"
-	        "                - Ultima Underworld II: Labyrinth of Worlds\n"
-	        "              Please report other incompatible games so we can update this list.\n"
+	        "  immediate:       Update mouse movement counters immediately, without waiting\n"
+	        "                   for interrupt. May improve mouse latency in fast-paced games\n"
+	        "                   (arcade, FPS, etc.), but might cause issues in some titles.\n"
+	        "                   List of known incompatible games:\n"
+	        "                     - Ultima Underworld: The Stygian Abyss\n"
+	        "                     - Ultima Underworld II: Labyrinth of Worlds\n"
+	        "                   Please report other incompatible games so we can update this\n"
+	        "                   list.\n"
 	        "\n"
-	        "  modern:     If provided, v7.0+ Microsoft mouse driver behaviour is emulated,\n"
-	        "              otherwise the v6.0 and earlier behaviour (the two are slightly\n"
-	        "              incompatible). Only Descent II with the official Voodoo patch has\n"
-	        "              been found to require the v7.0+ behaviour so far.");
+	        "  modern:          If provided, v7.0+ Microsoft mouse driver behaviour is\n"
+	        "                   emulated, otherwise the v6.0 and earlier behaviour (the two\n"
+	        "                   are slightly incompatible). Only 'Descent II' with the\n"
+	        "                   official Voodoo patch has been found to require the v7.0+\n"
+	        "                   behaviour so far.\n"
+	        "\n"
+	        "  no-granularity:  Disables the mouse position granularity. Only enable if the\n"
+	        "                   game needs it. Only 'Joan of Arc: Siege & the Sword' in\n"
+	        "                   Hercules mode has been found to require disabled granularity\n"
+	        "                   so far.");
 
 	prop_bool = secprop.AddBool("dos_mouse_immediate", Deprecated, false);
 	prop_bool->SetHelp("Configure using [color=light-green]'builtin_dos_mouse_driver_options'[reset].");
@@ -680,8 +812,34 @@ void MOUSE_AddConfigSection(const ConfigPtr& conf)
 {
 	assert(conf);
 
-	auto section = conf->AddSection("mouse");
+	auto section = conf->AddSection(SectionName.c_str());
 	section->AddUpdateHandler(notify_mouse_setting_updated);
 
 	init_mouse_config_settings(*section);
+}
+
+MouseModelCom MOUSECOM_GetConfiguredModel()
+{
+	if (!is_serial_mouse_model_read) {
+
+		const auto section = get_section(SectionName.c_str());
+		assert(section);
+
+		set_serial_mouse_model(*section);
+	}
+
+	return mouse_config.model_com;
+}
+
+bool MOUSECOM_GetConfiguredAutoMsm()
+{
+	if (!is_serial_mouse_model_read) {
+
+		const auto section = get_section(SectionName.c_str());
+		assert(section);
+
+		set_serial_mouse_model(*section);
+	}
+
+	return mouse_config.model_com_auto_msm;
 }

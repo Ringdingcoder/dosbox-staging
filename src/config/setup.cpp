@@ -635,7 +635,7 @@ bool PropMultiValRemain::SetValue(const std::string& new_value)
 		return false;
 	}
 
-	while ((section->GetProperty(number_of_properties))) {
+	while (section->GetProperty(number_of_properties)) {
 		number_of_properties++;
 	}
 
@@ -903,9 +903,9 @@ PropMultiValRemain* SectionProp::AddMultiValRemain(const std::string& _propname,
 
 int SectionProp::GetInt(const std::string& _propname) const
 {
-	for (const_it tel = properties.begin(); tel != properties.end(); ++tel) {
-		if ((*tel)->propname == _propname) {
-			return ((*tel)->GetValue());
+	for (const auto &property : properties) {
+		if (property->propname == _propname) {
+			return property->GetValue();
 		}
 	}
 	return 0;
@@ -913,9 +913,9 @@ int SectionProp::GetInt(const std::string& _propname) const
 
 bool SectionProp::GetBool(const std::string& _propname) const
 {
-	for (const_it tel = properties.begin(); tel != properties.end(); ++tel) {
-		if ((*tel)->propname == _propname) {
-			return ((*tel)->GetValue());
+	for (const auto &property : properties) {
+		if (property->propname == _propname) {
+			return property->GetValue();
 		}
 	}
 	return false;
@@ -923,9 +923,9 @@ bool SectionProp::GetBool(const std::string& _propname) const
 
 double SectionProp::GetDouble(const std::string& _propname) const
 {
-	for (const_it tel = properties.begin(); tel != properties.end(); ++tel) {
-		if ((*tel)->propname == _propname) {
-			return ((*tel)->GetValue());
+	for (const auto &property : properties) {
+		if (property->propname == _propname) {
+			return property->GetValue();
 		}
 	}
 	return 0.0;
@@ -933,9 +933,9 @@ double SectionProp::GetDouble(const std::string& _propname) const
 
 PropPath* SectionProp::GetPath(const std::string& _propname) const
 {
-	for (const_it tel = properties.begin(); tel != properties.end(); ++tel) {
-		if ((*tel)->propname == _propname) {
-			PropPath* val = dynamic_cast<PropPath*>((*tel));
+	for (const auto &property : properties) {
+		if (property->propname == _propname) {
+			auto val = dynamic_cast<PropPath*>(property);
 			if (val) {
 				return val;
 			} else {
@@ -948,9 +948,9 @@ PropPath* SectionProp::GetPath(const std::string& _propname) const
 
 PropMultiVal* SectionProp::GetMultiVal(const std::string& _propname) const
 {
-	for (const_it tel = properties.begin(); tel != properties.end(); ++tel) {
-		if ((*tel)->propname == _propname) {
-			PropMultiVal* val = dynamic_cast<PropMultiVal*>((*tel));
+	for (const auto &property : properties) {
+		if (property->propname == _propname) {
+			auto val = dynamic_cast<PropMultiVal*>(property);
 			if (val) {
 				return val;
 			} else {
@@ -963,10 +963,9 @@ PropMultiVal* SectionProp::GetMultiVal(const std::string& _propname) const
 
 PropMultiValRemain* SectionProp::GetMultiValRemain(const std::string& _propname) const
 {
-	for (const_it tel = properties.begin(); tel != properties.end(); ++tel) {
-		if ((*tel)->propname == _propname) {
-			PropMultiValRemain* val = dynamic_cast<PropMultiValRemain*>(
-			        (*tel));
+	for (const auto &property : properties) {
+		if (property->propname == _propname) {
+			auto val = dynamic_cast<PropMultiValRemain*>(property);
 			if (val) {
 				return val;
 			} else {
@@ -979,9 +978,9 @@ PropMultiValRemain* SectionProp::GetMultiValRemain(const std::string& _propname)
 
 Property* SectionProp::GetProperty(int index)
 {
-	for (it tel = properties.begin(); tel != properties.end(); ++tel) {
+	for (const auto &property : properties) {
 		if (!index--) {
-			return (*tel);
+			return property;
 		}
 	}
 	return nullptr;
@@ -989,7 +988,7 @@ Property* SectionProp::GetProperty(int index)
 
 Property* SectionProp::GetProperty(const std::string_view propname)
 {
-	for (Property* property : properties) {
+	for (const auto &property : properties) {
 		if (iequals(property->propname, propname)) {
 			return property;
 		}
@@ -999,12 +998,20 @@ Property* SectionProp::GetProperty(const std::string_view propname)
 
 std::string SectionProp::GetString(const std::string& _propname) const
 {
-	for (const_it tel = properties.begin(); tel != properties.end(); ++tel) {
-		if (iequals((*tel)->propname, _propname)) {
-			return ((*tel)->GetValue());
+	for (const auto &property : properties) {
+		if (iequals(property->propname, _propname)) {
+			return (property->GetValue());
 		}
 	}
 	return "";
+}
+
+std::string SectionProp::GetStringLowCase(const std::string& _propname) const
+{
+	auto string = GetString(_propname);
+	lowcase(string);
+
+	return string;
 }
 
 PropBool* SectionProp::GetBoolProp(const std::string& propname) const
@@ -1029,9 +1036,9 @@ PropString* SectionProp::GetStringProp(const std::string& propname) const
 
 Hex SectionProp::GetHex(const std::string& _propname) const
 {
-	for (const_it tel = properties.begin(); tel != properties.end(); ++tel) {
-		if (iequals((*tel)->propname, _propname)) {
-			return ((*tel)->GetValue());
+	for (const auto property : properties) {
+		if (iequals(property->propname, _propname)) {
+			return (property->GetValue());
 		}
 	}
 	return 0;
@@ -1103,12 +1110,23 @@ void SectionProp::PrintData([[maybe_unused]] FILE* outfile) const {}
 
 std::string SectionProp::GetPropertyValue(const std::string& _property) const
 {
-	for (const_it tel = properties.begin(); tel != properties.end(); ++tel) {
+	for (auto tel = properties.begin(); tel != properties.end(); ++tel) {
 		if (!strcasecmp((*tel)->propname.c_str(), _property.c_str())) {
 			return (*tel)->GetValue().ToString();
 		}
 	}
 	return NO_SUCH_PROPERTY;
+}
+
+AutoExecSection* get_autoexec_section(const char* section_name)
+{
+	assert(control);
+
+	const auto sec = static_cast<AutoExecSection*>(
+	        control->GetSection(section_name));
+	assert(sec);
+
+	return sec;
 }
 
 bool AutoExecSection::HandleInputLine(const std::string& line)
@@ -1134,7 +1152,7 @@ std::string AutoExecSection::GetPropertyValue(const std::string&) const
 SectionProp::~SectionProp()
 {
 	// Delete properties themself (properties stores the pointer of a prop
-	for (it prop = properties.begin(); prop != properties.end(); ++prop) {
+	for (auto prop = properties.begin(); prop != properties.end(); ++prop) {
 		delete (*prop);
 	}
 }

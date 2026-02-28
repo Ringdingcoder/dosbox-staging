@@ -722,7 +722,7 @@ static void set_text_lines()
 
 void INT10_SetCurMode(void)
 {
-	uint16_t bios_mode = (uint16_t)real_readb(BIOSMEM_SEG, BIOSMEM_CURRENT_MODE);
+	auto bios_mode = (uint16_t)real_readb(BIOSMEM_SEG, BIOSMEM_CURRENT_MODE);
 
 	if (CurMode->mode != bios_mode) {
 		bool mode_changed = false;
@@ -823,7 +823,8 @@ static void finish_set_mode(bool clearmem) {
 				}
 				break;
 			}
-			// fall-through
+			[[fallthrough]];
+
 		case M_CGA2:
 			for (uint16_t ct=0;ct<16*1024;ct++) {
 				real_writew( 0xb800,ct*2,0x0000);
@@ -915,6 +916,7 @@ static bool INT10_SetVideoMode_OTHER(uint16_t mode, bool clearmem)
 		if (mode > 6)
 			return false;
 		[[fallthrough]];
+
 	case MachineType::Pcjr:
 	case MachineType::Tandy:
 		if (mode>0xa) return false;
@@ -960,11 +962,11 @@ static bool INT10_SetVideoMode_OTHER(uint16_t mode, bool clearmem)
 	//Horizontal sync position
 	IO_WriteW(crtc_base,0x02 | (CurMode->hdispend+1) << 8);
 	//Horizontal sync width, seems to be fixed to 0xa, for cga at least, hercules has 0xf
-	IO_WriteW(crtc_base,0x03 | (0xa) << 8);
+	IO_WriteW(crtc_base,0x03 | 0xa << 8);
 	////Vertical total
 	IO_WriteW(crtc_base,0x04 | (CurMode->vtotal) << 8);
 	//Vertical total adjust, 6 for cga,hercules,tandy
-	IO_WriteW(crtc_base,0x05 | (6) << 8);
+	IO_WriteW(crtc_base,0x05 | 6 << 8);
 	//Vertical displayed
 	IO_WriteW(crtc_base,0x06 | (CurMode->vdispend) << 8);
 	//Vertical sync position
@@ -1966,6 +1968,7 @@ bool INT10_SetVideoMode(uint16_t mode)
 				break;
 			}
 			[[fallthrough]];
+
 		case M_LIN4: write_palette_dac_data(palette.ega); break;
 
 		case M_VGA:
@@ -2447,7 +2450,7 @@ std::optional<Rgb888> parse_color_token(const std::string& token,
 		}
 		// Need to do this check because sscanf is way too lenient and
 		// would parse something like "xyz" as 0
-		if (!is_hex_digits(token.substr(1))) {
+		if (!is_hex_digits(std::string_view(token).substr(1))) {
 			log_warning("hex colors must contain only digits and the letters A to F");
 			return {};
 		}

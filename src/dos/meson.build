@@ -35,6 +35,7 @@ libdos_sources = files(
     'programs/choice.cpp',
     'programs/clip.cpp',
     'programs/help.cpp',
+    'programs/makeimg.cpp',
     'programs/imgmount.cpp',
     'programs/intro.cpp',
     'programs/keyb.cpp',
@@ -66,7 +67,6 @@ libdos = static_library(
     dependencies: [
         sdl2_dep,
         sdl2_image_dep,
-        sdl2_net_dep,
         libdecoders_dep,
         ghc_dep,
         libiir_dep,

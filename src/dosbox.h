@@ -54,6 +54,9 @@ class SectionProp;
 
 typedef Bitu (LoopHandler)(void);
 
+void DOSBOX_Init();
+void DOSBOX_Destroy();
+
 void DOSBOX_InitModuleConfigsAndMessages();
 void DOSBOX_InitModules();
 void DOSBOX_DestroyModules();
@@ -177,6 +180,8 @@ constexpr auto ShadersDir                = "shaders";
 
 constexpr auto MicrosInMillisecond = 1000;
 constexpr auto BytesPerKilobyte    = 1024;
+constexpr auto BytesPerMegabyte = BytesPerKilobyte * 1024;
+constexpr int64_t BytesPerGigabyte = BytesPerMegabyte * 1024;
 
 enum class DiskSpeed { Maximum, Fast, Medium, Slow };
 

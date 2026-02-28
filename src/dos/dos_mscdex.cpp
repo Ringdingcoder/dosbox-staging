@@ -336,7 +336,7 @@ int CMscdex::AddDrive(uint16_t _drive, const char* physicalPath, uint8_t& subUni
 
 		// Create Callback Strategy
 		uint16_t off = sizeof(DOS_DeviceHeader::sDeviceHeader);
-		uint16_t call_strategy=(uint16_t)CALLBACK_Allocate();
+		auto call_strategy = static_cast<uint16_t>(CALLBACK_Allocate());
 		Callback_Handlers[call_strategy]=MSCDEX_Strategy_Handler;
 		real_writeb(seg,off+0,(uint8_t)0xFE);		//GRP 4
 		real_writeb(seg,off+1,(uint8_t)0x38);		//Extra Callback instruction
@@ -346,7 +346,7 @@ int CMscdex::AddDrive(uint16_t _drive, const char* physicalPath, uint8_t& subUni
 		
 		// Create Callback Interrupt
 		off += 5;
-		uint16_t call_interrupt=(uint16_t)CALLBACK_Allocate();
+		auto call_interrupt = static_cast<uint16_t>(CALLBACK_Allocate());
 		Callback_Handlers[call_interrupt]=MSCDEX_Interrupt_Handler;
 		real_writeb(seg,off+0,(uint8_t)0xFE);		//GRP 4
 		real_writeb(seg,off+1,(uint8_t)0x38);		//Extra Callback instruction
@@ -689,7 +689,7 @@ bool CMscdex::GetDirectoryEntry(uint16_t drive, bool copyFlag, PhysPt pathname, 
 	char* searchPos = searchName;
 
 	//strip of tailing . (XCOM APOCALYPSE)
-	size_t searchlen = safe_strlen(searchName);
+	auto searchlen = safe_strlen(searchName);
 	if (searchlen > 1 && strcmp(searchName,".."))
 		if (searchName[searchlen-1] =='.')  searchName[searchlen-1] = 0;
 
@@ -960,7 +960,7 @@ static uint16_t MSCDEX_IOCTL_Input(PhysPt buffer,uint8_t drive_unit) {
 					mscdex->GetCurrentPos(drive_unit,pos);
 					uint8_t addr_mode = mem_readb(buffer+1);
 					if (addr_mode == 0) { // HSG
-						uint32_t frames = static_cast<uint32_t>(msf_to_frames(pos));
+						auto frames = static_cast<uint32_t>(msf_to_frames(pos));
 						if (frames < REDBOOK_FRAME_PADDING)
 							MSCDEX_LOG("MSCDEX: Get position: invalid position %d:%d:%d", pos.min, pos.sec, pos.fr);
 						else

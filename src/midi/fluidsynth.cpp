@@ -333,7 +333,7 @@ std::optional<ChorusParameters> parse_custom_chorus_params(const std::string& ch
 	auto validate = [&](const char* param_name,
 	                    const std::string& value,
 	                    const double min_value,
-	                    const double max_value) -> std::optional<double> {
+	                    const double max_value) {
 		return validate_effect_parameter(ChorusSettingName,
 		                                 param_name,
 		                                 value,
@@ -491,7 +491,7 @@ std::optional<ReverbParameters> parse_custom_reverb_params(const std::string& re
 	auto validate = [&](const char* param_name,
 	                    const std::string& value,
 	                    const double min_value,
-	                    const double max_value) -> std::optional<double> {
+	                    const double max_value) {
 		return validate_effect_parameter(ReverbSettingName,
 		                                 param_name,
 		                                 value,
@@ -775,7 +775,7 @@ void MidiDeviceFluidSynth::SetFilter()
 	        "fsynth_filter");
 
 	if (!mixer_channel->TryParseAndSetCustomFilter(filter_prefs)) {
-		if (filter_prefs != "off") {
+		if (!has_false(filter_prefs)) {
 			NOTIFY_DisplayWarning(Notification::Source::Console,
 			                      "FSYNTH",
 			                      "PROGRAM_CONFIG_INVALID_SETTING",
@@ -911,8 +911,8 @@ void MidiDeviceFluidSynth::ApplyChannelMessage(const std::vector<uint8_t>& msg)
 // Apply the sysex message to the service
 void MidiDeviceFluidSynth::ApplySysExMessage(const std::vector<uint8_t>& msg)
 {
-	const char* data = reinterpret_cast<const char*>(msg.data());
-	const auto n     = static_cast<int>(msg.size());
+	const auto data = reinterpret_cast<const char*>(msg.data());
+	const auto n    = static_cast<int>(msg.size());
 
 	fluid_synth_sysex(synth.get(), data, n, nullptr, nullptr, nullptr, false);
 }

@@ -53,6 +53,7 @@ else()
       ${WARNING_FLAGS_COMMON}
       "-Weffc++"
       "-Wextra-semi"
+      "-Wimplicit-fallthrough"
   )
 
   # GCC 12 (still used in our CI workflow) complains about unrecognized
@@ -68,9 +69,6 @@ else()
         ${WARNING_FLAGS_C}
         "-Winvalid-utf8"
         "-Wtrivial-auto-var-init"
-        "-Wdeprecated-non-prototype"
-        "-Wflex-array-member-not-at-end"
-        "-Wfree-labels"
     )
     set(WARNING_FLAGS_CXX
         ${WARNING_FLAGS_CXX}
@@ -79,6 +77,18 @@ else()
     )
   endif()
 
+  if ((CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND
+       CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 15)
+       OR
+       (CMAKE_CXX_COMPILER_ID STREQUAL "Clang"))
+
+    set(WARNING_FLAGS_C
+            ${WARNING_FLAGS_C}
+            "-Wdeprecated-non-prototype"
+            "-Wflex-array-member-not-at-end"
+            "-Wfree-labels"
+    )
+  endif()
 
   add_compile_options(
     "$<$<COMPILE_LANGUAGE:C>:${WARNING_FLAGS_C}>"
@@ -89,13 +99,25 @@ endif()
 
 # GCC needs more memory reserved to fully optimize the CPU emulation code
 if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-  add_compile_options("--param" "max-gcse-memory=250000")
+  add_compile_options("--param" "max-gcse-memory=300000")
 endif()
 
-# TODO: These are sprintf deprecated warnings.
-# We probably do want to remove sprintf usage at some point.
 if (APPLE)
+  # TODO: These are sprintf deprecated warnings. We probably do want to remove
+  # sprintf usage at some point.
   add_compile_options("-Wno-deprecated-declarations")
+
+  # This adds more metadata to the executable (about ~500KB) which is handy
+  # for profiling. It also results in better crash dumps. This does not affect
+  # performance at all.
+  add_compile_options("-g")
+
+  if (C_TARGETCPU STREQUAL "ARMV8LE")
+    # This has virtually zero performance impact on ARM and it gives us deep
+    # observability on release mode builds at full speed (e.g., when using a
+    # profiler).
+    add_compile_options("-fno-omit-frame-pointer")
+  endif()
 endif()
 
 option(OPT_DEBUGGER "Enable debugger" OFF)
@@ -388,7 +410,6 @@ set(CMAKE_BUILD_WITH_INSTALL_RPATH ON)
 find_package(PkgConfig REQUIRED)
 find_package(SDL2 CONFIG REQUIRED)
 find_package(SDL2_image CONFIG REQUIRED)
-find_package(SDL2_net REQUIRED)
 find_package(iir REQUIRED)
 find_package(PNG REQUIRED)
 find_package(OpenGL REQUIRED)

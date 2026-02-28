@@ -676,8 +676,6 @@ int main(int argc, char* argv[])
                 shell_ishost = get_sdl_section()->GetString("multi_mode") == "host";
 
 		DOSBOX_InitModules();
-
-		// Initialise and start the GUI
 		GFX_InitAndStartGui();
 
 		// All subsystems' hotkeys need to be registered at this point
@@ -696,7 +694,6 @@ int main(int argc, char* argv[])
                 } else
                     SHELL_InitAndRun();
 
-		// Shutdown and release
 		DOSBOX_DestroyModules();
 		GFX_Destroy();
 

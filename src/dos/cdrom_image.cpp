@@ -194,7 +194,7 @@ uint32_t CDROM_Interface_Image::BinaryFile::decode(int16_t *buffer,
 	 *  "Except in the constructors of std::strstreambuf, negative values of
 	 *  std::streamsize are never used."; so we store it as unsigned.
 	 */
-	const uint32_t bytes_read = static_cast<uint32_t>(file->gcount());
+	const auto bytes_read = static_cast<uint32_t>(file->gcount());
 
 	// decoding is an audio-task, so update our audio position
 	audio_pos += bytes_read;
@@ -280,7 +280,7 @@ bool CDROM_Interface_Image::AudioFile::seek(const uint32_t requested_pos)
 
 #ifdef DEBUG
 	clock::time_point end = clock::now(); // stop the timer
-	const int32_t elapsed_ms = static_cast<int32_t>
+	const auto elapsed_ms = static_cast<int32_t>
 	    (duration_cast<milliseconds>(end - begin).count());
 
 	// Report general seek diagnostics
@@ -387,7 +387,7 @@ bool CDROM_Interface_Image::AudioFile::read(uint8_t *buffer,
 		 *  (N - 1). [(m)(R)LRLRLRLRLRLRLR]
 		 *             ^_/
 		 */
-		int16_t* pcm_buffer = reinterpret_cast<int16_t*>(buffer);
+		auto pcm_buffer = reinterpret_cast<int16_t*>(buffer);
 		const uint32_t mono_samples = decoded_frames;
 		for (uint32_t i = mono_samples - 1; i > 0; --i) {
 			pcm_buffer[i * REDBOOK_CHANNELS + 1] = pcm_buffer[i]; // right
@@ -521,7 +521,7 @@ bool CDROM_Interface_Image::SetDevice(const char* path)
 		// print error message on dosbox console
 		char buf[MAX_LINE_LENGTH];
 		snprintf(buf, MAX_LINE_LENGTH, "Could not load image file: %s\r\n", path);
-		uint16_t size = (uint16_t)strlen(buf);
+		auto size = static_cast<uint16_t>(strlen(buf));
 		DOS_WriteFile(STDOUT, (uint8_t*)buf, &size);
 	}
 	return result;
@@ -614,7 +614,7 @@ bool CDROM_Interface_Image::GetAudioSub(unsigned char& attr,
 	uint32_t relative_sector = 0;
 
 	if (!tracks.empty()) { 	// We have a useable CD; get a valid play-position
-		track_iter track = tracks.begin();
+		auto track = tracks.begin();
 		// the CD's current track is valid
 
 		 // reserve the track_file as a shared_ptr to avoid deletion in another thread
@@ -637,7 +637,7 @@ bool CDROM_Interface_Image::GetAudioSub(unsigned char& attr,
 			// the CD hasn't been played yet or has an invalid
 			// audio_pos
 		} else {
-			for (track_iter it = tracks.begin(); it != tracks.end(); ++it) {
+			for (auto it = tracks.begin(); it != tracks.end(); ++it) {
 				if (it->attr == 0) {	// Found an audio track
 					track = it;
 					absolute_sector = it->start;
@@ -1712,7 +1712,7 @@ bool CDROM_Interface_Image::GetCueFrame(uint32_t& frames, std::istream& in)
 
 bool CDROM_Interface_Image::GetCueString(std::string& str, std::istream& in)
 {
-	int pos = (int)in.tellg();
+	auto pos = static_cast<int>(in.tellg());
 	in >> str;
 	if (str[0] == '\"') {
 		if (str[str.size() - 1] == '\"') {

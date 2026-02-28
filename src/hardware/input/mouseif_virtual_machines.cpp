@@ -3,8 +3,8 @@
 
 #include "mouse.h"
 
-#include "mouse_config.h"
-#include "mouse_interfaces.h"
+#include "private/mouse_config.h"
+#include "private/mouse_interfaces.h"
 
 #include <algorithm>
 
@@ -61,7 +61,7 @@ static uint16_t scaled_y = 0x7fff; // 0x7fff is a center position
 // Multiply scale by 0.02f to put acceleration_vmm in a reasonable
 // range, similar to sensitivity_dos or sensitivity_vmm)
 constexpr float acceleration_multiplier = 0.02f;
-static MouseSpeedCalculator speed_xy(acceleration_multiplier *mouse_predefined.acceleration_vmm);
+static MouseSpeedCalculator speed_xy(acceleration_multiplier * Mouse::AccelerationVmm);
 
 // ***************************************************************************
 // Internal helper routines
@@ -74,10 +74,11 @@ static void maybe_check_remove_mappings()
 	}
 
 	bool needs_warning = false;
-	for (const auto& interface : mouse_interfaces) {
-		if (interface->IsMapped()) {
+	for (const auto interface_id : AllMouseInterfaceIds) {
+		auto& interface = MouseInterface::GetInstance(interface_id);
+		if (interface.IsMapped()) {
 			needs_warning = true;
-			interface->ConfigUnMap();
+			interface.ConfigUnMap();
 		}
 	}
 
@@ -92,7 +93,7 @@ static void maybe_check_remove_mappings()
 
 bool MOUSEVMM_IsSupported(const MouseVmmProtocol protocol)
 {
-	if (mouse_config.model_ps2 == MouseModelPS2::NoMouse) {
+	if (mouse_config.model_ps2 == MouseModelPs2::NoMouse) {
 		return false;
 	}
 

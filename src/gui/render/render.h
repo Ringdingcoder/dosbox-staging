@@ -1,9 +1,11 @@
-// SPDX-FileCopyrightText:  2019-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2019-2026 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #ifndef DOSBOX_RENDER_H
 #define DOSBOX_RENDER_H
 
+#include <array>
 #include <cstring>
 #include <deque>
 #include <optional>
@@ -13,6 +15,7 @@
 #include "hardware/video/vga.h"
 #include "utils/fraction.h"
 #include "utils/rect.h"
+#include "utils/rgb888.h"
 
 enum class ViewportMode { Fit, Relative };
 
@@ -38,11 +41,6 @@ struct ViewportSettings {
 		        relative.height_scale == that.relative.height_scale &&
 		        relative.width_scale == that.relative.width_scale);
 	}
-
-	constexpr bool operator!=(const ViewportSettings& that) const
-	{
-		return !operator==(that);
-	}
 };
 
 enum class IntegerScalingMode {
@@ -67,65 +65,58 @@ enum class AspectRatioCorrectionMode {
 	Stretch
 };
 
-struct RenderPal_t {
-	struct {
-		uint8_t red    = 0;
-		uint8_t green  = 0;
-		uint8_t blue   = 0;
-		uint8_t unused = 0;
-	} rgb[256] = {};
+struct RenderPalette {
+	std::array<Rgb888, NumVgaColors> rgb = {};
 
-	union {
-		uint16_t b16[256];
-		uint32_t b32[256] = {};
-	} lut = {};
+	uint32_t lut[NumVgaColors]     = {};
+	uint8_t modified[NumVgaColors] = {};
 
-	bool changed          = false;
-	uint8_t modified[256] = {};
-	uint32_t first        = 0;
-	uint32_t last         = 0;
+	bool changed = false;
+	int first    = 0;
+	int last     = 0;
 };
 
 struct Render {
-	ImageInfo src      = {};
-	uint32_t src_start = 0;
+	ImageInfo src = {};
 
 	// Frames per second
 	double fps = 0;
 
 	struct {
-		uint32_t size = 0;
+		bool clear_cache = false;
 
-		ScalerMode inMode  = {};
-		ScalerMode outMode = {};
+		ScalerLineHandler line_handler         = nullptr;
+		ScalerLineHandler line_palette_handler = nullptr;
 
-		bool clearCache = false;
+		int cache_pitch     = 0;
+		uint8_t* cache_read = nullptr;
 
-		ScalerLineHandler_t lineHandler    = nullptr;
-		ScalerLineHandler_t linePalHandler = nullptr;
+		alignas(uint64_t)
+		        std::array<uint32_t, ScalerMaxWidth * ScalerMaxHeight> cache = {};
 
-		uint32_t blocks     = 0;
-		uint32_t lastBlock  = 0;
-		int outPitch        = 0;
-		uint8_t* outWrite   = nullptr;
-		uint32_t cachePitch = 0;
-		uint8_t* cacheRead  = nullptr;
-		uint32_t inHeight   = 0;
-		uint32_t inLine     = 0;
-		uint32_t outLine    = 0;
+		int out_width      = 0;
+		int out_height     = 0;
+		int out_pitch      = 0;
+		uint8_t* out_write = nullptr;
+
+		int y_scale = 0;
 	} scale = {};
 
-	RenderPal_t pal = {};
+	RenderPalette palette = {};
 
-	bool updating  = false;
-	bool active    = false;
-	bool fullFrame = true;
-    bool was_sending = false;
+	bool active             = false;
+	bool render_in_progress = false;
+	bool updating_frame     = false;
 
-    uint8_t framebuf[320*224];
-    uint8_t prevpal[1024];
+	bool was_sending = false;
 
-	IntegerScalingMode integer_scaling_mode = {};
+	uint8_t framebuf[320*224];
+	uint8_t prevpal[1024];
+
+	AspectRatioCorrectionMode aspect_ratio_correction_mode = {};
+	IntegerScalingMode integer_scaling_mode                = {};
+
+	ViewportSettings viewport_settings = {};
 };
 
 // A frame of the emulated video output that's passed to the rendering backend
@@ -148,10 +139,7 @@ struct RenderedImage {
 	// by pixel_format
 	uint8_t* image_data = nullptr;
 
-	// Pointer to a (256 * 4) byte long palette data, stored as 8-bit RGB
-	// values with 1 extra padding byte per entry (R0, G0, B0, X0, R1, G1,
-	// B1, X1, etc.)
-	uint8_t* palette_data = nullptr;
+	std::array<Rgb888, NumVgaColors> palette = {};
 
 	inline bool is_paletted() const
 	{
@@ -171,14 +159,8 @@ struct RenderedImage {
 		assert(image_data);
 		std::memcpy(copy.image_data, image_data, image_data_num_bytes);
 
-		// TODO it's bad that we need to make this assumption downstream
-		// on the size and alignment of the palette...
-		if (palette_data) {
-			constexpr uint16_t PaletteNumBytes = 256 * 4;
-			copy.palette_data = new uint8_t[PaletteNumBytes];
+		copy.palette = palette;
 
-			std::memcpy(copy.palette_data, palette_data, PaletteNumBytes);
-		}
 		return copy;
 	}
 
@@ -188,15 +170,120 @@ struct RenderedImage {
 			delete[] image_data;
 			image_data = nullptr;
 		}
-		if (palette_data) {
-			delete[] palette_data;
-			palette_data = nullptr;
-		}
 	}
 };
 
+// CRT color profile emulation settings.
+enum class CrtColorProfile {
+	// Auto-select in adaptive CRT shader mode, otherwise None
+	Auto = -1,
+
+	// Raw RGB colours
+	None = 0,
+
+	// EBU standard phosphor emulation, used in high-end professional CRT
+	// monitors, such as the Sony BVM/PVM series (6500K white point)
+	Ebu = 1,
+
+	// P22 phosphor emulation, the most commonly used in lower-end CRT
+	// monitors (6500K white point)
+	P22 = 2,
+
+	// SMPT "C" phosphor emulation, the standard for American broadcast video
+	// monitors (6500K white point)
+	SmpteC = 3,
+
+	// 1980s Philips home computer monitor colours (e.g., Commodore 1084,
+	// Philips CM8833-II)
+	Philips = 4,
+
+	// Sony Trinitron CRT TV and monitor colours (~9300K whitepoint)
+	Trinitron = 5
+};
+
+// Settings to mimic the image adjustment options of real CRT monitors
+//
+struct ImageAdjustmentSettings {
+
+	// CRT colour profile emulation (see the `CrtColorProfile` enum).
+	CrtColorProfile crt_color_profile = CrtColorProfile::None;
+
+	// Analog brightness control. Valid range between 0.0 and 100.0; 50.0
+	// means no change.
+	float brightness = 50.0f;
+
+	// Analog contrast control. Valid range between 0.0 and 100.0; 50.0
+	// means no change.
+	float contrast = 50.0f;
+
+	// Gamma control. Valid range between -1.0 and 1.0; 0.0 means no change.
+	float gamma = 0.0f;
+
+	// Digital saturation control. Valid range between -1.0 and 1.0; 0.0
+	// means no change
+	float saturation = 0.0f;
+
+	// Digital sigmoid ("S-curve") contrast. Valid range between -2.0
+	// and 2.0; 0.0 means no change.
+	float digital_contrast = 50.0f;
+
+	// Used in CGA mono and Hercules modes to tint the raised black level as
+	// true monochrome monitors can't display pure grey.
+	Rgb888 black_level_color = {};
+
+	// Minimum black level to achieve visible "black scanlines". Valid range
+	// between 0.0 and 1.0; 0.0 means no change.
+	float black_level = 0.0f;
+
+	// Colour temperature (white point) in Kelvin (K); valid range is from
+	// 3000 K to 10,000 K.
+	float color_temperature_kelvin = 6500.0f;
+
+	// Post color temperature adjustment luminosity preservation factor. 0.0
+	// disables luminosity preservation, 1.0 restores the full luminosity.
+	// The closer the value is to 1.0, the less precise the temperature of
+	// the white point and lighter colours become.
+	float color_temperature_luma_preserve = 0.0f;
+
+	// Gain of the red channel. Valid range between 0.0 and 2.0; 1.0 means
+	// no change (unity gain).
+	float red_gain = 1.0f;
+
+	// Gain of the green channel. Valid range between 0.0 and 2.0; 1.0 means
+	// no change (unity gain).
+	float green_gain = 1.0f;
+
+	// Gain of the blue channel. Valid range between 0.0 and 2.0; 1.0 means
+	// no change (unity gain).
+	float blue_gain = 1.0f;
+};
+
+enum class ColorSpace {
+	// Standard sRGB with D65 (6500K) whitepoint and sRGB gamma
+	Srgb = 0,
+
+	// DCI-P3 colour space with DCI whitepoint (~6300K) and 2.6 gamma
+	DciP3 = 1,
+
+	// DCI-P3 colour space variant with D65 whitepoint (6500K) and 2.6 gamma
+	DciP3_D65 = 2,
+
+	// Display P3 with D65 whitepoint (6500K) and sRGB gamma
+	DisplayP3 = 3,
+
+	// "Modern" DCI-P3 variant for average consumer/gamer displays with ~90%
+	// P3 colour space coverage (D65 whitepoint and sRGB gamma)
+	ModernP3 = 4,
+
+	// AdobeRgb 2020 with D65 whitepoint (6500K) and 2.2 gamma
+	AdobeRgb = 5,
+
+	// Rec.2020 with D65 whitepoint (6500K) and 2.2 gamma
+	Rec2020 = 6
+};
+
 extern Render render;
-extern ScalerLineHandler_t RENDER_DrawLine;
+extern ScalerLineHandler RENDER_DrawLine;
 
 void RENDER_Init();
 void RENDER_Reinit();
@@ -227,9 +314,7 @@ void RENDER_EndUpdate(bool abort);
 void RENDER_SetPalette(const uint8_t entry, const uint8_t red,
                        const uint8_t green, const uint8_t blue);
 
-bool RENDER_NotifyVideoModeChanged(const VideoMode& video_mode,
-                                   const bool reinit_render);
-
+bool RENDER_NotifyVideoModeChanged(const VideoMode& video_mode);
 void RENDER_NotifyEgaModeWithVgaPalette();
 
 #endif // DOSBOX_RENDER_H

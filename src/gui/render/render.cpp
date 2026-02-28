@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2019-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2019-2026 The DOSBox Staging Team
 // SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
@@ -25,6 +25,8 @@
 
 #include <lz4hc.h>
 
+#include "gui/private/auto_image_adjustments.h"
+
 #include "audio/mixer.h"
 #include "capture/capture.h"
 #include "config/config.h"
@@ -39,12 +41,15 @@
 #include "misc/support.h"
 #include "misc/video.h"
 #include "shell/shell.h"
+#include "utils/checks.h"
 #include "utils/fraction.h"
 #include "utils/math_utils.h"
 #include "utils/string_utils.h"
 
 #include "SDL_keyboard.h"
 #include "SDL_thread.h"
+
+CHECK_NARROWING();
 
 static void pr_error()
 {
@@ -165,191 +170,217 @@ static int kbd_reader_thread(void *)
 }
 
 Render render;
-ScalerLineHandler_t RENDER_DrawLine;
+ScalerLineHandler RENDER_DrawLine;
 
 static void render_callback(GFX_CallbackFunctions_t function);
 
 static void check_palette()
 {
 	// Clean up any previous changed palette data
-	if (render.pal.changed) {
-		memset(render.pal.modified, 0, sizeof(render.pal.modified));
-		render.pal.changed = false;
+	if (render.palette.changed) {
+		memset(render.palette.modified, 0, sizeof(render.palette.modified));
+		render.palette.changed = false;
 	}
-	if (render.pal.first > render.pal.last) {
+	if (render.palette.first > render.palette.last) {
 		return;
 	}
-	Bitu i;
-	switch (render.scale.outMode) {
-	case scalerMode8: break;
-	case scalerMode15:
-	case scalerMode16:
-		for (i = render.pal.first; i <= render.pal.last; i++) {
-			uint8_t r = render.pal.rgb[i].red;
-			uint8_t g = render.pal.rgb[i].green;
-			uint8_t b = render.pal.rgb[i].blue;
 
-			// TODO This can't possibly work with the OpenGL
-			// renderer at the very least which will always return a
-			// 32-bit XRGB value.
-			//
-			uint16_t new_pal = GFX_MakePixel(r, g, b);
-			if (new_pal != render.pal.lut.b16[i]) {
-				render.pal.changed     = true;
-				render.pal.modified[i] = 1;
-				render.pal.lut.b16[i]  = new_pal;
-			}
-		}
-		break;
-	case scalerMode32:
-	default:
-		for (i = render.pal.first; i <= render.pal.last; i++) {
-			uint8_t r = render.pal.rgb[i].red;
-			uint8_t g = render.pal.rgb[i].green;
-			uint8_t b = render.pal.rgb[i].blue;
+	for (auto i = render.palette.first; i <= render.palette.last; i++) {
+		const auto color = render.palette.rgb[i];
+		const auto new_color = GFX_MakePixel(color.red, color.green, color.blue);
 
-			uint32_t new_pal = GFX_MakePixel(r, g, b);
-			if (new_pal != render.pal.lut.b32[i]) {
-				render.pal.changed     = true;
-				render.pal.modified[i] = 1;
-				render.pal.lut.b32[i]  = new_pal;
-			}
+		if (new_color != render.palette.lut[i]) {
+			render.palette.changed     = true;
+			render.palette.modified[i] = 1;
+			render.palette.lut[i]      = new_color;
 		}
-		break;
 	}
 
-	// Setup pal index to startup values
-	render.pal.first = 256;
-	render.pal.last  = 0;
+	// Setup palette index to startup values
+	render.palette.first = NumVgaColors;
+	render.palette.last  = 0;
 }
 
 void RENDER_SetPalette(const uint8_t entry, const uint8_t red,
                        const uint8_t green, const uint8_t blue)
 {
-	render.pal.rgb[entry].red   = red;
-	render.pal.rgb[entry].green = green;
-	render.pal.rgb[entry].blue  = blue;
+	auto& color = render.palette.rgb[entry];
 
-	if (render.pal.first > entry) {
-		render.pal.first = entry;
+	color.red   = red;
+	color.green = green;
+	color.blue  = blue;
+
+	if (render.palette.first > entry) {
+		render.palette.first = entry;
 	}
-	if (render.pal.last < entry) {
-		render.pal.last = entry;
+	if (render.palette.last < entry) {
+		render.palette.last = entry;
 	}
 }
 
 static void empty_line_handler(const void*) {}
 
-static void start_line_handler(const void* s)
+static void start_line_handler(const void* src_line_data)
 {
-	if (s) {
-		auto src = static_cast<const uintptr_t*>(s);
-		auto cache = reinterpret_cast<uintptr_t*>(render.scale.cacheRead);
-		for (Bits x = render.src_start; x > 0;) {
-			const auto src_ptr = reinterpret_cast<const uint8_t*>(src);
-			const auto src_val = read_unaligned_size_t(src_ptr);
-			if (src_val != cache[0]) {
-				if (!GFX_StartUpdate(render.scale.outWrite,
-				                     render.scale.outPitch)) {
-					RENDER_DrawLine = empty_line_handler;
-					return;
-				}
-				render.scale.outWrite += render.scale.outPitch *
-				                         Scaler_ChangedLines[0];
-				RENDER_DrawLine = render.scale.lineHandler;
-				RENDER_DrawLine(s);
+	if (src_line_data) {
+		if (std::memcmp(src_line_data,
+		                render.scale.cache_read,
+		                render.scale.cache_pitch) != 0) {
+
+			// This triggers transferring the pixel data to the
+			// render backend if the contents of the current frame
+			// has changed since the last frame. This will in turn
+			// make the backend do a buffer swap (if it's
+			// double-buffered). Otherwise, it will keep displaying
+			// the same frame at present time without doing a buffer
+			// swap followed by a texture upload to the GPU.
+			uint32_t* buf_ptr = {};
+
+			if (!GFX_StartUpdate(buf_ptr, render.scale.out_pitch)) {
+				RENDER_DrawLine = empty_line_handler;
 				return;
 			}
-			x--;
-			src++;
-			cache++;
+
+			render.scale.out_write = reinterpret_cast<uint8_t*>(buf_ptr);
+
+			render.scale.out_write += render.scale.out_pitch *
+			                          scaler_changed_lines[0];
+
+			render.updating_frame = true;
+
+			RENDER_DrawLine = render.scale.line_handler;
+			RENDER_DrawLine(src_line_data);
+			return;
 		}
 	}
-	render.scale.cacheRead += render.scale.cachePitch;
-	Scaler_ChangedLines[0] += Scaler_Aspect[render.scale.inLine];
-	render.scale.inLine++;
-	render.scale.outLine++;
+
+	render.scale.cache_read += render.scale.cache_pitch;
+
+	scaler_changed_lines[0] += render.scale.y_scale;
 }
 
-static void finish_line_handler(const void* s)
+static void finish_line_handler(const void* src_line_data)
 {
-	if (s) {
-		auto src = static_cast<const uintptr_t*>(s);
-		auto cache = reinterpret_cast<uintptr_t*>(render.scale.cacheRead);
-		for (Bits x = render.src_start; x > 0;) {
-			cache[0] = src[0];
-			x--;
-			src++;
-			cache++;
-		}
+	if (src_line_data) {
+		std::memcpy(render.scale.cache_read,
+		            src_line_data,
+		            render.scale.cache_pitch);
 	}
-	render.scale.cacheRead += render.scale.cachePitch;
+
+	render.scale.cache_read += render.scale.cache_pitch;
 }
 
-static void clear_cache_handler(const void* src)
+static void clear_cache_handler(const void* src_line_data)
 {
-	const uint32_t* srcLine = (const uint32_t*)src;
-	uint32_t* cacheLine     = (uint32_t*)render.scale.cacheRead;
-	Bitu width              = render.scale.cachePitch / 4;
-	for (Bitu x = 0; x < width; x++) {
-		cacheLine[x] = ~srcLine[x];
+	// `src_line_data` contains a scanline worth of pixel data. All screen
+	// mode widths are multiples of 8, therefore we can access this data one
+	// uint64_t at a time, regardless of pixel format (pixel can be stored
+	// on 1 to 4 bytes).
+	auto src = static_cast<const uint8_t*>(src_line_data);
+
+	// The width of all screen modes and therefore `cache_pitch` too is a
+	// multiple of 8 (`cache_pitch` equals the screen mode's width multiplied
+	// by the number of bytes per pixel and no padding).
+	//
+	auto cache = render.scale.cache_read;
+
+	constexpr auto Step = sizeof(uint64_t);
+	const auto count    = render.scale.cache_pitch / Step;
+
+	for (size_t x = 0; x < count; ++x) {
+		const auto src_val = read_unaligned_uint64(src);
+
+		write_unaligned_uint64(cache, ~src_val);
+
+		src += Step;
+		cache += Step;
 	}
-	render.scale.lineHandler(src);
+
+	render.scale.line_handler(src_line_data);
 }
 
 bool RENDER_StartUpdate()
 {
-	if (render.updating) {
+	if (render.render_in_progress) {
 		return false;
 	}
 	if (!render.active) {
 		return false;
 	}
-	if (render.scale.inMode == scalerMode8) {
+
+	if (render.scale.line_palette_handler) {
 		check_palette();
 	}
-	render.scale.inLine     = 0;
-	render.scale.outLine    = 0;
-	render.scale.cacheRead  = (uint8_t*)&scalerSourceCache;
-	render.scale.outWrite   = nullptr;
-	render.scale.outPitch   = 0;
-	Scaler_ChangedLines[0]  = 0;
-	Scaler_ChangedLineIndex = 0;
+
+	render.scale.cache_read = reinterpret_cast<uint8_t*>(
+	        render.scale.cache.data());
+
+	render.scale.out_write = nullptr;
+	render.scale.out_pitch = 0;
+
+	scaler_changed_lines[0]   = 0;
+	scaler_changed_line_index = 0;
+
+	// Set up output image dimensions
+	render.scale.out_width = render.src.width *
+	                         (render.src.double_width ? 2 : 1);
+
+	render.scale.out_height = render.src.height *
+	                          (render.src.double_height ? 2 : 1);
 
 	// Clearing the cache will first process the line to make sure it's
-	// never the same
-	if (render.scale.clearCache) {
-		// LOG_MSG("Clearing cache");
+	// never the same.
+	if (render.scale.clear_cache) {
 
-		// Will always have to update the screen with this one anyway,
-		// so let's update already
-		if (!GFX_StartUpdate(render.scale.outWrite, render.scale.outPitch)) {
+		// This will force a buffer swap & texture update in the render
+		// backend (see comments in `start_line_handler()`).
+		//
+		uint32_t* buf_ptr = {};
+
+		if (!GFX_StartUpdate(buf_ptr, render.scale.out_pitch)) {
 			return false;
 		}
-		render.fullFrame        = true;
-		render.scale.clearCache = false;
-		RENDER_DrawLine         = clear_cache_handler;
-	} else {
-		if (render.pal.changed) {
-			// Assume pal changes always do a full screen update
-			// anyway
-			if (!GFX_StartUpdate(render.scale.outWrite,
-			                     render.scale.outPitch)) {
-				return false;
-			}
-			RENDER_DrawLine  = render.scale.linePalHandler;
-			render.fullFrame = true;
-		} else {
-			RENDER_DrawLine = start_line_handler;
-			if (CAPTURE_IsCapturingImage() ||
-			    CAPTURE_IsCapturingVideo()) {
-				render.fullFrame = true;
-			} else {
-				render.fullFrame = false;
-			}
-		}
+
+		render.scale.out_write = reinterpret_cast<uint8_t*>(buf_ptr);
+
+		RENDER_DrawLine = clear_cache_handler;
+
+		render.render_in_progress = true;
+		render.updating_frame     = true;
+		render.scale.clear_cache  = false;
+		return true;
 	}
-	render.updating = true;
+
+	if (render.palette.changed) {
+		// Assume palette changes always do a full screen update anyway.
+		//
+		// This will force a buffer swap & texture update in the render
+		// backend (see comments in `start_line_handler()`).
+		//
+		uint32_t* buf_ptr = {};
+
+		if (!GFX_StartUpdate(buf_ptr, render.scale.out_pitch)) {
+			return false;
+		}
+
+		render.scale.out_write = reinterpret_cast<uint8_t*>(buf_ptr);
+
+		RENDER_DrawLine = render.scale.line_palette_handler;
+
+		render.render_in_progress = true;
+		return true;
+	}
+
+	// Regular path -- scaler cache reset was not request and the palette
+	// hasn't been changed (for screen modes with indexed colour).
+	//
+	// `GFX_StartUpdate()` will be called conditionally in
+	// `start_line_handler()` if the contents of the current frame differs
+	// from the previous one (see comments in `start_line_handler()`).
+	//
+	RENDER_DrawLine = start_line_handler;
+
+	render.render_in_progress = true;
 	return true;
 }
 
@@ -357,8 +388,39 @@ static void halt_render()
 {
 	RENDER_DrawLine = empty_line_handler;
 	GFX_EndUpdate();
-	render.updating = false;
-	render.active   = false;
+
+	render.render_in_progress = false;
+	render.active             = false;
+}
+
+static void handle_capture_frame()
+{
+	bool double_width  = false;
+	bool double_height = false;
+
+	if (render.src.double_width != render.src.double_height) {
+		if (render.src.double_width) {
+			double_width = true;
+		}
+		if (render.src.double_height) {
+			double_height = true;
+		}
+	}
+
+	RenderedImage image = {};
+
+	image.params               = render.src;
+	image.params.double_width  = double_width;
+	image.params.double_height = double_height;
+	image.pitch                = render.scale.cache_pitch;
+
+	image.image_data = reinterpret_cast<uint8_t*>(render.scale.cache.data());
+
+	image.palette = render.palette.rgb;
+
+	const auto frames_per_second = static_cast<float>(render.fps);
+
+	CAPTURE_AddFrame(image, frames_per_second);
 }
 
 constexpr int MAX_SEND_SIZE = 32 + 1024 + 320*224 + 320*224/64; // must be larger than 64kb window size for lz4!
@@ -492,36 +554,14 @@ static uint8_t *encode_diff(uint8_t *tgt, uint8_t *src)
 
 void RENDER_EndUpdate([[maybe_unused]] bool abort)
 {
-	if (!render.updating) {
+	if (!render.render_in_progress) {
 		return;
 	}
 
 	RENDER_DrawLine = empty_line_handler;
 
 	if (CAPTURE_IsCapturingImage() || CAPTURE_IsCapturingVideo()) {
-		bool double_width  = false;
-		bool double_height = false;
-		if (render.src.double_width != render.src.double_height) {
-			if (render.src.double_width) {
-				double_width = true;
-			}
-			if (render.src.double_height) {
-				double_height = true;
-			}
-		}
-
-		RenderedImage image = {};
-
-		image.params               = render.src;
-		image.params.double_width  = double_width;
-		image.params.double_height = double_height;
-		image.pitch                = render.scale.cachePitch;
-		image.image_data           = (uint8_t*)&scalerSourceCache;
-		image.palette_data         = (uint8_t*)&render.pal.rgb;
-
-		const auto frames_per_second = static_cast<float>(render.fps);
-
-		CAPTURE_AddFrame(image, frames_per_second);
+		handle_capture_frame();
 	}
 
         if (shell_ishost && render.src.width==320 && (render.src.height==448 || render.src.height==224)) {
@@ -593,27 +633,8 @@ void RENDER_EndUpdate([[maybe_unused]] bool abort)
 
 	GFX_EndUpdate();
 
-	render.updating = false;
-}
-
-static Bitu make_aspect_table(Bitu height, double scaley, Bitu miny)
-{
-	Bitu i;
-	double lines    = 0;
-	Bitu linesadded = 0;
-
-	for (i = 0; i < height; i++) {
-		lines += scaley;
-		if (lines >= miny) {
-			Bitu templines = (Bitu)lines;
-			lines -= templines;
-			linesadded += templines;
-			Scaler_Aspect[i] = templines;
-		} else {
-			Scaler_Aspect[i] = 0;
-		}
-	}
-	return linesadded;
+	render.render_in_progress = false;
+	render.updating_frame     = false;
 }
 
 static SectionProp& get_render_section()
@@ -643,58 +664,31 @@ static void render_reset()
 	// driver operating in a different thread or process.
 	std::lock_guard<std::mutex> guard(render_reset_mutex);
 
-	uint16_t render_width_px = render.src.width;
-	bool double_width        = render.src.double_width;
-	bool double_height       = render.src.double_height;
+	int render_width_px = render.src.width;
+	bool double_width   = render.src.double_width;
+	bool double_height  = render.src.double_height;
 
-	uint8_t xscale, yscale;
-	ScalerSimpleBlock_t* simpleBlock = &ScaleNormal1x;
-
-	// Don't do software scaler sizes larger than 4k
-	uint16_t maxsize_current_input = SCALER_MAXWIDTH / render_width_px;
-	if (render.scale.size > maxsize_current_input) {
-		render.scale.size = maxsize_current_input;
-	}
+	auto scaler = &Scale1x;
 
 	if (double_height && double_width) {
-		simpleBlock = &ScaleNormal2x;
+		scaler = &Scale2x;
 	} else if (double_width) {
-		simpleBlock = &ScaleNormalDw;
+		scaler = &ScaleHoriz2x;
 	} else if (double_height) {
-		simpleBlock = &ScaleNormalDh;
+		scaler = &ScaleVert2x;
 	} else {
-		simpleBlock = &ScaleNormal1x;
+		scaler = &Scale1x;
 	}
 
-	if ((render_width_px * simpleBlock->xscale > SCALER_MAXWIDTH) ||
-	    (render.src.height * simpleBlock->yscale > SCALER_MAXHEIGHT)) {
-		simpleBlock = &ScaleNormal1x;
+	render.scale.y_scale = scaler->y_scale;
+
+	if ((render_width_px * scaler->x_scale > ScalerMaxWidth) ||
+	    (render.src.height * scaler->y_scale > ScalerMaxHeight)) {
+		scaler = &Scale1x;
 	}
 
-	xscale    = simpleBlock->xscale;
-	yscale    = simpleBlock->yscale;
-	//		LOG_MSG("Scaler:%s",simpleBlock->name);
-
-	constexpr auto src_pixel_bytes = sizeof(uintptr_t);
-
-	switch (render.src.pixel_format) {
-	case PixelFormat::Indexed8:
-	case PixelFormat::RGB555_Packed16:
-	case PixelFormat::RGB565_Packed16:
-		render.src_start = (render.src.width * 2) / src_pixel_bytes;
-		break;
-	case PixelFormat::BGR24_ByteArray:
-		render.src_start = (render.src.width * 3) / src_pixel_bytes;
-		break;
-	case PixelFormat::BGRX32_ByteArray:
-		render.src_start = (render.src.width * 4) / src_pixel_bytes;
-		break;
-	}
-
-	render_width_px *= xscale;
-	const auto render_height_px = make_aspect_table(render.src.height,
-	                                                yscale,
-	                                                yscale);
+	render_width_px *= scaler->x_scale;
+	const auto render_height_px = render.src.height * scaler->y_scale;
 
 	const auto render_pixel_aspect_ratio = render.src.pixel_aspect_ratio;
 
@@ -707,63 +701,55 @@ static void render_reset()
 	            &render_callback);
 
 	// Set up scaler variables
-	render.scale.outMode = scalerMode32;
-
-	const auto lineBlock = &simpleBlock->Random;
-
 	switch (render.src.pixel_format) {
 	case PixelFormat::Indexed8:
-		render.scale.lineHandler = (*lineBlock)[0][render.scale.outMode];
-		render.scale.linePalHandler = (*lineBlock)[5][render.scale.outMode];
-		render.scale.inMode     = scalerMode8;
-		render.scale.cachePitch = render.src.width * 1;
+		render.scale.line_handler         = scaler->line_handlers[0];
+		render.scale.line_palette_handler = scaler->line_handlers[5];
+		render.scale.cache_pitch          = render.src.width * 1;
 		break;
+
 	case PixelFormat::RGB555_Packed16:
-		render.scale.lineHandler = (*lineBlock)[1][render.scale.outMode];
-		render.scale.linePalHandler = nullptr;
-		render.scale.inMode         = scalerMode15;
-		render.scale.cachePitch     = render.src.width * 2;
+		render.scale.line_handler         = scaler->line_handlers[1];
+		render.scale.line_palette_handler = nullptr;
+		render.scale.cache_pitch          = render.src.width * 2;
 		break;
+
 	case PixelFormat::RGB565_Packed16:
-		render.scale.lineHandler = (*lineBlock)[2][render.scale.outMode];
-		render.scale.linePalHandler = nullptr;
-		render.scale.inMode         = scalerMode16;
-		render.scale.cachePitch     = render.src.width * 2;
+		render.scale.line_handler         = scaler->line_handlers[2];
+		render.scale.line_palette_handler = nullptr;
+		render.scale.cache_pitch          = render.src.width * 2;
 		break;
+
 	case PixelFormat::BGR24_ByteArray:
-		render.scale.lineHandler = (*lineBlock)[3][render.scale.outMode];
-		render.scale.linePalHandler = nullptr;
-		render.scale.inMode         = scalerMode32;
-		render.scale.cachePitch     = render.src.width * 3;
+		render.scale.line_handler         = scaler->line_handlers[3];
+		render.scale.line_palette_handler = nullptr;
+		render.scale.cache_pitch          = render.src.width * 3;
 		break;
+
 	case PixelFormat::BGRX32_ByteArray:
-		render.scale.lineHandler = (*lineBlock)[4][render.scale.outMode];
-		render.scale.linePalHandler = nullptr;
-		render.scale.inMode         = scalerMode32;
-		render.scale.cachePitch     = render.src.width * 4;
+		render.scale.line_handler         = scaler->line_handlers[4];
+		render.scale.line_palette_handler = nullptr;
+		render.scale.cache_pitch          = render.src.width * 4;
 		break;
+
 	default:
 		E_Exit("RENDER: Invalid pixel_format %u",
 		       static_cast<uint8_t>(render.src.pixel_format));
 	}
 
-	render.scale.blocks    = render.src.width / SCALER_BLOCKSIZE;
-	render.scale.lastBlock = render.src.width % SCALER_BLOCKSIZE;
-	render.scale.inHeight  = render.src.height;
-
 	// Reset the palette change detection to its initial value
-	render.pal.first   = 0;
-	render.pal.last    = 255;
-	render.pal.changed = false;
-	memset(render.pal.modified, 0, sizeof(render.pal.modified));
+	render.palette.first   = 0;
+	render.palette.last    = 255;
+	render.palette.changed = false;
+	memset(render.palette.modified, 0, sizeof(render.palette.modified));
 
 	// Finish this frame using a copy only handler
-	RENDER_DrawLine       = finish_line_handler;
-	render.scale.outWrite = nullptr;
+	RENDER_DrawLine        = finish_line_handler;
+	render.scale.out_write = nullptr;
 
 	// Signal the next frame to first reinit the cache
-	render.scale.clearCache = true;
-	render.active           = true;
+	render.scale.clear_cache = true;
+	render.active            = true;
 }
 
 static void render_callback(GFX_CallbackFunctions_t function)
@@ -771,12 +757,15 @@ static void render_callback(GFX_CallbackFunctions_t function)
 	if (function == GFX_CallbackStop) {
 		halt_render();
 		return;
+
 	} else if (function == GFX_CallbackRedraw) {
-		render.scale.clearCache = true;
+		render.scale.clear_cache = true;
 		return;
+
 	} else if (function == GFX_CallbackReset) {
 		GFX_EndUpdate();
 		render_reset();
+
 	} else {
 		E_Exit("Unhandled GFX_CallbackReset %d", function);
 	}
@@ -787,8 +776,8 @@ void RENDER_SetSize(const ImageInfo& image_info, const double frames_per_second)
 	halt_render();
 
 	if (image_info.width == 0 || image_info.height == 0 ||
-	    image_info.width > SCALER_MAXWIDTH ||
-	    image_info.height > SCALER_MAXHEIGHT) {
+	    image_info.width > ScalerMaxWidth ||
+	    image_info.height > ScalerMaxHeight) {
 		return;
 	}
 
@@ -841,7 +830,138 @@ static void set_scan_and_pixel_doubling()
 	VGA_AllowPixelDoubling(!force_no_pixel_doubling);
 }
 
-bool RENDER_NotifyVideoModeChanged(const VideoMode& video_mode, const bool reinit_render)
+static ImageAdjustmentSettings curr_image_adjustment_settings = {};
+
+static void set_image_adjustment_settings()
+{
+	GFX_GetRenderer()->SetImageAdjustmentSettings(curr_image_adjustment_settings);
+}
+
+static CrtColorProfile to_crt_color_profile_enum(const std::string& setting)
+{
+	using enum CrtColorProfile;
+
+	if (setting == "auto") {
+		return Auto;
+
+	} else if (has_false(setting)) {
+		return None;
+
+	} else if (setting == "ebu") {
+		return Ebu;
+
+	} else if (setting == "p22") {
+		return P22;
+
+	} else if (setting == "smpte-c") {
+		return SmpteC;
+
+	} else if (setting == "philips") {
+		return Philips;
+
+	} else if (setting == "trinitron") {
+		return Trinitron;
+
+	} else {
+		assertm(false, "Invalid monochrome_palette setting");
+		return None;
+	}
+}
+
+static const char* to_setting_name(const CrtColorProfile profile)
+{
+	using enum CrtColorProfile;
+
+	switch (profile) {
+	case Auto: return "auto";
+	case None: return "none";
+	case Ebu: return "ebu";
+	case P22: return "p22";
+	case SmpteC: return "smpte-c";
+	case Philips: return "philips";
+	case Trinitron: return "trinitron";
+	default:
+		assertm(false, "Invalid CrtColorProfile enum value");
+		return "auto";
+	}
+}
+
+static const char* to_displayable_name(const CrtColorProfile profile)
+{
+	using enum CrtColorProfile;
+
+	switch (profile) {
+	case Auto: return "auto";
+	case None: return "none";
+	case Ebu: return "EBU";
+	case P22: return "P22";
+	case SmpteC: return "SMPTE-C";
+	case Philips: return "Philips";
+	case Trinitron: return "Trinitron";
+	default:
+		assertm(false, "Invalid CrtColorProfile enum value");
+		return "auto";
+	}
+}
+
+static void handle_auto_image_adjustment_settings(const VideoMode& video_mode)
+{
+	const auto maybe_auto_settings =
+	        AutoImageAdjustmentsManager::GetInstance().GetSettings(video_mode);
+
+	if (maybe_auto_settings) {
+		const auto settings = *maybe_auto_settings;
+
+		if (get_render_section().GetString("crt_color_profile") == "auto") {
+			if (curr_image_adjustment_settings.crt_color_profile !=
+			    settings.crt_color_profile) {
+
+				curr_image_adjustment_settings.crt_color_profile =
+				        settings.crt_color_profile;
+				set_image_adjustment_settings();
+
+				if (settings.crt_color_profile ==
+				    CrtColorProfile::None) {
+
+					LOG_INFO("RENDER: Disabled CRT color profile emulation");
+				} else {
+					LOG_INFO("RENDER: Auto-switched to %s CRT color profile",
+					         to_displayable_name(
+					                 settings.crt_color_profile));
+				}
+			}
+		}
+
+		if (get_render_section().GetString("black_level") == "auto") {
+			if (curr_image_adjustment_settings.black_level !=
+			    settings.black_level) {
+
+				curr_image_adjustment_settings.black_level =
+				        settings.black_level;
+				set_image_adjustment_settings();
+
+				LOG_INFO("RENDER: Auto-switched to %g black level",
+				         settings.black_level);
+			}
+		}
+
+		if (get_render_section().GetString("color_temperature") == "auto") {
+			if (curr_image_adjustment_settings.color_temperature_kelvin !=
+			    settings.color_temperature_kelvin) {
+
+				curr_image_adjustment_settings.color_temperature_kelvin =
+				        settings.color_temperature_kelvin;
+				set_image_adjustment_settings();
+
+				LOG_INFO("RENDER: Auto-switched to %gK colour temperature",
+				         settings.color_temperature_kelvin);
+			}
+		}
+	}
+}
+
+static bool handle_shader_auto_switching(const VideoMode& video_mode,
+                                         const bool reinit_renderer)
 {
 	const auto renderer = GFX_GetRenderer();
 
@@ -856,25 +976,40 @@ bool RENDER_NotifyVideoModeChanged(const VideoMode& video_mode, const bool reini
 	const auto shader_changed = (curr_shader.name != new_shader.name) ||
 	                            (curr_preset.name != new_preset.name);
 
-	if (shader_changed) {
-		set_scan_and_pixel_doubling();
-
-		if (reinit_render) {
-			// No need to reinit the renderer if the double scaning
-			// / pixel doubling settings have not been changed.
-			const auto render_params_changed =
-			        ((curr_preset.settings.force_single_scan !=
-			          new_preset.settings.force_single_scan) ||
-			         (curr_preset.settings.force_no_pixel_doubling !=
-			          new_preset.settings.force_no_pixel_doubling));
-
-			if (render_params_changed) {
-				reinit_drawing();
-			}
-		}
+	if (!shader_changed) {
+		return false;
 	}
 
-	return shader_changed;
+	set_scan_and_pixel_doubling();
+
+	if (reinit_renderer) {
+		// No need to reinit the renderer if the double scaning
+		// / pixel doubling settings have not been changed.
+		const auto render_params_changed =
+		        ((curr_preset.settings.force_single_scan !=
+		          new_preset.settings.force_single_scan) ||
+
+		         (curr_preset.settings.force_no_pixel_doubling !=
+		          new_preset.settings.force_no_pixel_doubling));
+
+		if (render_params_changed) {
+			reinit_drawing();
+		}
+	}
+	return true;
+}
+
+static bool notify_video_mode_changed(const VideoMode& video_mode,
+                                      const bool reinit_renderer)
+{
+	handle_auto_image_adjustment_settings(video_mode);
+	return handle_shader_auto_switching(video_mode, reinit_renderer);
+}
+
+bool RENDER_NotifyVideoModeChanged(const VideoMode& video_mode)
+{
+	constexpr auto ReinitRenderer = false;
+	return notify_video_mode_changed(video_mode, ReinitRenderer);
 }
 
 void RENDER_NotifyEgaModeWithVgaPalette()
@@ -889,8 +1024,8 @@ void RENDER_NotifyEgaModeWithVgaPalette()
 		video_mode.has_vga_colors = true;
 
 		// We are potentially auto-switching to a VGA shader now.
-		constexpr auto ReinitRender = true;
-		RENDER_NotifyVideoModeChanged(video_mode, ReinitRender);
+		constexpr auto ReinitRenderer = true;
+		notify_video_mode_changed(video_mode, ReinitRenderer);
 	}
 }
 
@@ -921,7 +1056,11 @@ static bool set_shader(const std::string& descriptor)
 		set_scan_and_pixel_doubling();
 		return true;
 
-	case Ok: set_scan_and_pixel_doubling(); return true;
+	case Ok:
+		set_scan_and_pixel_doubling();
+		handle_auto_image_adjustment_settings(VGA_GetCurrentVideoMode());
+		set_image_adjustment_settings();
+		return true;
 
 	default: assertm(false, "Invalid SetShaderResult value"); return false;
 	}
@@ -1029,44 +1168,39 @@ static const char* to_string(const enum MonochromePalette palette)
 	}
 }
 
-static AspectRatioCorrectionMode aspect_ratio_correction_mode = {};
-
-static AspectRatioCorrectionMode get_aspect_ratio_correction_mode_setting(SectionProp& section)
+static void set_aspect_ratio_correction(const SectionProp& section)
 {
-	const std::string mode = section.GetString("aspect");
+	render.aspect_ratio_correction_mode = [&]() {
+		const std::string mode = section.GetString("aspect");
 
-	if (has_true(mode) || mode == "auto") {
-		return AspectRatioCorrectionMode::Auto;
+		if (has_true(mode) || mode == "auto") {
+			return AspectRatioCorrectionMode::Auto;
 
-	} else if (has_false(mode) || mode == "square-pixels") {
-		return AspectRatioCorrectionMode::SquarePixels;
+		} else if (has_false(mode) || mode == "square-pixels") {
+			return AspectRatioCorrectionMode::SquarePixels;
 
-	} else if (mode == "stretch") {
-		return AspectRatioCorrectionMode::Stretch;
+		} else if (mode == "stretch") {
+			return AspectRatioCorrectionMode::Stretch;
 
-	} else {
-		constexpr auto SettingName  = "aspect";
-		constexpr auto DefaultValue = "auto";
+		} else {
+			constexpr auto SettingName  = "aspect";
+			constexpr auto DefaultValue = "auto";
 
-		NOTIFY_DisplayWarning(Notification::Source::Console,
-		                      "RENDER",
-		                      "PROGRAM_CONFIG_INVALID_SETTING",
-		                      SettingName,
-		                      mode.c_str(),
-		                      DefaultValue);
+			NOTIFY_DisplayWarning(Notification::Source::Console,
+			                      "RENDER",
+			                      "PROGRAM_CONFIG_INVALID_SETTING",
+			                      SettingName,
+			                      mode.c_str(),
+			                      DefaultValue);
 
-		return AspectRatioCorrectionMode::Auto;
-	}
-}
-
-static void set_aspect_ratio_correction(SectionProp& section)
-{
-	aspect_ratio_correction_mode = get_aspect_ratio_correction_mode_setting(section);
+			return AspectRatioCorrectionMode::Auto;
+		}
+	}();
 }
 
 AspectRatioCorrectionMode RENDER_GetAspectRatioCorrectionMode()
 {
-	return aspect_ratio_correction_mode;
+	return render.aspect_ratio_correction_mode;
 }
 
 static void log_invalid_viewport_setting_warning(
@@ -1113,7 +1247,8 @@ static std::optional<ViewportSettings> parse_fit_viewport_modes(const std::strin
 {
 	if (pref == "fit") {
 		ViewportSettings viewport = {};
-		viewport.mode             = ViewportMode::Fit;
+
+		viewport.mode = ViewportMode::Fit;
 		return viewport;
 
 	} else if (const auto width_and_height = parse_int_dimensions(pref)) {
@@ -1121,8 +1256,10 @@ static std::optional<ViewportSettings> parse_fit_viewport_modes(const std::strin
 
 		const auto desktop = GFX_GetDesktopSize();
 
-		const bool is_out_of_bounds = (w <= 0 || w > desktop.w ||
-		                               h <= 0 || h > desktop.h);
+		const bool is_out_of_bounds = (w <= 0 ||
+		                               static_cast<float>(w) > desktop.w ||
+		                               h <= 0 ||
+		                               static_cast<float>(h) > desktop.h);
 		if (is_out_of_bounds) {
 			const auto extra_info = format_str(
 			        "Viewport size is outside of the %dx%d desktop bounds",
@@ -1266,73 +1403,71 @@ static std::optional<ViewportSettings> parse_viewport_settings(const std::string
 	}
 }
 
-static ViewportSettings viewport_settings = {};
-
 static void set_viewport(SectionProp& section)
 {
 	if (const auto& settings = parse_viewport_settings(
 	            section.GetString("viewport"));
 	    settings) {
-		viewport_settings = *settings;
+		render.viewport_settings = *settings;
 	} else {
-		viewport_settings = {};
+		render.viewport_settings = {};
 		set_section_property_value("render", "viewport", "fit");
 	}
 }
 
-static IntegerScalingMode get_integer_scaling_mode_setting(SectionProp& section)
+static void set_integer_scaling(const SectionProp& section)
 {
-	const std::string mode = section.GetString("integer_scaling");
+	using enum IntegerScalingMode;
 
-	if (has_false(mode)) {
-		return IntegerScalingMode::Off;
+	render.integer_scaling_mode = [&]() {
+		const std::string mode = section.GetString("integer_scaling");
 
-	} else if (mode == "auto") {
-		return IntegerScalingMode::Auto;
+		if (has_false(mode)) {
+			return Off;
 
-	} else if (mode == "horizontal") {
-		return IntegerScalingMode::Horizontal;
+		} else if (mode == "auto") {
+			return Auto;
 
-	} else if (mode == "vertical") {
-		return IntegerScalingMode::Vertical;
+		} else if (mode == "horizontal") {
+			return Horizontal;
 
-	} else {
-		constexpr auto SettingName  = "integer_scaling";
-		constexpr auto DefaultValue = "auto";
+		} else if (mode == "vertical") {
+			return Vertical;
 
-		NOTIFY_DisplayWarning(Notification::Source::Console,
-		                      "RENDER",
-		                      "PROGRAM_CONFIG_INVALID_SETTING",
-		                      SettingName,
-		                      mode.c_str(),
-		                      DefaultValue);
+		} else {
+			constexpr auto SettingName  = "integer_scaling";
+			constexpr auto DefaultValue = "auto";
 
-		return IntegerScalingMode::Auto;
-	}
-}
+			NOTIFY_DisplayWarning(Notification::Source::Console,
+			                      "RENDER",
+			                      "PROGRAM_CONFIG_INVALID_SETTING",
+			                      SettingName,
+			                      mode.c_str(),
+			                      DefaultValue);
 
-static void set_integer_scaling(SectionProp& section)
-{
-	render.integer_scaling_mode = get_integer_scaling_mode_setting(section);
+			return Auto;
+		}
+	}();
 }
 
 DosBox::Rect RENDER_CalcRestrictedViewportSizeInPixels(const DosBox::Rect& canvas_size_px)
 {
 	const auto dpi_scale = GFX_GetDpiScaleFactor();
 
-	switch (viewport_settings.mode) {
+	switch (render.viewport_settings.mode) {
 	case ViewportMode::Fit: {
 		auto viewport_size_px = [&] {
-			if (viewport_settings.fit.limit_size) {
-				return viewport_settings.fit.limit_size->Copy().ScaleSize(
-				        dpi_scale);
+			if (render.viewport_settings.fit.limit_size) {
+				return render.viewport_settings.fit.limit_size
+				        ->Copy()
+				        .ScaleSize(dpi_scale);
 
-			} else if (viewport_settings.fit.desktop_scale) {
+			} else if (render.viewport_settings.fit.desktop_scale) {
 				auto desktop_size_px = GFX_GetDesktopSize().ScaleSize(
 				        dpi_scale);
 
 				return desktop_size_px.ScaleSize(
-				        *viewport_settings.fit.desktop_scale);
+				        *render.viewport_settings.fit.desktop_scale);
 			} else {
 				// The viewport equals the canvas size
 				// in Fit mode without parameters
@@ -1352,8 +1487,8 @@ DosBox::Rect RENDER_CalcRestrictedViewportSizeInPixels(const DosBox::Rect& canva
 		        canvas_size_px);
 
 		return restricted_canvas_size_px.Copy()
-		        .ScaleWidth(viewport_settings.relative.width_scale)
-		        .ScaleHeight(viewport_settings.relative.height_scale);
+		        .ScaleWidth(render.viewport_settings.relative.width_scale)
+		        .ScaleHeight(render.viewport_settings.relative.height_scale);
 	}
 
 	default: assertm(false, "Invalid ViewportMode value"); return {};
@@ -1383,7 +1518,7 @@ DosBox::Rect RENDER_CalcDrawRectInPixels(const DosBox::Rect& canvas_size_px,
 			        render_pixel_aspect_ratio.Inverse().ToFloat();
 
 			return render_size_px.Copy()
-			        .ScaleSize(integer_scale_factor)
+			        .ScaleSize(static_cast<float>(integer_scale_factor))
 			        .ScaleHeight(vert_scale);
 		}
 	};
@@ -1476,6 +1611,34 @@ std::string RENDER_GetCgaColorsSetting()
 	return get_render_section().GetString("cga_colors");
 }
 
+constexpr int BrightnessMin = 0;
+constexpr int BrightnessMax = 100;
+
+constexpr int ContrastMin = 0;
+constexpr int ContrastMax = 100;
+
+constexpr int GammaMin = -50;
+constexpr int GammaMax = 50;
+
+constexpr int DigitalContrastMin = -50;
+constexpr int DigitalContrastMax = 50;
+
+constexpr int BlackLevelMin = 0;
+constexpr int BlackLevelMax = 100;
+
+constexpr int SaturationMin = -50;
+constexpr int SaturationMax = 50;
+
+constexpr int ColorTemperatureNeutral = 6500;
+constexpr int ColorTemperatureMin     = 3000;
+constexpr int ColorTemperatureMax     = 10000;
+
+constexpr int ColorTemperatureLumaPreserveMin = 0;
+constexpr int ColorTemperatureLumaPreserveMax = 100;
+
+constexpr int RgbGainMin = 0;
+constexpr int RgbGainMax = 200;
+
 static void init_render_settings(SectionProp& section)
 {
 	using enum Property::Changeable::Value;
@@ -1538,6 +1701,10 @@ static void init_render_settings(SectionProp& section)
 	        "             the expense of uneven pixels, especially with non-square pixel\n"
 	        "             aspect ratios (this is less of an issue on high resolution\n"
 	        "             monitors).\n"
+	        "\n"
+	        "  jinc2:     Upscale the image using jinc 2-lobe interpolation with anti-ringing.\n"
+	        "             This blends together dithered color patterns at the cost of image\n"
+	        "             sharpness.\n"
 	        "\n"
 	        "Start DOSBox Staging with the '--list-shaders' command line option to see the\n"
 	        "full list of available shaders. You can also use an absolute or relative path to\n"
@@ -1632,6 +1799,7 @@ static void init_render_settings(SectionProp& section)
 	        "Notes:\n"
 	        "  - Using 'relative' mode with 'integer_scaling' enabled could lead to\n"
 	        "    surprising (but correct) results.\n"
+	        "\n"
 	        "  - Use the 'Stretch Axis', 'Inc Stretch', and 'Dec Stretch' hotkey actions to\n"
 	        "    adjust the image size in 'relative' mode in real-time, then copy the new\n"
 	        "    settings from the logs into your config.");
@@ -1658,7 +1826,10 @@ static void init_render_settings(SectionProp& section)
 	string_prop = section.AddString("cga_colors", OnlyAtStart, "default");
 	string_prop->SetHelp(
 	        "Set the interpretation of CGA RGBI colours ('default' by default). Affects all\n"
-	        "machine types capable of displaying CGA or better graphics. Built-in presets:\n"
+	        "machine types capable of displaying CGA or better graphics, including the PCjr,\n"
+	        "the Tandy, and CGA/EGA modes on VGA adapters. Note these colours will be further\n"
+	        "adjusted by the video output settings (see 'crt_color_profile', 'brightness',\n"
+	        "'saturation', etc.). Built-in presets:\n"
 	        "\n"
 	        "  default:       The canonical CGA palette, as emulated by VGA adapters\n"
 	        "                 (default).\n"
@@ -1666,15 +1837,18 @@ static void init_render_settings(SectionProp& section)
 	        "  tandy <bl>:    Emulation of an idealised Tandy monitor with adjustable brown\n"
 	        "                 level. The brown level can be provided as an optional second\n"
 	        "                 parameter (0 - red, 50 - brown, 100 - dark yellow;\n"
-	        "                 defaults to 50). E.g. tandy 100\n"
+	        "                 defaults to 50). E.g., tandy 100\n"
 	        "\n"
 	        "  tandy-warm:    Emulation of the actual colour output of an unknown Tandy\n"
-	        "                 monitor.\n"
+	        "                 monitor. Inteded to be used with 'crt_color_profile = none' and\n"
+	        "                 'color_temperature = 6500'.\n"
 	        "\n"
 	        "  ibm5153 <c>:   Emulation of the actual colour output of an IBM 5153 monitor\n"
 	        "                 with a unique contrast control that dims non-bright colours\n"
 	        "                 only. The contrast can be optionally provided as a second\n"
-	        "                 parameter (0 to 100; defaults to 100), e.g. ibm5153 60\n"
+	        "                 parameter (0 to 100; defaults to 100), e.g., ibm5153 60.\n"
+	        "                 Inteded to be used with 'crt_color_profile = none' and\n"
+	        "                 'color_temperature = 6500'.\n"
 	        "\n"
 	        "  agi-amiga-v1, agi-amiga-v2, agi-amiga-v3:\n"
 	        "                 Palettes used by the Amiga ports of Sierra AGI games.\n"
@@ -1683,16 +1857,18 @@ static void init_render_settings(SectionProp& section)
 	        "                 AGI-interpreter.\n"
 	        "\n"
 	        "  scumm-amiga:   Palette used by the Amiga ports of LucasArts EGA games.\n"
+	        "\n"
 	        "  colodore:      Commodore 64 inspired colours based on the Colodore palette.\n"
+	        "\n"
 	        "  colodore-sat:  Colodore palette with 20%% more saturation.\n"
 	        "\n"
 	        "  dga16:         A modern take on the canonical CGA palette with dialed back\n"
 	        "                 contrast.\n"
 	        "\n"
 	        "You can also set custom colours by specifying 16 space or comma separated\n"
-	        "colour values, either as 3 or 6-digit hex codes (e.g. #f00 or #ff0000 for full\n"
-	        "red), or decimal RGB triplets (e.g. (255, 0, 255) for magenta). The 16 colours\n"
-	        "are ordered as follows:\n"
+	        "sRGB colour values, either as 3 or 6-digit hex codes (e.g., #f00 or #ff0000 for\n"
+	        "full red), or decimal RGB triplets (e.g., (255, 0, 255) for magenta). The 16\n"
+	        "colours are ordered as follows:\n"
 	        "\n"
 	        "  black, blue, green, cyan, red, magenta, brown, light-grey, dark-grey,\n"
 	        "  light-blue, light-green, light-cyan, light-red, light-magenta, yellow, white.\n"
@@ -1705,10 +1881,302 @@ static void init_render_settings(SectionProp& section)
 	string_prop = section.AddString("scaler", Deprecated, "none");
 	string_prop->SetHelp(
 	        "Software scalers are deprecated in favour of hardware-accelerated options:\n"
+	        "\n"
 	        "  - If you used the normal2x/3x scalers, consider using [color=light-green]'integer_scaling'[reset]\n"
 	        "    with [color=light-green]'shader = sharp'[reset] and optionally setting the desired [color=light-green]'window_size'[reset]\n"
 	        "    or [color=light-green]'viewport'[reset] size.\n"
+	        "\n"
 	        "  - If you used an advanced scaler, consider one of the [color=light-green]'shader'[reset] options.");
+
+#if defined(MACOSX)
+	constexpr auto DefaultColorSpace = "display-p3";
+#else
+	constexpr auto DefaultColorSpace = "srgb";
+#endif
+
+	string_prop = section.AddString("color_space", Always, DefaultColorSpace);
+	string_prop->SetValues(
+#if defined(MACOSX)
+	        {"display-p3"}
+#else
+	        {"srgb", "display-p3", "dci-p3", "dci-p3-d65", "modern-p3", "adobe-rgb", "rec-2020"}
+#endif
+	);
+
+	string_prop->SetOptionHelp("color_space_description",
+	                           format_str("Set the colour space of the video output ('%s' by default). This setting\n"
+	                                      "allows to take advantage of wide color gamut monitors and to more accurately\n"
+	                                      "emulate CRT colors. Possible values:",
+	                                      DefaultColorSpace));
+
+	string_prop->SetOptionHelp("color_space_description_macos",
+	                           "Set the colour space of the video output. On macOS, this is always 'display-p3';\n"
+	                           "the OS performs the conversion to the colour profile set in your system\n"
+	                           "settings.");
+
+	string_prop->SetOptionHelp(
+	        "color_space_srgb",
+	        "\n"
+	        "  srgb:        The lowest common denominator non-wide gamut sRGB colour space\n"
+	        "               with 6500K white point and sRGB gamma (default).");
+
+	string_prop->SetOptionHelp("color_space_display_p3",
+	                           "\n"
+	                           "  display-p3:  Display P3 wide gamut colour space with 6500K white point and\n"
+	                           "               sRGB gamma.");
+
+	string_prop->SetOptionHelp(
+	        "color_space_rest",
+	        "\n"
+	        "  dci-p3:      Standard DCI-P3 wide gamut colour space with DCI white point\n"
+	        "               (~6300K) and a 2.6 gamma. Use 'dci-p3-d65' instead if the whites\n"
+	        "               and grays have a greenish tint with your monitor in DCI-P3 mode.\n"
+	        "\n"
+	        "  dci-p3-d65:  DCI-P3 variant with modified D65 white point (6500K) and 2.6\n"
+	        "               gamma. Use 'dci-p3' instead if the whites and grays have a\n"
+	        "               yellowish tint with your monitor in DCI-P3 mode.\n"
+	        "\n"
+	        "  modern-p3:   Setting for average consumer/gaming monitors that only reach\n"
+	        "               around 90%% DCI-P3 colour space gamut coverage (6500K white\n"
+	        "               point, sRGB gamma). Use the other DCI-P3 colour spaces if your\n"
+	        "               monitor's DCI-P3 coverage is close to 100%%.\n"
+	        "\n"
+	        "  adobe-rgb:   AdobeRGB 2020 wide gamut colour space with 6500K white point\n"
+	        "               and 2.2 gamma.\n"
+	        "\n"
+	        "  rec-2020:    Rec.2020 wide gamut colour space with 6500K white point and 2.2\n"
+	        "               gamma.");
+
+	string_prop->SetOptionHelp(
+	        "color_space_notes",
+	        "\n"
+	        "Notes:\n"
+	        "  - Colour space transforms are applied to rendered screenshots, but not to raw\n"
+	        "    and upscaled screenshots and video captures (those are always in sRGB).");
+
+	string_prop->SetOptionHelp(
+	        "color_space_notes_windows_linux",
+	        "\n"
+	        "  - The feature only works in OpenGL output mode.\n"
+	        "\n"
+	        "  - The setting must match the colour space set on your monitor.\n"
+	        "\n"
+	        "  - You must disable all OS and graphics driver level colour management, and you\n"
+	        "    must not use any 3rd party colour management programs for DOSBox Staging,\n"
+	        "    otherwise you'll get incorrect colours.");
+
+	string_prop->SetEnabledOptions({
+#if defined(MACOSX)
+	        "color_space_description_macos", "color_space_display_p3", "color_space_notes"
+#else
+	        "color_space_description",
+	        "color_space_srgb",
+	        "color_space_display_p3",
+	        "color_space_rest",
+	        "color_space_notes",
+	        "color_space_notes_windows_linux"
+#endif
+	});
+
+	auto bool_prop = section.AddBool("image_adjustments", WhenIdle, true);
+	bool_prop->SetHelp(
+	        "Enable image adjustments ('on' by default). When disabled, the image adjustment\n"
+	        "settings in the render section (e.g., 'crt_color_profile', 'brightness',\n"
+	        "'contrast', etc.) have no effect and the raw RGB values are used for the video\n"
+	        "output. The colour space conversion is always active, that cannot be disabled\n"
+	        "(see 'color_space').\n"
+	        "\n"
+	        "Notes:\n"
+	        "  - Image adjustments only work in OpenGL output mode.\n"
+	        "\n"
+	        "  - Adjustments are applied to rendered screenshots, but not to raw and upscaled\n"
+	        "    screenshots and video captures.\n"
+	        "\n"
+	        "  - Use the 'PrevImageAdj' and 'NextImageAdj' hotkeys to select an image\n"
+	        "    adjustment setting and the 'DecImageAdj' and 'IncImageAdj' hotkeys to adjust\n"
+	        "    the settings in real-time. Copy the new settings from the logs into your\n"
+	        "    config, or write a new config with the 'CONFIG -wc' command.");
+
+	string_prop = section.AddString("crt_color_profile", Always, "auto");
+	string_prop->SetValues(
+	        {"auto", "none", "ebu", "p22", "smpte-c", "philips", "trinitron"});
+	string_prop->SetHelp(
+	        "Set a CRT colour profile for more authentic video output emulation ('auto' by\n"
+	        "default). All profiles have a built-in colour temperature (white point) that you\n"
+	        "can tweak further with the 'color_temperature' setting. Possible values:\n"
+	        "\n"
+	        "  auto:       Select an authentic colour profile for adaptive CRT shaders;\n"
+	        "              for any other shader, use 'none' (default).\n"
+	        "\n"
+	        "  none:       Display raw colours without any colour profile transforms.\n"
+	        "\n"
+	        "  ebu:        EBU standard phosphor emulation, used in high-end professional CRT\n"
+	        "              monitors, such as the Sony BVM/PVM series (6500K white point).\n"
+	        "\n"
+	        "  p22:        P22 phosphor emulation, the most commonly used in lower-end CRT\n"
+	        "              monitors (6500K white point).\n"
+	        "\n"
+	        "  smpte-c:    SMPT \"C\" phosphor emulation, the standard for American broadcast\n"
+	        "              video monitors (6500K white point).\n"
+	        "\n"
+	        "  philips:    Philips CRT monitor colours typical to 15 kHz home computer\n"
+	        "              monitors, such as the Commodore 1084S (~6100K white point).\n"
+	        "              Needs a wide gamut DCI-P3 display for the best results.\n"
+	        "\n"
+	        "  trinitron:  Typical Sony Trinitron CRT TV and monitor colours (~9300K\n"
+	        "              white point). Needs a wide gamut DCI-P3 display for the best\n"
+	        "              results.");
+
+	constexpr int DefaultBrightness = 45;
+
+	int_prop = section.AddInt("brightness", Always, DefaultBrightness);
+	int_prop->SetMinMax(BrightnessMin, BrightnessMax);
+	int_prop->SetHelp(
+	        format_str("Set the brightness of the video output (%d by default). Valid range is %d to %d.\n"
+	                   "This emulates the brightness control of CRT monitors that sets the black point;\n"
+	                   "higher values will result in raised blacks.",
+	                   DefaultBrightness,
+	                   BrightnessMin,
+	                   BrightnessMax));
+
+	constexpr int DefaultContrast = 65;
+
+	int_prop = section.AddInt("contrast", Always, DefaultContrast);
+	int_prop->SetMinMax(ContrastMin, ContrastMax);
+	int_prop->SetHelp(
+	        format_str("Set the contrast of the video output (%d by default). Valid range is %d to %d.\n"
+	                   "This emulates the contrast control of CRT monitors that sets the white point;\n"
+	                   "higher values will result in raised blacks (lower the 'brightness' control to\n"
+	                   "compensate).",
+	                   DefaultContrast,
+	                   ContrastMin,
+	                   ContrastMax));
+
+	constexpr int DefaultGamma = 0;
+
+	int_prop = section.AddInt("gamma", Always, DefaultGamma);
+	int_prop->SetMinMax(GammaMin, GammaMax);
+	int_prop->SetHelp(
+	        format_str("Set the gamma of the video output (%d by default). Valid range is %d to %d."
+	                   "This is additional gamma adjustment relative to the emulated virtual monitors gamma.",
+	                   DefaultGamma,
+	                   GammaMin,
+	                   GammaMax));
+
+	constexpr int DefaultDigitalContrast = 0;
+
+	int_prop = section.AddInt("digital_contrast", Always, DefaultDigitalContrast);
+	int_prop->SetMinMax(DigitalContrastMin, DigitalContrastMax);
+	int_prop->SetHelp(format_str(
+	        "Set the digital contrast of the video output (%d by default). Valid range is %d\n"
+	        "to %d. This works very differently from the 'contrast' virtual monitor setting;\n"
+	        "digital contrast is applied to the raw RGB values of the framebuffer image.",
+	        DefaultDigitalContrast,
+	        DigitalContrastMin,
+	        DigitalContrastMax));
+
+	constexpr auto DefaultBlackLevel = "auto";
+
+	string_prop = section.AddString("black_level", Always, DefaultBlackLevel);
+	string_prop->SetHelp(format_str(
+	        "Raise the black level of the video output ('%s' by default). It is applied\n"
+	        "before the 'brightness' and 'contrast' settings which can also raise the black\n"
+	        "level, so it effectively acts as a black level boost. Possible values:\n"
+	        "\n"
+	        "  auto:     Raise the black level for PCjr, Tandy, CGA and EGA video modes only\n"
+	        "            for adaptive CRT shaders; for any other shader, use 0 (default).\n"
+	        "\n"
+	        "  <value>:  Set the black level raise amount. Valid range is %d to %d.\n"
+	        "            0 does not raise the black level.\n"
+	        "\n"
+	        "Note: Raising the black level if useful for \"black scanline\" emulation; this\n"
+	        "      adds visula interest to PCjr, Tandy, CGA, and EGA games with simple\n"
+	        "      graphics.",
+	        DefaultBlackLevel,
+	        BlackLevelMin,
+	        BlackLevelMax));
+
+	constexpr int DefaultSaturation = 0;
+
+	int_prop = section.AddInt("saturation", Always, DefaultSaturation);
+	int_prop->SetMinMax(SaturationMin, SaturationMax);
+	int_prop->SetHelp(
+	        format_str("Set the saturation of the video output (%d by default). Valid range is %d to %d.\n"
+	                   "This is digital saturation applied to the raw RGB values of framebuffer image,\n"
+	                   "similarly to 'digital_contrast'.",
+	                   DefaultSaturation,
+	                   SaturationMin,
+	                   SaturationMax));
+
+	constexpr auto DefaultColorTemperature = "auto";
+
+	string_prop = section.AddString("color_temperature",
+	                                Always,
+	                                DefaultColorTemperature);
+	string_prop->SetHelp(format_str(
+	        "Set the colour temperature (white point) of the video output ('%s' by\n"
+	        "default). Possible values:\n"
+	        "\n"
+	        "  auto:     Select an authentic colour temperature for adaptive CRT shaders;\n"
+	        "            for any other shader, use 6500 (default).\n"
+	        "\n"
+	        "  <value>:  Specify colour temperature in Kelvin (K). Valid range is %d to\n"
+	        "            %d. The Kelvin value only makes sense if 'crt_color_profile' is\n"
+	        "            set to 'none' or to one of the profiles with 6500K white point,\n"
+	        "            otherwise it acts as a relative colour temperature adjustment (less\n"
+	        "            then 6500 results in warmer colours, more than 6500 in cooler\n"
+	        "            colours).",
+	        DefaultColorTemperature,
+	        ColorTemperatureMin,
+	        ColorTemperatureMax));
+
+	constexpr auto DefaultColorTemperatureLumaPreserve = 0;
+
+	int_prop = section.AddInt("color_temperature_luma_preserve",
+	                          Always,
+	                          DefaultColorTemperatureLumaPreserve);
+
+	int_prop->SetMinMax(ColorTemperatureLumaPreserveMin,
+	                    ColorTemperatureLumaPreserveMax);
+
+	int_prop->SetHelp(format_str(
+	        "Preserve image luminosity prior to colour temperature adjustment (%d by\n"
+	        "default). Valid range is %d to %d. 0 doesn't perform any luminosity\n"
+	        "preservation, 100 fully preserves the luminosity. Values greater than 0 result\n"
+	        "in inaccurate colour temperatures in the brighter shades, so it's best to set\n"
+	        "this to 0 or close to 0 if your monitor is bright enough.",
+	        DefaultColorTemperatureLumaPreserve,
+	        ColorTemperatureLumaPreserveMin,
+	        ColorTemperatureLumaPreserveMax));
+
+	constexpr int DefaultRgbGain = 100;
+
+	int_prop = section.AddInt("red_gain", Always, DefaultRgbGain);
+	int_prop->SetMinMax(RgbGainMin, RgbGainMax);
+	int_prop->SetHelp(
+	        format_str("Set gain factor of the video output's red channel (%d by default). Valid range\n"
+	                   "is %d to %d. 100 results in no gain change.",
+	                   DefaultRgbGain,
+	                   RgbGainMin,
+	                   RgbGainMax));
+
+	int_prop = section.AddInt("green_gain", Always, DefaultRgbGain);
+	int_prop->SetMinMax(RgbGainMin, RgbGainMax);
+	int_prop->SetHelp(
+	        format_str("Set gain factor of the video output's green channel (%d by default). Valid\n"
+	                   "range is %d to %d. 100 results in no gain change.",
+	                   DefaultRgbGain,
+	                   RgbGainMin,
+	                   RgbGainMax));
+
+	int_prop = section.AddInt("blue_gain", Always, DefaultRgbGain);
+	int_prop->SetMinMax(RgbGainMin, RgbGainMax);
+	int_prop->SetHelp(
+	        format_str("Set gain factor of the video output's blue channel (%d by default). Valid range\n"
+	                   "is %d to %d. 100 results in no gain change.",
+	                   DefaultRgbGain,
+	                   RgbGainMin,
+	                   RgbGainMax));
 }
 
 enum { Horiz, Vert };
@@ -1728,7 +2196,7 @@ static void toggle_stretch_axis(const bool pressed)
 	if (!pressed) {
 		return;
 	}
-	if (viewport_settings.mode != ViewportMode::Relative) {
+	if (render.viewport_settings.mode != ViewportMode::Relative) {
 		log_stretch_hotkeys_viewport_mode_warning();
 		return;
 	}
@@ -1744,12 +2212,12 @@ static void toggle_stretch_axis(const bool pressed)
 
 static void adjust_viewport_stretch(const float increment)
 {
-	if (viewport_settings.mode != ViewportMode::Relative) {
+	if (render.viewport_settings.mode != ViewportMode::Relative) {
 		log_stretch_hotkeys_viewport_mode_warning();
 		return;
 	}
 
-	auto& r = viewport_settings.relative;
+	auto& r = render.viewport_settings.relative;
 
 	// Snap to whole percents when using the adjustment controls
 	r.width_scale = roundf(r.width_scale * 100.f) / 100.f;
@@ -1789,6 +2257,578 @@ static void decrease_viewport_stretch(const bool pressed)
 	}
 }
 
+static ColorSpace to_color_space_enum(const std::string& setting)
+{
+	using enum ColorSpace;
+
+	if (setting == "srgb") {
+		return Srgb;
+
+	} else if (setting == "dci-p3") {
+		return DciP3;
+
+	} else if (setting == "dci-p3-d65") {
+		return DciP3_D65;
+
+	} else if (setting == "display-p3") {
+		return DisplayP3;
+
+	} else if (setting == "modern-p3") {
+		return ModernP3;
+
+	} else if (setting == "adobe-rgb") {
+		return AdobeRgb;
+
+	} else if (setting == "rec-2020") {
+		return Rec2020;
+
+	} else {
+		assertm(false, "Invalid color_space setting");
+		return Srgb;
+	}
+}
+
+[[maybe_unused]] static const char* to_setting_name(const ColorSpace color_space)
+{
+	using enum ColorSpace;
+
+	switch (color_space) {
+	case Srgb: return "srgb";
+	case DciP3: return "dci-p3";
+	case DciP3_D65: return "dci-p3-d65";
+	case DisplayP3: return "display-p3";
+	case ModernP3: return "modern-p3";
+	case AdobeRgb: return "adobe-rgb";
+	case Rec2020: return "rec-2020";
+
+	default: assertm(false, "Invalid ColorSpace enum value"); return "srgb";
+	}
+}
+
+static void update_color_space_setting()
+{
+	const auto color_space = to_color_space_enum(
+	        get_render_section().GetString("color_space"));
+
+	GFX_GetRenderer()->SetColorSpace(color_space);
+}
+
+static void update_enable_image_adjustments_setting()
+{
+	GFX_GetRenderer()->EnableImageAdjustments(
+	        get_render_section().GetBool("image_adjustments"));
+}
+
+static void update_crt_color_profile_setting()
+{
+	curr_image_adjustment_settings.crt_color_profile = to_crt_color_profile_enum(
+	        get_render_section().GetString("crt_color_profile"));
+}
+
+static void update_brightness_setting()
+{
+	curr_image_adjustment_settings.brightness = remap(
+	        static_cast<float>(BrightnessMin),
+	        static_cast<float>(BrightnessMax),
+	        0.0f,
+	        100.0f,
+	        static_cast<float>(get_render_section().GetInt("brightness")));
+}
+
+static void update_contrast_setting()
+{
+	curr_image_adjustment_settings.contrast =
+	        remap(static_cast<float>(ContrastMin),
+	              static_cast<float>(ContrastMax),
+	              0.0f,
+	              100.0f,
+	              static_cast<float>(get_render_section().GetInt("contrast")));
+}
+
+static void update_gamma_setting()
+{
+	curr_image_adjustment_settings.gamma =
+	        remap(static_cast<float>(GammaMin),
+	              static_cast<float>(GammaMax),
+	              -1.0f,
+	              1.0f,
+	              static_cast<float>(get_render_section().GetInt("gamma")));
+}
+
+static void update_digital_contrast_setting()
+{
+	curr_image_adjustment_settings.digital_contrast = remap(
+	        static_cast<float>(DigitalContrastMin),
+	        static_cast<float>(DigitalContrastMax),
+	        -2.0f,
+	        2.0f,
+	        static_cast<float>(get_render_section().GetInt("digital_contrast")));
+}
+
+static void update_black_level_color_setting()
+{
+	curr_image_adjustment_settings.black_level_color = VGA_GetBlackLevelColor();
+}
+
+static std::optional<int> get_black_level_setting_value()
+{
+	constexpr auto SettingName  = "black_level";
+	constexpr auto DefaultValue = "auto";
+
+	const std::string pref = get_render_section().GetString(SettingName);
+	if (pref == "auto") {
+		return {};
+	}
+
+	if (const auto maybe_int = parse_int(pref); maybe_int) {
+		const auto black_level = *maybe_int;
+
+		if (black_level >= BlackLevelMin && black_level <= BlackLevelMax) {
+			return black_level;
+
+		} else {
+			NOTIFY_DisplayWarning(
+			        Notification::Source::Console,
+			        "RENDER",
+			        "PROGRAM_CONFIG_SETTING_OUTSIDE_VALID_RANGE",
+			        SettingName,
+			        format_str("%d", black_level).c_str(),
+			        format_str("%d", BlackLevelMin).c_str(),
+			        format_str("%d", BlackLevelMax).c_str(),
+			        DefaultValue);
+
+			set_section_property_value("render", SettingName, DefaultValue);
+			return {};
+		}
+	} else {
+		NOTIFY_DisplayWarning(Notification::Source::Console,
+		                      "RENDER",
+		                      "PROGRAM_CONFIG_INVALID_SETTING",
+		                      SettingName,
+		                      pref.c_str(),
+		                      DefaultValue);
+
+		set_section_property_value("render", SettingName, DefaultValue);
+		return {};
+	}
+}
+
+static void update_black_level_setting()
+{
+	if (const auto maybe_black_level = get_black_level_setting_value();
+	    maybe_black_level) {
+
+		curr_image_adjustment_settings.black_level =
+		        remap(static_cast<float>(BlackLevelMin),
+		              static_cast<float>(BlackLevelMax),
+		              0.0f,
+		              1.0f,
+		              static_cast<float>(*maybe_black_level));
+
+		LOG_TRACE("black_level %f",
+		          curr_image_adjustment_settings.black_level);
+	} else {
+		curr_image_adjustment_settings.black_level = BlackLevelMin;
+	}
+}
+
+static void update_saturation_setting()
+{
+	curr_image_adjustment_settings.saturation = remap(
+	        static_cast<float>(SaturationMin),
+	        static_cast<float>(SaturationMax),
+	        -1.0f,
+	        1.0f,
+	        static_cast<float>(get_render_section().GetInt("saturation")));
+}
+
+static std::optional<int> get_color_temperature_setting_value()
+{
+	constexpr auto SettingName  = "color_temperature";
+	constexpr auto DefaultValue = "auto";
+
+	const std::string pref = get_render_section().GetString(SettingName);
+	if (pref == "auto") {
+		return {};
+	}
+
+	if (const auto maybe_int = parse_int(pref); maybe_int) {
+		const auto color_temperature = *maybe_int;
+
+		if (color_temperature >= ColorTemperatureMin &&
+		    color_temperature <= ColorTemperatureMax) {
+
+			return color_temperature;
+
+		} else {
+			NOTIFY_DisplayWarning(
+			        Notification::Source::Console,
+			        "RENDER",
+			        "PROGRAM_CONFIG_SETTING_OUTSIDE_VALID_RANGE",
+			        SettingName,
+			        format_str("%d", color_temperature).c_str(),
+			        format_str("%d", ColorTemperatureMin).c_str(),
+			        format_str("%d", ColorTemperatureMax).c_str(),
+			        DefaultValue);
+
+			set_section_property_value("render", SettingName, DefaultValue);
+			return {};
+		}
+	} else {
+		NOTIFY_DisplayWarning(Notification::Source::Console,
+		                      "RENDER",
+		                      "PROGRAM_CONFIG_INVALID_SETTING",
+		                      SettingName,
+		                      pref.c_str(),
+		                      DefaultValue);
+
+		set_section_property_value("render", SettingName, DefaultValue);
+		return {};
+	}
+}
+
+static void update_color_temperature_setting()
+{
+	curr_image_adjustment_settings.color_temperature_kelvin = static_cast<float>(
+	        get_color_temperature_setting_value().value_or(ColorTemperatureNeutral));
+}
+
+static void update_color_temperature_luma_preserve_setting()
+{
+	curr_image_adjustment_settings.color_temperature_luma_preserve =
+	        remap(static_cast<float>(ColorTemperatureLumaPreserveMin),
+	              static_cast<float>(ColorTemperatureLumaPreserveMax),
+	              0.0f,
+	              1.0f,
+	              static_cast<float>(get_render_section().GetInt(
+	                      "color_temperature_luma_preserve")));
+}
+
+static void update_red_gain_setting()
+{
+	curr_image_adjustment_settings.red_gain =
+	        remap(static_cast<float>(RgbGainMin),
+	              static_cast<float>(RgbGainMax),
+	              0.0f,
+	              2.0f,
+	              static_cast<float>(get_render_section().GetInt("red_gain")));
+}
+
+static void update_green_gain_setting()
+{
+	curr_image_adjustment_settings.green_gain = remap(
+	        static_cast<float>(RgbGainMin),
+	        static_cast<float>(RgbGainMax),
+	        0.0f,
+	        2.0f,
+	        static_cast<float>(get_render_section().GetInt("green_gain")));
+}
+
+static void update_blue_gain_setting()
+{
+	curr_image_adjustment_settings.blue_gain = remap(
+	        static_cast<float>(RgbGainMin),
+	        static_cast<float>(RgbGainMax),
+	        0.0f,
+	        2.0f,
+	        static_cast<float>(get_render_section().GetInt("blue_gain")));
+}
+
+enum class ImageAdjustmentControl {
+	ColorSpace = 0,
+
+	CrtColorProfile,
+	Brightness,
+	Contrast,
+	Gamma,
+	DigitalContrast,
+	BlackLevel,
+	Saturation,
+
+	ColorTemperature,
+	ColorTemperatureLumaPreserve,
+
+	RedGain,
+	GreenGain,
+	BlueGain,
+};
+
+enum class Direction { Dec, Inc };
+
+static ImageAdjustmentControl curr_image_adjustment_control = ImageAdjustmentControl::ColorSpace;
+
+template <typename T>
+T adjust_enum(const T curr_val, const Direction dir, const T min_val, const T max_val)
+{
+	const auto curr_int = enum_val(curr_val);
+	const auto min_int  = enum_val(min_val);
+	const auto max_int  = enum_val(max_val);
+
+	int new_int = wrap(curr_int + ((dir == Direction::Dec) ? -1 : 1),
+	                   min_int,
+	                   max_int);
+
+	return static_cast<T>(new_int);
+}
+
+static void select_image_adjustment_setting_control(const Direction dir)
+{
+	using enum ImageAdjustmentControl;
+
+	const auto min_val = ColorSpace;
+	const auto max_val = BlueGain;
+
+	curr_image_adjustment_control =
+	        adjust_enum(curr_image_adjustment_control, dir, min_val, max_val);
+
+	const auto name = [] {
+		switch (curr_image_adjustment_control) {
+		case ColorSpace: return "color space"; break;
+		case CrtColorProfile: return "CRT color profile"; break;
+
+		case Brightness: return "brightness"; break;
+		case Contrast: return "contrast"; break;
+		case Gamma: return "gamma"; break;
+		case DigitalContrast: return "digital contrast"; break;
+		case BlackLevel: return "black level"; break;
+		case Saturation: return "saturation"; break;
+
+		case ColorTemperature: return "colour temperature"; break;
+		case ColorTemperatureLumaPreserve:
+			return "colour temperature luma preserve";
+			break;
+
+		case RedGain: return "red gain"; break;
+		case GreenGain: return "green gain"; break;
+		case BlueGain: return "blue gain"; break;
+
+		default:
+			assertm(false, "Invalid ImageAdjustmentControl value");
+			return "";
+		}
+	}();
+
+	LOG_INFO("RENDER: Selected %s video setting", name);
+}
+
+static void select_prev_image_adjustment_control(const bool pressed)
+{
+	if (pressed) {
+		select_image_adjustment_setting_control(Direction::Dec);
+	}
+}
+
+static void select_next_image_adjustment_control(const bool pressed)
+{
+	if (pressed) {
+		select_image_adjustment_setting_control(Direction::Inc);
+	}
+}
+
+static void adjust_image_setting(const Direction dir)
+{
+	auto set_setting = [](const char* setting_name, const std::string& new_value) {
+		set_section_property_value("render", setting_name, new_value);
+
+		LOG_INFO("RENDER: %s = %s", setting_name, new_value.c_str());
+	};
+
+	auto adjust_setting = [&](const char* setting_name,
+	                          const int minval,
+	                          const int maxval,
+	                          const int delta) {
+		const auto curr_value = get_render_section().GetInt(setting_name);
+		const auto new_value = clamp(curr_value + delta, minval, maxval);
+
+		set_setting(setting_name, format_str("%d", new_value));
+	};
+
+	using enum ImageAdjustmentControl;
+
+	switch (curr_image_adjustment_control) {
+	case ColorSpace: {
+		// Only `srgb` is supported on macOS, so we only allow cycling
+		// through the other color space settings on Windows and Linux.
+		//
+#if !defined(MACOSX)
+		const auto setting_name = "color_space";
+
+		const auto curr_color_space = to_color_space_enum(
+		        get_render_section().GetString(setting_name));
+
+		const auto min_val = ColorSpace::Srgb;
+		const auto max_val = ColorSpace::Rec2020;
+
+		const auto new_color_space =
+		        adjust_enum(curr_color_space, dir, min_val, max_val);
+
+		set_setting(setting_name, to_setting_name(new_color_space));
+		update_color_space_setting();
+#endif
+	} break;
+
+	case CrtColorProfile: {
+		const auto setting_name = "crt_color_profile";
+
+		const auto curr_profile = to_crt_color_profile_enum(
+		        get_render_section().GetString(setting_name));
+
+		const auto min_val = CrtColorProfile::Auto;
+		const auto max_val = CrtColorProfile::Trinitron;
+
+		const auto new_profile = adjust_enum(curr_profile, dir, min_val, max_val);
+
+		set_setting(setting_name, to_setting_name(new_profile));
+
+		if (new_profile == CrtColorProfile::Auto) {
+			handle_auto_image_adjustment_settings(
+			        VGA_GetCurrentVideoMode());
+		} else {
+			update_crt_color_profile_setting();
+		}
+		set_image_adjustment_settings();
+	} break;
+
+	case Brightness:
+		adjust_setting("brightness",
+		               BrightnessMin,
+		               BrightnessMax,
+		               (dir == Direction::Dec) ? -1 : 1);
+
+		update_brightness_setting();
+		set_image_adjustment_settings();
+		break;
+
+	case Contrast:
+		adjust_setting("contrast",
+		               ContrastMin,
+		               ContrastMax,
+		               (dir == Direction::Dec) ? -1 : 1);
+
+		update_contrast_setting();
+		set_image_adjustment_settings();
+		break;
+
+	case Gamma:
+		adjust_setting("gamma",
+		               GammaMin,
+		               GammaMax,
+		               (dir == Direction::Dec) ? -1 : 1);
+
+		update_gamma_setting();
+		set_image_adjustment_settings();
+		break;
+
+	case DigitalContrast:
+		adjust_setting("digital_contrast",
+		               DigitalContrastMin,
+		               DigitalContrastMax,
+		               (dir == Direction::Dec) ? -1 : 1);
+
+		update_digital_contrast_setting();
+		set_image_adjustment_settings();
+		break;
+
+	case BlackLevel: {
+		const auto curr_value = get_black_level_setting_value().value_or(
+		        BlackLevelMin);
+
+		const auto delta     = (dir == Direction::Dec) ? -1 : 1;
+		const auto new_value = clamp(curr_value + delta,
+		                             BlackLevelMin,
+		                             BlackLevelMax);
+
+		set_setting("black_level", format_str("%d", new_value));
+
+		update_black_level_setting();
+		handle_auto_image_adjustment_settings(VGA_GetCurrentVideoMode());
+		set_image_adjustment_settings();
+	} break;
+
+	case Saturation:
+		adjust_setting("saturation",
+		               SaturationMin,
+		               SaturationMax,
+		               (dir == Direction::Dec) ? -1 : 1);
+
+		update_saturation_setting();
+		set_image_adjustment_settings();
+		break;
+
+	case ColorTemperature: {
+		const auto curr_value = get_color_temperature_setting_value().value_or(
+		        ColorTemperatureNeutral);
+
+		const auto delta     = (dir == Direction::Dec) ? -100 : 100;
+		const auto new_value = clamp(curr_value + delta,
+		                             ColorTemperatureMin,
+		                             ColorTemperatureMax);
+
+		set_setting("color_temperature", format_str("%d", new_value));
+
+		update_color_temperature_setting();
+		handle_auto_image_adjustment_settings(VGA_GetCurrentVideoMode());
+		set_image_adjustment_settings();
+	} break;
+
+	case ColorTemperatureLumaPreserve:
+		adjust_setting("color_temperature_luma_preserve",
+		               ColorTemperatureLumaPreserveMin,
+		               ColorTemperatureLumaPreserveMax,
+		               (dir == Direction::Dec) ? -1 : 1);
+
+		update_color_temperature_luma_preserve_setting();
+		set_image_adjustment_settings();
+		break;
+
+	case RedGain:
+		adjust_setting("red_gain",
+		               RgbGainMin,
+		               RgbGainMax,
+		               (dir == Direction::Dec) ? -1 : 1);
+
+		update_red_gain_setting();
+		set_image_adjustment_settings();
+		break;
+
+	case GreenGain:
+		adjust_setting("green_gain",
+		               RgbGainMin,
+		               RgbGainMax,
+		               (dir == Direction::Dec) ? -1 : 1);
+
+		update_green_gain_setting();
+		set_image_adjustment_settings();
+		break;
+
+	case BlueGain:
+		adjust_setting("blue_gain",
+		               RgbGainMin,
+		               RgbGainMax,
+		               (dir == Direction::Dec) ? -1 : 1);
+
+		update_blue_gain_setting();
+		set_image_adjustment_settings();
+		break;
+
+	default: assertm(false, "Invalid ImageAdjustmentControl value");
+	}
+}
+
+static void decrease_image_adjustment_control(const bool pressed)
+{
+	if (pressed) {
+		adjust_image_setting(Direction::Dec);
+	}
+}
+
+static void increase_image_adjustment_control(const bool pressed)
+{
+	if (pressed) {
+		adjust_image_setting(Direction::Inc);
+	}
+}
+
 static std::string get_shader_setting_value()
 {
 	const auto legacy_pref = get_render_section().GetString("glshader");
@@ -1816,6 +2856,9 @@ static void set_monochrome_palette(SectionProp& section)
 void RENDER_SyncMonochromePaletteSetting(const enum MonochromePalette palette)
 {
 	set_section_property_value("render", "monochrome_palette", to_string(palette));
+
+	update_black_level_color_setting();
+	set_image_adjustment_settings();
 }
 
 void RENDER_Init()
@@ -1834,6 +2877,30 @@ void RENDER_Init()
 	set_integer_scaling(*section);
 
 	set_monochrome_palette(*section);
+
+	update_color_space_setting();
+
+	update_enable_image_adjustments_setting();
+
+	update_crt_color_profile_setting();
+	update_brightness_setting();
+	update_contrast_setting();
+	update_gamma_setting();
+	update_digital_contrast_setting();
+
+	update_black_level_color_setting();
+	update_black_level_setting();
+
+	update_saturation_setting();
+
+	update_color_temperature_setting();
+	update_color_temperature_luma_preserve_setting();
+
+	update_red_gain_setting();
+	update_green_gain_setting();
+	update_blue_gain_setting();
+
+	set_image_adjustment_settings();
 }
 
 static void notify_render_setting_updated(SectionProp& section,
@@ -1862,10 +2929,69 @@ static void notify_render_setting_updated(SectionProp& section,
 
 	} else if (prop_name == "monochrome_palette") {
 		set_monochrome_palette(section);
+		update_black_level_color_setting();
+		set_image_adjustment_settings();
 
 	} else if (prop_name == "viewport") {
 		set_viewport(section);
 		reinit_drawing();
+
+	} else if (prop_name == "color_space") {
+		update_color_space_setting();
+
+	} else if (prop_name == "image_adjustments") {
+		update_enable_image_adjustments_setting();
+
+	} else if (prop_name == "crt_color_profile") {
+		update_crt_color_profile_setting();
+		handle_auto_image_adjustment_settings(VGA_GetCurrentVideoMode());
+		set_image_adjustment_settings();
+
+	} else if (prop_name == "brightness") {
+		update_brightness_setting();
+		set_image_adjustment_settings();
+
+	} else if (prop_name == "contrast") {
+		update_contrast_setting();
+		set_image_adjustment_settings();
+
+	} else if (prop_name == "gamma") {
+		update_gamma_setting();
+		set_image_adjustment_settings();
+
+	} else if (prop_name == "digital_contrast") {
+		update_digital_contrast_setting();
+		set_image_adjustment_settings();
+
+	} else if (prop_name == "black_level") {
+		update_black_level_setting();
+		handle_auto_image_adjustment_settings(VGA_GetCurrentVideoMode());
+		set_image_adjustment_settings();
+
+	} else if (prop_name == "saturation") {
+		update_saturation_setting();
+		set_image_adjustment_settings();
+
+	} else if (prop_name == "color_temperature") {
+		update_color_temperature_setting();
+		handle_auto_image_adjustment_settings(VGA_GetCurrentVideoMode());
+		set_image_adjustment_settings();
+
+	} else if (prop_name == "color_temperature_luma_preserve") {
+		update_color_temperature_luma_preserve_setting();
+		set_image_adjustment_settings();
+
+	} else if (prop_name == "red_gain") {
+		update_red_gain_setting();
+		set_image_adjustment_settings();
+
+	} else if (prop_name == "green_gain") {
+		update_green_gain_setting();
+		set_image_adjustment_settings();
+
+	} else if (prop_name == "blue_gain") {
+		update_blue_gain_setting();
+		set_image_adjustment_settings();
 	}
 }
 
@@ -1915,6 +3041,37 @@ void RENDER_AddConfigSection(const ConfigPtr& conf)
 	                  PRIMARY_MOD,
 	                  "reloadshader",
 	                  "Reload Shader");
+
+#ifdef MACOSX
+	constexpr auto ImageAdjustmentModKeys = MMOD2 | MMOD3;
+#else
+	// Windows & Linux
+	constexpr auto ImageAdjustmentModKeys = MMOD3;
+#endif
+
+	MAPPER_AddHandler(select_prev_image_adjustment_control,
+	                  SDL_SCANCODE_F9,
+	                  ImageAdjustmentModKeys,
+	                  "previmageadj",
+	                  "PrevImageAdj");
+
+	MAPPER_AddHandler(select_next_image_adjustment_control,
+	                  SDL_SCANCODE_F10,
+	                  ImageAdjustmentModKeys,
+	                  "nextimageadj",
+	                  "NextImageAdj");
+
+	MAPPER_AddHandler(decrease_image_adjustment_control,
+	                  SDL_SCANCODE_F11,
+	                  ImageAdjustmentModKeys,
+	                  "decimageadj",
+	                  "DecImageAdj");
+
+	MAPPER_AddHandler(increase_image_adjustment_control,
+	                  SDL_SCANCODE_F12,
+	                  ImageAdjustmentModKeys,
+	                  "incimageadj",
+	                  "IncImageAdj");
 
 	init_render_settings(*section);
 	register_render_text_messages();

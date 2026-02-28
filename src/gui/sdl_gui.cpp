@@ -139,9 +139,12 @@ bool GFX_HaveDesktopEnvironment()
 		                                   "DESKTOP_SESSION",
 		                                   "GDMSESSION"};
 
+		auto get_variable = [](const char* variable) {
+			return std::getenv(variable);
+		};
 		have_desktop_environment = std::any_of(std::begin(EnvVars),
 		                                       std::end(EnvVars),
-		                                       std::getenv);
+		                                       get_variable);
 
 		already_checked = true;
 	}
@@ -196,7 +199,7 @@ static void validate_vsync_and_presentation_mode_settings()
 	        "presentation_mode");
 
 	if (presentation_mode_pref == "dos-rate" &&
-	    (vsync_pref == "on" || vsync_pref == "fullscreen-only")) {
+	    (has_true(vsync_pref) || vsync_pref == "fullscreen-only")) {
 
 		NOTIFY_DisplayWarning(Notification::Source::Console,
 		                      "DISPLAY",
@@ -1092,14 +1095,33 @@ static void toggle_fullscreen_handler(bool pressed)
 	}
 }
 
-// Returns a writeable buffer for the VGA emulation to render the framebuffer
-// image into. The buffer was sized for the current DOS video mode by a
-// preceding `GFX_SetSize()` call.
+// The function should return a writeable buffer for the VGA emulation to
+// render the current framebuffer image into. The buffer was sized for the
+// current DOS video mode by a preceding `GFX_SetSize()` call.
 //
-// `pitch_out` is the number of bytes used to store a single row of pixel data
-// (can be larger than actual width).
+// `pitch` is the number of bytes used to store a single row of pixel data
+// (can be larger than the actual image width in bytes).
 //
-bool GFX_StartUpdate(uint8_t*& pixels, int& pitch)
+// The renderer (`render.cpp`) calls this iff the contents of the current
+// emulated VGA framebuffer has changed from the last frame (even it's just a
+// single pixel), otherwise running the scalers and submitting the new frame
+// to the render backend can be optimised away (common scenario in DOS games
+// with low frame rates and mostly static screens, e.g., most RPG, adventure,
+// and strategy titles).
+//
+// So we have two scenarios:
+//
+// 1. Current frame is the same as the previous one:
+//
+//    - `GFX_StartUpdate()` is NOT called for this frame.
+//    - `GFX_EndUpdate()` IS called; `sdl.draw.updating_framebuffer` is FALSE.
+//
+// 2. Current frame contains changes since the previous one:
+//
+//    - `GFX_StartUpdate()` IS called for this frame.
+//    - `GFX_EndUpdate()` IS called; `sdl.draw.updating_framebuffer` is TRUE.
+//
+bool GFX_StartUpdate(uint32_t*& pixels, int& pitch)
 {
 	assert(sdl.renderer);
 
@@ -1113,13 +1135,17 @@ bool GFX_StartUpdate(uint8_t*& pixels, int& pitch)
 	return true;
 }
 
+// Called at the end of each frame at the emulated DOS rate, *regardless* of
+// whether contents of the framebuffer have changed or not compared to the
+// prevoius frame.
 void GFX_EndUpdate()
 {
 	assert(sdl.renderer);
 
 	if (sdl.draw.updating_framebuffer) {
 		// `sdl.draw.updating_framebuffer` is true when the contents of
-		// the framebuffer has been changed in the current frame.
+		// the framebuffer has been changed compared to the previous
+		// frame.
 		//
 		// We're making a copy of the framebuffer as we might present it
 		// a bit later in 'host-rate' mode, otherwise the VGA emulation
@@ -1153,8 +1179,8 @@ void GFX_EndUpdate()
 		// the DOS rate in the future, down to microsecond accuracy
 		// (e.g., by tightening the timing accuracy of the PIC timers as
 		// VGA updates are timed by abusing the emulated PIC timers,
-		// then we might need to do some additional sleep & busy waiting
-		// before present to hit the exact time).
+		// then we might also need to do some additional sleep & busy
+		// waiting before present to hit the exact time).
 		//
 		// Updating the new texture to the GPU also takes some non-zero
 		// time, so we'll probably need to introduce an extra fixed
@@ -1661,12 +1687,8 @@ static void set_sdl_hints()
 #endif
 
 #if defined(WIN32)
-	if (SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2") == SDL_FALSE) {
-		LOG_WARNING("SDL: Error setting DPI awareness flag");
-	}
-	if (SDL_SetHint(SDL_HINT_WINDOWS_DPI_SCALING, "1") == SDL_FALSE) {
-		LOG_WARNING("SDL: Error setting DPI scaling flag");
-	}
+	SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2");
+	SDL_SetHint(SDL_HINT_WINDOWS_DPI_SCALING, "1");
 #endif
 
 	// Seamless mouse integration feels more 'seamless' if mouse
@@ -1772,8 +1794,8 @@ static void handle_macos_dosbox_package_drop(const std::string& dropped_file_pat
 	auto new_params = control->startup_params;
 
 	// Add --working-dir to set the package directory
-	new_params.push_back("--working-dir");
-	new_params.push_back(pkg_path.string());
+	new_params.emplace_back("--working-dir");
+	new_params.emplace_back(pkg_path.string());
 
 	// Use the standard restart mechanism to launch with expanded package
 	LOG_MSG("CONFIG: Restarting with expanded package arguments");
@@ -1863,7 +1885,13 @@ void GFX_InitAndStartGui()
 	// SDL on Windows and Linux seems to always raise the window after
 	// creation.
 	//
+	// SDL issues:
+	//
+	// - https://github.com/libsdl-org/SDL/issues/14701
+	// - https://github.com/libsdl-org/SDL/issues/13920
+	//
 	SDL_RaiseWindow(sdl.window);
+	SDL_SetWindowInputFocus(sdl.window);
 
 	// Setting the SDL_WINDOW_BORDERLESS flag on window creation doesn't
 	// work on macOS.
@@ -1900,9 +1928,11 @@ void GFX_InitAndStartGui()
 		enter_fullscreen();
 	}
 
-                globl_kbd_exchange.lock = SDL_CreateMutex();
-                globl_kbd_exchange.cond = SDL_CreateCond();
-                globl_kbd_exchange.turn = 1;
+        globl_kbd_exchange.lock = SDL_CreateMutex();
+        globl_kbd_exchange.cond = SDL_CreateCond();
+        globl_kbd_exchange.turn = 1;
+
+	RENDER_Init();
 }
 
 static void notify_sdl_setting_updated(SectionProp& section,
@@ -2208,7 +2238,7 @@ bool handle_sdl_windowevent(const SDL_Event& event)
 			// Needed for aspect & viewport mode combinations where
 			// the pixel aspect ratio or viewport size is sized
 			// relatively to the window size.
-			VGA_SetupDrawing(0);
+			GFX_ResetScreen();
 
 			last_width  = width;
 			last_height = height;
@@ -2555,7 +2585,7 @@ static std::vector<std::string> get_sdl_texture_renderers()
 
 	std::vector<std::string> drivers;
 	drivers.reserve(n + 1);
-	drivers.push_back("auto");
+	drivers.emplace_back("auto");
 
 	SDL_RendererInfo info;
 
@@ -2564,7 +2594,7 @@ static std::vector<std::string> get_sdl_texture_renderers()
 			continue;
 		}
 		if (info.flags & SDL_RENDERER_TARGETTEXTURE) {
-			drivers.push_back(info.name);
+			drivers.emplace_back(info.name);
 		}
 	}
 	return drivers;
@@ -2688,13 +2718,17 @@ static void init_sdl_config_settings(SectionProp& section)
 	        "resize the window after startup. Possible values:\n"
 	        "\n"
 	        "  default:   Select the best option based on your environment and other\n"
-	        "             settings (such as whether aspect ratio correction is enabled).\n"
+	        "             factors (such as whether aspect ratio correction is enabled).\n"
 	        "\n"
 	        "  small, medium, large (s, m, l):\n"
 	        "             Size the window relative to the desktop.\n"
 	        "\n"
-	        "  WxH:       Specify window size in WxH format in logical units\n"
-	        "             (e.g., 1024x768).");
+	        "  WxH:       Specify window size in WxH format in logical units (e.g.,\n"
+	        "             1024x768). The values be multiplied by the OS-level DPI scaling to\n"
+	        "             get the window size in pixels.\n"
+	        "\n"
+	        "Note: If you want to use pixel coordinates instead and ignore DPI scaling, set\n"
+	        "      the SDL_WINDOWS_DPI_SCALING environment variable to 0.");
 
 	pstring = section.AddString("window_position", Always, "auto");
 	pstring->SetHelp(
@@ -2704,7 +2738,12 @@ static void init_sdl_config_settings(SectionProp& section)
 	        "  auto:      Let the window manager decide the position (default).\n"
 	        "\n"
 	        "  X,Y:       Set window position in X,Y format in logical units (e.g., 250,100).\n"
-	        "             0,0 is the top-left corner of the screen.");
+	        "             0,0 is the top-left corner of the screen. The values will be\n"
+	        "             multiplied by the OS-level DPI scaling to get the window position\n"
+	        "             in pixels.\n"
+	        "\n"
+	        "Note: If you want to use pixel coordinates instead and ignore DPI scaling, set\n"
+	        "      the SDL_WINDOWS_DPI_SCALING environment variable to 0.");
 
 	pbool = section.AddBool("window_decorations", Always, true);
 	pbool->SetHelp("Enable window decorations in windowed mode ('on' by default).");

@@ -3129,10 +3129,10 @@ static inline void raster_generic(const voodoo_state* vs, uint32_t TMUS, uint32_
 	const int32_t dx = startx - (fbi.ax >> 4);
 	const int32_t dy = y - (fbi.ay >> 4);
 
-	int32_t iterr = fbi.startr + dy * fbi.drdy + dx * fbi.drdx;
-	int32_t iterg = fbi.startg + dy * fbi.dgdy + dx * fbi.dgdx;
-	int32_t iterb = fbi.startb + dy * fbi.dbdy + dx * fbi.dbdx;
-	int32_t itera = fbi.starta + dy * fbi.dady + dx * fbi.dadx;
+	int64_t iterr = fbi.startr + dy * fbi.drdy + dx * fbi.drdx;
+	int64_t iterg = fbi.startg + dy * fbi.dgdy + dx * fbi.dgdx;
+	int64_t iterb = fbi.startb + dy * fbi.dbdy + dx * fbi.dbdx;
+	int64_t itera = fbi.starta + dy * fbi.dady + dx * fbi.dadx;
 	int32_t iterz = fbi.startz + dy * fbi.dzdy + dx * fbi.dzdx;
 	int64_t iterw = fbi.startw + dy * fbi.dwdy + dx * fbi.dwdx;
 	int64_t iterw0 = 0;
@@ -3505,7 +3505,7 @@ static raster_info *add_rasterizer(voodoo_state *vs, const raster_info *cinfo)
 -------------------------------------------------*/
 static raster_info *find_rasterizer(voodoo_state *vs, int texcount)
 {
-	raster_info *info, *prev = NULL;
+	raster_info *info, *prev = nullptr;
 	raster_info curinfo;
 	int hash;
 
@@ -3554,7 +3554,7 @@ static raster_info *find_rasterizer(voodoo_state *vs, int texcount)
 	curinfo.polys = 0;
 	curinfo.hits = 0;
 #endif
-	curinfo.next = 0;
+	curinfo.next = nullptr;
 	curinfo.shader_ready = false;
 
 	return add_rasterizer(vs, &curinfo);
@@ -5827,7 +5827,7 @@ static void register_w(uint32_t offset, uint32_t data)
 			if (vtype < VOODOO_2) {
 				break;
 			}
-			/* else fall through... */
+		        [[fallthrough]];
 
 		/* fbiInitX can only be written if initEnable says we can -- Voodoo/Voodoo2 only */
 		/* most of these affect memory layout, so always recompute that when done */
@@ -6831,7 +6831,7 @@ static uint32_t register_r(const uint32_t offset)
 {
 	using namespace bit::literals;
 
-	const auto regnum = static_cast<uint8_t>((offset) & 0xff);
+	const auto regnum = static_cast<uint8_t>(offset & 0xff);
 
 	//LOG(LOG_VOODOO,LOG_WARN)("Voodoo:read chip %x reg %x (%s)", chips, regnum<<2, voodoo_reg_name[regnum]);
 
@@ -7503,8 +7503,7 @@ static void Voodoo_UpdateScreen()
 			const auto frames_per_second = static_cast<float>(
 			        1000.0 / v->draw.frame_period_ms);
 
-			constexpr auto ReinitRender = false;
-			RENDER_NotifyVideoModeChanged(video_mode, ReinitRender);
+			RENDER_NotifyVideoModeChanged(video_mode);
 
 			RENDER_SetSize(image_info, frames_per_second);
 		}

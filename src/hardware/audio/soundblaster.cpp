@@ -521,7 +521,7 @@ static std::optional<FilterType> determine_filter_type(const std::string& filter
 		case SbType::GameBlaster: return FilterType::None;   break;
 		}
 		// clang-format on
-	} else if (filter_choice == "off") {
+	} else if (has_false(filter_choice)) {
 		return FilterType::None;
 
 	} else if (filter_choice == "sb1") {
@@ -1777,7 +1777,7 @@ static void dsp_do_reset(const uint8_t val)
 static void dsp_e2_dma_callback(const DmaChannel* /*chan*/, const DmaEvent event)
 {
 	if (event == DmaEvent::IsUnmasked) {
-		uint8_t val = (uint8_t)(sb.e2.value & 0xff);
+		auto val = static_cast<uint8_t>(sb.e2.value & 0xff);
 
 		DmaChannel* chan = DMA_GetChannel(sb.hw.dma8);
 
@@ -1935,7 +1935,7 @@ static void dsp_do_command()
 
 	case 0x0f: // SB16 ASP get register
 		if (sb.type == SbType::SB16) {
-			if ((asp_init_in_progress) && (sb.dsp.in.data[0] == 0x83)) {
+			if (asp_init_in_progress && (sb.dsp.in.data[0] == 0x83)) {
 				asp_regs[0x83] = ~asp_regs[0x83];
 			}
 #if 0
@@ -2400,7 +2400,7 @@ static float calc_vol(const uint8_t amount)
 {
 	uint8_t count = 31 - amount;
 
-	float db = static_cast<float>(count);
+	auto db = static_cast<float>(count);
 
 	if (sb.type == SbType::SBPro1 || sb.type == SbType::SBPro2) {
 		if (count) {
@@ -2477,8 +2477,8 @@ static void ctmixer_reset()
 
 static void write_sb_pro_volume(uint8_t* dest, const uint8_t value)
 {
-	dest[0] = ((((value) & 0xf0) >> 3) | (sb.type == SbType::SB16 ? 1 : 3));
-	dest[1] = ((((value) & 0x0f) << 1) | (sb.type == SbType::SB16 ? 1 : 3));
+	dest[0] = (((value) & 0xf0) >> 3) | (sb.type == SbType::SB16 ? 1 : 3);
+	dest[1] = (((value) & 0x0f) << 1) | (sb.type == SbType::SB16 ? 1 : 3);
 }
 
 static uint8_t read_sb_pro_volume(const uint8_t* src)
@@ -3325,7 +3325,7 @@ static SbType determine_sb_type(const std::string& pref)
 		return SbType::SB16;
 	}
 
-	// "falsey" setting ("off", "none", "false", etc.)
+	assert(has_false(pref));
 	return SbType::None;
 }
 
@@ -3372,7 +3372,7 @@ static OplMode determine_oplmode(const std::string& pref, const SbType sb_type,
 			case SbType::None: return OplMode::None;
 			}
 		}
-		// "falsey" setting ("off", "none", "false", etc.)
+		assert(has_false(pref));
 		return OplMode::None;
 
 	} else {
@@ -3516,7 +3516,7 @@ SoundBlaster::SoundBlaster(Section* conf)
 {
 	assert(conf);
 
-	SectionProp* section = static_cast<SectionProp*>(conf);
+	auto section = static_cast<SectionProp*>(conf);
 
 	sb.hw.base = section->GetHex("sbbase");
 	sb.hw.irq  = static_cast<uint8_t>(section->GetInt("irq"));

@@ -7,8 +7,8 @@
 
 CHECK_NARROWING();
 
-void ImageDecoder::Init(const RenderedImage& _image, const uint8_t _row_skip_count,
-                        const uint8_t _pixel_skip_count)
+void ImageDecoder::Init(const RenderedImage& _image, const int _row_skip_count,
+                        const int _pixel_skip_count)
 {
 	assert(_image.params.width > 0);
 	assert(_image.params.height > 0);
@@ -16,10 +16,6 @@ void ImageDecoder::Init(const RenderedImage& _image, const uint8_t _row_skip_cou
 	assert(_image.pitch >= _image.params.width);
 	assert(_image.params.pixel_aspect_ratio.ToDouble() >= 0.0);
 	assert(_image.image_data);
-
-	if (_image.is_paletted()) {
-		assert(_image.palette_data);
-	}
 
 	if (_image.is_flipped_vertically) {
 		curr_row_start = _image.image_data +

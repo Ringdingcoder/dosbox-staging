@@ -556,10 +556,6 @@ constexpr bool operator==(const FractionalNote& a, const FractionalNote& b) noex
 {
 	return a.note == b.note && a.fraction == b.fraction;
 }
-constexpr bool operator!=(const FractionalNote& a, const FractionalNote& b) noexcept
-{
-	return !(a == b);
-}
 constexpr FractionalNote operator-(const FractionalNote& a,
                                    const FractionalNote& b) noexcept
 {
@@ -2566,7 +2562,7 @@ private:
 	}
 
 public:
-	virtual ~PD71055() = default;
+	~PD71055() override = default;
 	explicit PD71055(const std::string& name)
 	        : m_name(name),
 	          m_port0(name + ".p0"),
@@ -3078,11 +3074,11 @@ constexpr int8_t LFO_SH = 10;
 [[maybe_unused]] constexpr int8_t TIMER_SH = 16;
 
 constexpr int8_t ENV_BITS = 10;
-constexpr auto ENV_LEN    = (1 << ENV_BITS);
-constexpr auto ENV_STEP   = (128.0 / ENV_LEN);
+constexpr auto ENV_LEN    = 1 << ENV_BITS;
+constexpr auto ENV_STEP   = 128.0 / ENV_LEN;
 
-constexpr auto MAX_ATT_INDEX = (ENV_LEN - 1); /* 1023 */
-constexpr auto MIN_ATT_INDEX = (0);           /* 0 */
+constexpr auto MAX_ATT_INDEX = ENV_LEN - 1; /* 1023 */
+constexpr auto MIN_ATT_INDEX = 0;
 
 constexpr auto EG_ATT = 4;
 constexpr auto EG_DEC = 3;
@@ -3609,7 +3605,7 @@ void ym2151_device::init_tables()
 		// we never reach (1<<16) here due to the (x+1) result fits
 		// within 16 bits at maximum
 
-		int n = (int)m;     // 16 bits here
+		auto n = (int)m;    // 16 bits here
 		n >>= 4;            // 12 bits here
 		if ((n & 1) != 0) { // round to closest
 			n = (n >> 1) + 1;
@@ -3640,7 +3636,7 @@ void ym2151_device::init_tables()
 
 		o = o / (ENV_STEP / 4);
 
-		int n = (int)(2.0 * o);
+		auto n = (int)(2.0 * o);
 		if ((n & 1) != 0) { // round to closest
 			n = (n >> 1) + 1;
 		} else {

@@ -12,6 +12,11 @@
 #include <memory>
 
 #ifdef WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+// block winsock.h to prevent net_defs.h redefinition errors
+#define _WINSOCKAPI_
 #include <windows.h>
 #endif
 
@@ -567,7 +572,7 @@ void DOSBOX_Restart(std::vector<std::string>& parameters)
 	parameters.emplace_back("--waitpid");
 	parameters.emplace_back(std::to_string(getpid()));
 
-	char** newargs = new char*[parameters.size() + 1];
+	auto newargs = new char*[parameters.size() + 1];
 
 	// parameter 0 is the executable path
 	// contents of the vector follow
@@ -714,7 +719,7 @@ static void dosbox_realinit(SectionProp& section)
 	}
 }
 
-static void dosbox_init()
+void DOSBOX_Init()
 {
 	auto section = get_section("dosbox");
 	assert(section);
@@ -733,7 +738,7 @@ static void dosbox_init()
 	CMOS_Init();
 }
 
-static void dosbox_destroy()
+void DOSBOX_Destroy()
 {
 	CMOS_Destroy();
 	TIMER_Destroy();
@@ -1095,14 +1100,13 @@ void DOSBOX_InitModuleConfigsAndMessages()
 
 void DOSBOX_InitModules()
 {
-	dosbox_init();
+	DOSBOX_Init();
 
 #if C_DEBUGGER
 	LOG_StartUp();
 	LOG_Init();
 #endif
 
-	RENDER_Init();
 	COMPOSITE_Init();
 
 	CPU_Init();
@@ -1187,7 +1191,7 @@ void DOSBOX_DestroyModules()
 	LOG_Destroy();
 #endif
 
-	dosbox_destroy();
+	DOSBOX_Destroy();
 
 	control = {};
 }

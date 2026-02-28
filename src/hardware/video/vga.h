@@ -18,10 +18,10 @@
 #include "utils/bit_view.h"
 #include "utils/fraction.h"
 #include "utils/rgb666.h"
+#include "utils/rgb888.h"
 
 //Don't enable keeping changes and mapping lfb probably...
 #define VGA_LFB_MAPPED
-//#define VGA_KEEP_CHANGES
 #define VGA_CHANGE_SHIFT	9
 
 class PageHandler;
@@ -209,7 +209,7 @@ struct VgaConfig {
 	uint32_t full_enable_and_set_reset = 0;
 };
 
-enum Drawmode { PART, DRAWLINE, EGALINE };
+enum class DrawMode { Part, Scanline, ScanlineEga };
 
 enum class VgaRateMode { Default, Custom };
 
@@ -304,6 +304,12 @@ struct VgaDraw {
 	// at the "nomimal width" of the video mode.
 	bool pixel_doubling_allowed  = false;
 
+	// If true, non-VESA VGA modes are drawn per scanline. For a handful of
+	// games we need to disable this and drawn the screen in four parts
+	// (chunks) at a time, otherwise they'd crash at startup (this is a
+	// workaround for a deficiency in our VGA emulation code).
+	bool vga_render_per_scanline = true;
+
 	uint8_t font[64 * 1024] = {};
 	uint8_t* font_tables[2] = {nullptr, nullptr};
 
@@ -320,7 +326,7 @@ struct VgaDraw {
 		uint8_t enabled = 0;
 	} cursor = {};
 
-	Drawmode mode       = {};
+	DrawMode mode       = {};
 	bool vret_triggered = false;
 	bool vga_override   = false;
 };
@@ -1051,10 +1057,6 @@ struct VgaType {
 	// How much delay to add to video memory I/O in nanoseconds
 	uint16_t vmem_delay_ns = 0;
 
-#ifdef VGA_KEEP_CHANGES
-	VgaChanges changes = {};
-#endif
-
 	VgaLfb lfb = {};
 
 	// Composite video mode parameters
@@ -1091,6 +1093,8 @@ constexpr auto NumMonochromePalettes = enum_val(MonochromePalette::Paperwhite) +
 void VGA_SetMonochromePalette(const enum MonochromePalette);
 void VGA_SetHerculesPalette();
 void VGA_SetMonochromeCgaPalette();
+
+Rgb888 VGA_GetBlackLevelColor();
 
 // Functions for different resolutions
 void VGA_SetMode(VGAModes mode);

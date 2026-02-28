@@ -134,15 +134,15 @@ SectionProp* Config::AddSection(const char* section_name)
 	assertm(std::regex_match(section_name, std::regex{"[a-zA-Z0-9]+"}),
 	        "Only letters and digits are allowed in section name");
 
-	SectionProp* s = new SectionProp(section_name);
+	auto section_prop = new SectionProp(section_name);
 
-	sections.push_back(s);
-	return s;
+	sections.push_back(section_prop);
+	return section_prop;
 }
 
 AutoExecSection* Config::AddAutoexecSection()
 {
-	AutoExecSection* section = new AutoExecSection("autoexec");
+	auto section = new AutoExecSection("autoexec");
 	sections.push_back(section);
 
 	return section;
@@ -593,7 +593,7 @@ void Config::ParseArguments()
 	arguments.erasemapper = cmdline->FindRemoveBoolArgument("erasemapper") ||
 	                        cmdline->FindRemoveBoolArgument("resetmapper");
 
-	arguments.version = cmdline->FindRemoveBoolArgument("version", 'v');
+	arguments.version = cmdline->FindRemoveBoolArgument("version", 'V');
 	arguments.help    = (cmdline->FindRemoveBoolArgument("help", 'h') ||
                           cmdline->FindRemoveBoolArgument("help", '?'));
 

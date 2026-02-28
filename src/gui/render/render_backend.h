@@ -78,10 +78,10 @@ public:
 	// If a renderer implements a double buffering scheme, this call should
 	// return a pointer to the current render buffer.
 	//
-	// `pitch_out` is the number of bytes used to store a single row of
-	// pixel data (can be larger than actual width).
+	// `pitch_out` is the number of bytes used to store a single row of pixel
+	// data, including optional padding bytes at the end of the row.
 	//
-	virtual void StartFrame(uint8_t*& pixels_out, int& pitch_out) = 0;
+	virtual void StartFrame(uint32_t*& pixels_out, int& pitch_out) = 0;
 
 	// Called at the end of every frame. There is a matching EndUpdate()
 	// call for every StartUpdate() call.
@@ -104,6 +104,15 @@ public:
 
 	// Enables or disables vsync.
 	virtual void SetVsync(const bool is_enabled) = 0;
+
+	// Sets the colour space of the video output.
+	virtual void SetColorSpace(const ColorSpace color_space) = 0;
+
+	// Enables or disable the application of image adjustments.
+	virtual void EnableImageAdjustments(const bool enable) = 0;
+
+	// Sets image adjustment settings.
+	virtual void SetImageAdjustmentSettings(const ImageAdjustmentSettings& settings) = 0;
 
 	// Read the specified rectangle of the post-shader from the window's
 	// framebuffer.

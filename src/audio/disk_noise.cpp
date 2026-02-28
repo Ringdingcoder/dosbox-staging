@@ -244,7 +244,7 @@ void DiskNoiseDevice::LoadSample(const std::string& path,
 		}
 
 		// Scale data to integer value range
-		const float scale = static_cast<float>(INT16_MAX);
+		const auto scale = static_cast<float>(INT16_MAX);
 		for (auto& sample : destination_buffer) {
 			sample *= scale;
 		}
@@ -338,11 +338,13 @@ size_t DiskNoiseDevice::ChooseSeekIndex() const
 		const size_t r = static_cast<size_t>(rand()) % valid_indices.size();
 		return valid_indices[r];
 	}
-	case DiskType::CdRom: {
+	case DiskType::CdRom:
 		// CD-ROM does not currently support disk noise emulation
-	}
+		return 0;
+
 	default: assertm(false, "Invalid ChooseSeekIndex type"); return 0;
 	}
+
 	return 0;
 }
 
@@ -507,7 +509,7 @@ static DiskNoiseMode get_disk_noise_mode(const std::string& mode)
 	} else if (mode == "seek-only") {
 		return DiskNoiseMode::SeekOnly;
 	} else {
-        assert(mode == "off");
+        assert(has_false(mode));
 		return DiskNoiseMode::Off;
 	}
 }

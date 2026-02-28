@@ -29,20 +29,16 @@ jobs:
     name:    Release build (${{ matrix.conf.arch }})
     runs-on: ${{ matrix.conf.host }}
     if:      github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
-    env:
-      MACOSX_DEPLOYMENT_TARGET: ${{ matrix.conf.minimum_deployment }}
 
     strategy:
       matrix:
         conf:
           - host: macos-15
             arch: x86_64
-            minimum_deployment: '11.0'
             max_warnings: 0
 
           - host: macos-15
             arch: arm64
-            minimum_deployment: '11.0'
             max_warnings: 0
 
     steps:
@@ -55,7 +51,7 @@ jobs:
         uses: ./.github/actions/set-common-vars
 
       - name: Set up CMake
-        uses: lukka/get-cmake@9e07ecdcee1b12e5037e42f410b67f03e2f626e1 # v4.2.1
+        uses: lukka/get-cmake@f176ccd3f28bda569c43aae4894f06b2435a3375 # v4.2.3
 
       - name: Set up vcpkg
         uses: ./.github/actions/setup-vcpkg

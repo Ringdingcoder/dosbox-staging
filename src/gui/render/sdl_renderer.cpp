@@ -23,6 +23,10 @@ SdlRenderer::SdlRenderer(const int x, const int y, const int width,
 {
 	auto flags = sdl_window_flags | OpenGlDriverCrashWorkaround(render_driver);
 
+#ifdef MACOSX
+	SDL_SetHint(SDL_HINT_MAC_COLOR_SPACE, "srgb");
+#endif
+
 	window = SDL_CreateWindow(DOSBOX_NAME, x, y, width, height, flags);
 
 	if (!window && (flags & SDL_WINDOW_OPENGL)) {
@@ -89,16 +93,8 @@ uint32_t SdlRenderer::OpenGlDriverCrashWorkaround(const std::string_view render_
 
 bool SdlRenderer::InitRenderer(const std::string& render_driver)
 {
-	if (render_driver != "auto" &&
-	    (SDL_SetHint(SDL_HINT_RENDER_DRIVER, render_driver.c_str()) == SDL_FALSE)) {
-
-		// TODO convert to notification?
-		LOG_WARNING(
-		        "SDL: Error setting '%s' SDL render driver; "
-		        "falling back to automatic selection",
-		        render_driver.c_str());
-
-		set_section_property_value("sdl", "texture_renderer", "auto");
+	if (render_driver != "auto") {
+	    SDL_SetHint(SDL_HINT_RENDER_DRIVER, render_driver.c_str());
 	}
 
 	constexpr uint32_t Flags = 0;
@@ -252,7 +248,7 @@ void SdlRenderer::NotifyRenderSizeChanged(const int render_width_px,
 SdlRenderer::SetShaderResult SdlRenderer::SetShader(
         [[maybe_unused]] const std::string& shader_name)
 {
-	// no shader support; always report success
+	// no-op; always report success (no shader support)
 	//
 	// If we didn't, the rendering backend agnostic fallback mechanism would
 	// fail and we'd hard exit.
@@ -261,35 +257,35 @@ SdlRenderer::SetShaderResult SdlRenderer::SetShader(
 
 void SdlRenderer::NotifyVideoModeChanged([[maybe_unused]] const VideoMode& video_mode)
 {
-	// no shader support
+	// no-op (no shader support)
 	return;
 }
 
 bool SdlRenderer::ForceReloadCurrentShader()
 {
-	// no shader support; always report success
+	// no-op; always report success (no shader support)
 	return true;
 }
 
 ShaderInfo SdlRenderer::GetCurrentShaderInfo()
 {
-	// no shader support
+	// no-op (no shader support)
 	return {};
 }
 
 ShaderPreset SdlRenderer::GetCurrentShaderPreset()
 {
-	// no shader support
+	// no-op (no shader support)
 	return {};
 }
 
 std::string SdlRenderer::GetCurrentShaderDescriptorString()
 {
-	// no shader support
+	// no-op (no shader support)
 	return {};
 }
 
-void SdlRenderer::StartFrame(uint8_t*& pixels_out, int& pitch_out)
+void SdlRenderer::StartFrame(uint32_t*& pixels_out, int& pitch_out)
 {
 	assert(curr_framebuf);
 
@@ -298,7 +294,7 @@ void SdlRenderer::StartFrame(uint8_t*& pixels_out, int& pitch_out)
 		SDL_LockSurface(curr_framebuf);
 	}
 
-	pixels_out = static_cast<uint8_t*>(curr_framebuf->pixels);
+	pixels_out = reinterpret_cast<uint32_t*>(curr_framebuf->pixels);
 	pitch_out  = curr_framebuf->pitch;
 }
 
@@ -315,9 +311,8 @@ void SdlRenderer::EndFrame()
 	// emulation only writes the changed pixels to the framebuffer in each
 	// frame.
 
-	// TODO Couldn't get SDL_BlitSurface to work... If you
-	// can, feel free to use that here, but this works
-	// perfectly fine.
+	// TODO Couldn't get SDL_BlitSurface to work... If you can, feel free to
+	// use that here, but this works perfectly fine.
 	std::memcpy(last_framebuf->pixels,
 	            curr_framebuf->pixels,
 	            (curr_framebuf->h * curr_framebuf->pitch));
@@ -372,6 +367,22 @@ void SdlRenderer::SetVsync(const bool is_enabled)
 	}
 }
 
+void SdlRenderer::SetColorSpace([[maybe_unused]] const ColorSpace color_space)
+{
+	// no-op (no colour space support)
+}
+
+void SdlRenderer::SetImageAdjustmentSettings(
+        [[maybe_unused]] const ImageAdjustmentSettings& settings)
+{
+	// no-op (no image adjustment support)
+}
+
+void SdlRenderer::EnableImageAdjustments([[maybe_unused]] const bool enable)
+{
+	// no-op (no image adjustment support)
+}
+
 RenderedImage SdlRenderer::ReadPixelsPostShader(const DosBox::Rect output_rect_px)
 {
 	// Create new image
@@ -390,8 +401,7 @@ RenderedImage SdlRenderer::ReadPixelsPostShader(const DosBox::Rect output_rect_p
 	const auto image_size_bytes = check_cast<uint32_t>(image.params.height *
 	                                                   image.pitch);
 
-	image.image_data   = new uint8_t[image_size_bytes];
-	image.palette_data = nullptr;
+	image.image_data = new uint8_t[image_size_bytes];
 
 	image.is_flipped_vertically = false;
 

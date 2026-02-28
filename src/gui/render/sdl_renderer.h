@@ -45,13 +45,17 @@ public:
 
 	std::string GetCurrentShaderDescriptorString() override;
 
-	void StartFrame(uint8_t*& pixels_out, int& pitch_out) override;
+	void StartFrame(uint32_t*& pixels_out, int& pitch_out) override;
 	void EndFrame() override;
 
 	void PrepareFrame() override;
 	void PresentFrame() override;
 
 	void SetVsync(const bool is_enabled) override;
+
+	void SetColorSpace(const ColorSpace color_space) override;
+	void SetImageAdjustmentSettings(const ImageAdjustmentSettings& settings) override;
+	void EnableImageAdjustments(const bool enable) override;
 
 	RenderedImage ReadPixelsPostShader(const DosBox::Rect output_rect_px) override;
 
@@ -73,6 +77,11 @@ private:
 
 	// The current framebuffer we render the emulated video output into
 	// (contains the "work-in-progress" next frame).
+	//
+	// The framebuffers contain 32-bit pixel data stored as a sequence of
+	// four packed 8-bit values in BGRX byte order (that's in memory order,
+	// so byte N is B, byte N+1 is G, byte N+2 is R).
+	//
 	SDL_Surface* curr_framebuf = {};
 
 	// Contains the last fully rendered frame, waiting to be presented.
@@ -81,7 +90,7 @@ private:
 	// True if the last framebuffer has been updated since the last present
 	bool last_framebuf_dirty = false;
 
-	SDL_Texture* texture          = {};
+	SDL_Texture* texture = {};
 
 	TextureFilterMode texture_filter_mode = TextureFilterMode::Bilinear;
 };

@@ -517,7 +517,7 @@ bool fatDrive::getFileDirEntry(const char* const filename, direntry* useEntry,
 
 bool fatDrive::getDirClustNum(const char* dir, uint32_t* clustNum, bool parDir)
 {
-	uint32_t len = (uint32_t)strnlen(dir, DOS_PATHLENGTH);
+	auto len = static_cast<uint32_t>(strnlen(dir, DOS_PATHLENGTH));
 	char dirtoken[DOS_PATHLENGTH];
 	uint32_t currentClust = 0;
 	direntry foundEntry;
@@ -630,7 +630,7 @@ uint32_t fatDrive::getAbsoluteSectFromChain(uint32_t startClustNum, uint32_t log
 				if(testvalue >= 0xfffffff8) isEOF = true;
 				break;
 		}
-		if((isEOF) && (skipClust>=1)) {
+		if(isEOF && (skipClust >= 1)) {
 			//LOG_MSG("End of cluster chain reached before end of logical sector seek!");
 			if (skipClust == 1 && fattype == FAT12) {
 				//break;
@@ -1420,7 +1420,7 @@ bool fatDrive::directoryBrowse(uint32_t dirClustNumber, direntry *useEntry, int3
 	uint32_t entryoffset = 0;	/* Index offset within sector */
 	uint32_t tmpsector;
 	if ((start<0) || (start>65535)) return false;
-	uint16_t dirPos = (uint16_t)start;
+	auto dirPos = static_cast<uint16_t>(start);
 	if (entNum<start) return false;
 	entNum-=start;
 

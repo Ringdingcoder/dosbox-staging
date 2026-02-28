@@ -720,7 +720,7 @@ MidiDeviceMt32::MidiDeviceMt32()
 	const std::string filter_prefs = get_mt32_section()->GetString("mt32_filter");
 
 	if (!mixer_channel->TryParseAndSetCustomFilter(filter_prefs)) {
-		if (filter_prefs != "off") {
+		if (!has_false(filter_prefs)) {
 			LOG_WARNING("MT32: Invalid 'mt32_filter' value: '%s', using 'off'",
 			            filter_prefs.c_str());
 		}
@@ -1010,7 +1010,7 @@ void MT32_ListDevices(MidiDeviceMt32* device, Program* caller)
 	}();
 
 	auto highlight_model = [&](const LASynthModel* model,
-	                           const char* display_name) -> std::string {
+	                           const char* display_name) {
 		constexpr auto darkgray = "[color=dark-gray]";
 		constexpr auto green    = "[color=light-green]";
 		constexpr auto reset    = "[reset]";

@@ -675,7 +675,7 @@ void filter_compatible_s3_vesa_modes()
 		mb_8   = 1 << 4,
 	};
 
-	auto hash = [](const uint16_t w, const uint16_t h, const int d) -> uint32_t {
+	auto hash = [](const uint16_t w, const uint16_t h, const int d) {
 		return check_cast<uint32_t>((w + h) * d);
 	};
 
@@ -804,11 +804,7 @@ void filter_compatible_s3_vesa_modes()
 		return !mode_allowed(m);
 	};
 
-	// We don't need the return value
-	ModeList_VGA.erase(std::remove_if(ModeList_VGA.begin(),
-	                                  ModeList_VGA.end(),
-	                                  mode_not_allowed),
-	                   ModeList_VGA.end());
+	std::erase_if(ModeList_VGA, mode_not_allowed);
 
 	CurMode = std::prev(ModeList_VGA.end());
 }
