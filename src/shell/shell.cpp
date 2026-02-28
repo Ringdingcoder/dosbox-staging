@@ -1508,9 +1508,7 @@ static void updatePal(const char *p)
     uint32_t *rgb = (uint32_t*) p;
     for (int i=0; i<256; i++) {
         uint32_t palv = rgb[i];
-        unsigned r = palv & 0xff;
-        unsigned b = (palv >> 16) & 0xff;
-        lut[i] = palv & 0xff00 | (r << 16) | b | 0xff000000;
+        lut[i] = palv | 0xff000000;
     }
 }
 
