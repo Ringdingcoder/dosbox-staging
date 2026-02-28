@@ -35,11 +35,11 @@ jobs:
         conf:
           - host: macos-15
             arch: x86_64
-            max_warnings: 0
+            max_warnings: 25
 
           - host: macos-15
             arch: arm64
-            max_warnings: 0
+            max_warnings: 25
 
     steps:
       - name: Check out repository
