@@ -1410,40 +1410,6 @@ send_audio_block::send_audio_block(const uint8_t *begin, const uint8_t *end):
 
 static std::deque<send_audio_block> aqueue;
 
-static void translateInplace(uint8_t *blt, int dx, int dy)
-{
-    if (!dy && !dx)
-        return;
-    if (dy > 0) {
-        // lines from bottom to top
-        int loffsTgt = 320*223;
-        int loffsSrc = loffsTgt - 320*dy;
-        for (int y=223; y>=dy; y--) {
-            if (dx > 0) {
-                // move right
-                memcpy(blt + loffsTgt + dx, blt + loffsSrc, 320 - dx);
-            } else {
-                memcpy(blt + loffsTgt, blt + loffsSrc - dx, 320 + dx);
-            }
-            loffsTgt -= 320;
-            loffsSrc -= 320;
-        }
-    } else {
-        int loffsTgt = 0;
-        int loffsSrc = -320*dy;
-        for (int y=0; y<224+dy; y++) {
-            if (dx > 0) {
-                // move right
-                memmove(blt + loffsTgt + dx, blt + loffsSrc, 320 - dx);
-            } else {
-                memmove(blt + loffsTgt, blt + loffsSrc - dx, 320 + dx);
-            }
-            loffsTgt += 320;
-            loffsSrc += 320;
-        }
-    }
-}
-
 static int decode_diff(uint8_t *tgt, uint8_t *src)
 {
     int input_latch;

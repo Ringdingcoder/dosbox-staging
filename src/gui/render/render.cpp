@@ -430,7 +430,7 @@ int input_pos, input_pos_lh;
 uint8_t real_sendbuf[140000];
 uint8_t prevScreen[320*224];
 
-static void translateInplace(uint8_t *blt, int dx, int dy)
+void translateInplace(uint8_t *blt, int dx, int dy)
 {
     if (!dy && !dx)
         return;
