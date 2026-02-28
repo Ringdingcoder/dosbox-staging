@@ -5,18 +5,20 @@
 #include "dosbox.h"
 
 #include <cassert>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <memory>
 #include <mutex>
 
 #include <time.h>
-#include <unistd.h>
 #include <errno.h>
 
 #ifdef WIN32
 #include <winsock2.h>
+#include <ws2tcpip.h>
 #else
+#include <unistd.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
@@ -53,9 +55,14 @@ CHECK_NARROWING();
 
 static void pr_error()
 {
+#ifdef WIN32
+    int wsa_error = WSAGetLastError();
+    fprintf(stderr, "Socket error: %d\n", wsa_error);
+#else
     char buf[1024];
     char *err = strerror_r(errno, buf, 1024);
     fprintf(stderr, "Error: %s\n", err);
+#endif
 }
 
 static int sock, sock_kbd;
@@ -117,7 +124,7 @@ static int complete_read(int fd, char *buf, size_t count)
 {
     int ret;
     while (count) {
-        ret = read(fd, buf, count);
+        ret = recv(fd, buf, count, 0);
         if (ret < 0)
             return ret;
         if (ret == 0)
@@ -132,7 +139,7 @@ static int complete_write(int fd, const char *buf, size_t count)
 {
     int ret;
     while (count) {
-        ret = write(fd, buf, count);
+        ret = send(fd, buf, count, 0);
         if (ret < 0)
             return ret;
         if (ret == 0)
@@ -670,10 +677,13 @@ void RENDER_EndUpdate([[maybe_unused]] bool abort)
             input_pos_lh += audiosize;
             input_pos_lh = (input_pos_lh + 15) & ~15;
 
-            timespec ts;
-            clock_gettime(CLOCK_REALTIME, &ts);
-            timebits[0] = ts.tv_sec;
-            timebits[1] = ts.tv_nsec;
+            const auto now = std::chrono::system_clock::now();
+            const auto duration_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                now.time_since_epoch());
+            constexpr int64_t ns_per_second = 1000000000;
+            const auto total_ns = duration_ns.count();
+            timebits[0] = total_ns / ns_per_second;
+            timebits[1] = total_ns % ns_per_second;
             memcpy(sendbuf+8, timebits, sizeof(timebits));
             memset(sendbuf+24, 0, 8); // 8 bytes free
             uint16_t sendlen_uh = LZ4_compress_HC_continue(&stream_uh, (const char *) sendbuf, (char*) real_sendbuf+4, origlen, sizeof(real_sendbuf)-4);
