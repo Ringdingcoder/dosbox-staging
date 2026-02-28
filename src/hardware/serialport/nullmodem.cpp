@@ -70,35 +70,13 @@ CNullModem::CNullModem(const uint8_t port_idx, CommandLine *cmd)
 		}
 	}
 	// socket inheritance (client-alike)
+	// This feature has been removed because it required platform-specific
+	// native socket APIs that are incompatible with SDL_net's cross-platform approach.
 	if (getUintFromString("inhsocket:", bool_temp, cmd)) {
-#ifdef NATIVESOCKETS
-		if (bool_temp == 1) {
-			const auto arguments = &control->arguments;
-			if (arguments->socket) {
-				int sock    = *arguments->socket;
-				dtrrespect  = false;
-				transparent = true;
-				LOG_MSG("SERIAL: Port %" PRIu8 " inheritance "
-				        "socket handle: %d",
-				        GetPortNumber(), sock);
-				if (!ClientConnect(new TCPClientSocket(sock)))
-					return;
-			} else {
-				LOG_MSG("SERIAL: Port %" PRIu8 " missing "
-				        "\"-socket\" parameter.",
-				        GetPortNumber());
-				return;
-			}
-		} else {
-			LOG_MSG("SERIAL: Port %" PRIu8 " socket inheritance not "
-			        "supported on this platform.",
-			        GetPortNumber());
-			return;
-		}
-#else
-		LOG_MSG("SERIAL: Port %" PRIu8 " socket inheritance not available.",
+		LOG_MSG("SERIAL: Port %" PRIu8 " socket inheritance feature "
+		        "has been removed. Use standard server/client connections instead.",
 		        GetPortNumber());
-#endif
+		return;
 	} else {
 		// normal server/client
 		std::string tmpstring;

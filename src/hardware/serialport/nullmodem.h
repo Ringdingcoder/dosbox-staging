@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText:  2002-2025 The DOSBox Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#ifndef DOSBOX_NULLMODEM_WIN32_H
-#define DOSBOX_NULLMODEM_WIN32_H
+#ifndef DOSBOX_NULLMODEM_H
+#define DOSBOX_NULLMODEM_H
 
 #include "dosbox.h"
 
@@ -100,4 +100,4 @@ private:
 	} telClient;
 };
 
-#endif // DOSBOX_NULLMODEM_WIN32_H
+#endif // DOSBOX_NULLMODEM_H

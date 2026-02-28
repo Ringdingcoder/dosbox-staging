@@ -525,49 +525,10 @@ bool NetWrapper_InitializeSDLNet()
 	return sdl_net_manager.IsInitialized();
 }
 
-#ifdef NATIVESOCKETS
-TCPClientSocket::TCPClientSocket(int platformsocket)
-{
-	if (!NetWrapper_InitializeSDLNet())
-		return;
-
-	nativetcpstruct = new _TCPsocketX;
-	mysock = (TCPsocket)nativetcpstruct;
-
-	// fill the SDL socket manually
-	nativetcpstruct->ready = 0;
-	nativetcpstruct->sflag = 0;
-	nativetcpstruct->channel = platformsocket;
-	sockaddr_in		sa;
-	socklen_t		sz;
-	sz=sizeof(sa);
-	if(getpeername(platformsocket, (sockaddr *)(&sa), &sz)==0) {
-		nativetcpstruct->remoteAddress.host = /*ntohl(*/sa.sin_addr.s_addr;//);
-		nativetcpstruct->remoteAddress.port = /*ntohs(*/sa.sin_port;//);
-	}
-	else {
-		mysock = nullptr;
-		return;
-	}
-	sz=sizeof(sa);
-	if(getsockname(platformsocket, (sockaddr *)(&sa), &sz)==0) {
-		(nativetcpstruct)->localAddress.host = /*ntohl(*/ sa.sin_addr.s_addr; //);
-		(nativetcpstruct)->localAddress.port = /*ntohs(*/ sa.sin_port; //);
-	}
-	else {
-		mysock = nullptr;
-		return;
-	}
-	if(mysock) {
-		listensocketset = SDLNet_AllocSocketSet(1);
-		if(!listensocketset) return;
-		SDLNet_TCP_AddSocket(listensocketset, mysock);
-		isopen=true;
-		return;
-	}
-	return;
-}
-#endif // NATIVESOCKETS
+// Socket inheritance constructor removed - it required platform-specific
+// native socket APIs (getpeername, getsockname, sockaddr_in) that are not
+// cross-platform compatible. SDL_net provides all necessary networking
+// functionality through its cross-platform API.
 
 TCPClientSocket::TCPClientSocket(TCPsocket source)
 {
@@ -604,14 +565,6 @@ TCPClientSocket::TCPClientSocket(const char *destination, uint16_t port)
 
 TCPClientSocket::~TCPClientSocket()
 {
-#ifdef NATIVESOCKETS
-	if (nativetcpstruct) { //-V809
-		delete nativetcpstruct;
-	}
-	// Very important else. If we're using a native TCP socket, we can't call SDL's close.
-	// nativetcpstruct == mysock so it's a double free and it wasn't created by SDL to begin with
-	else
-#endif
 	if(mysock) {
 		SDLNet_TCP_Close(mysock);
 		LOG_INFO("SDLNET: Closed client TCP listening socket");

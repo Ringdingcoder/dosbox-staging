@@ -10,23 +10,9 @@
 
 #include "misc/support.h"
 
-#if defined WIN32
- #define NATIVESOCKETS
- #include <winsock2.h>
- #include <ws2tcpip.h> //for socklen_t
- //typedef int  socklen_t;
-
-//Tests for BSD/LINUX
-#elif defined HAVE_STDLIB_H && defined HAVE_SYS_TYPES_H && defined HAVE_SYS_SOCKET_H && defined HAVE_NETINET_IN_H
- #define NATIVESOCKETS
- #define SOCKET int
-#include <cstdio>  //darwin
-#include <cstdlib> //darwin
-#include <netinet/in.h>
-#include <sys/socket.h>
-#include <sys/types.h>
-// socklen_t should be handled by configure
-#endif
+// SDL_net provides cross-platform networking, so we don't need platform-specific
+// socket headers. The NATIVESOCKETS feature is only needed for advanced socket
+// inheritance, which is rarely used and can be disabled if not needed.
 
 // Using a non-blocking connection routine really should
 // require changes to softmodem to prevent bogus CONNECT
@@ -165,23 +151,16 @@ private:
 
 // --- TCP NET INTERFACE -----------------------------------------------------
 
-struct _TCPsocketX {
-	int ready = 0;
-#ifdef NATIVESOCKETS
-	SOCKET channel = 0;
-#endif
-	IPaddress remoteAddress = {0, 0};
-	IPaddress localAddress = {0, 0};
-	int sflag = 0;
-};
+// Removed _TCPsocketX struct - it was only used for socket inheritance
+// which required platform-specific socket APIs. SDL_net handles sockets
+// internally through its TCPsocket opaque type.
 
 class TCPClientSocket : public NETClientSocket {
 public:
 	TCPClientSocket(TCPsocket source);
 	TCPClientSocket(const char *destination, uint16_t port);
-#ifdef NATIVESOCKETS
-	TCPClientSocket(int platformsocket);
-#endif
+	// Socket inheritance constructor removed - it required platform-specific
+	// native socket APIs that are not cross-platform compatible with SDL_net
 	TCPClientSocket(const TCPClientSocket&) = delete; // prevent copying
 	TCPClientSocket& operator=(const TCPClientSocket&) = delete; // prevent assignment
 
@@ -194,11 +173,6 @@ public:
 	bool GetRemoteAddressString(char *buffer) override;
 
 private:
-
-#ifdef NATIVESOCKETS
-	_TCPsocketX *nativetcpstruct = nullptr;
-#endif
-
 	TCPsocket mysock = nullptr;
 	SDLNet_SocketSet listensocketset = nullptr;
 };
