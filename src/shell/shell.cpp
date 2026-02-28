@@ -1723,7 +1723,7 @@ void SHELL_AlternativeRun()
             }
             }
 
-        uint8_t *pixels;
+        uint32_t *pixels;
         int pitch;
 
         if (!GFX_StartUpdate(pixels, pitch))

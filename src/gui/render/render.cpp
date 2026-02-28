@@ -570,7 +570,7 @@ void RENDER_EndUpdate([[maybe_unused]] bool abort)
             uint32_t sendflags = 0;
             uint64_t timebits[2];
             int16_t translate_x, translate_y;
-            if (memcmp(render.prevpal, &render.pal.rgb, 1024)) {
+            if (memcmp(render.prevpal, &render.palette.rgb, 1024)) {
                 printf("sending pal!\n");
                 sendflags |= 1;
             }
@@ -592,8 +592,8 @@ void RENDER_EndUpdate([[maybe_unused]] bool abort)
             SDL_mutexV(mixstuff->lock);
             memcpy(sendbuf, &sendflags, 4);
             if (sendflags & 1) {
-                memcpy(sendbuf+32, &render.pal.rgb, 1024);
-                memcpy(render.prevpal, &render.pal.rgb, 1024);
+                memcpy(sendbuf+32, &render.palette.rgb, 1024);
+                memcpy(render.prevpal, &render.palette.rgb, 1024);
             }
 
             checkTranslation(render.framebuf, &translate_x, &translate_y);
