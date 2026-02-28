@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2025-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2025-2026 The DOSBox Staging Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #ifndef DOSBOX_SDL_RENDERER_H
@@ -36,14 +36,14 @@ public:
 
 	void NotifyVideoModeChanged(const VideoMode& video_mode) override;
 
-	SetShaderResult SetShader(const std::string& shader_name) override;
+	SetShaderResult SetShader(const std::string& symbolic_shader_descriptor) override;
 
-	bool ForceReloadCurrentShader() override;
+	void ForceReloadCurrentShader() override;
 
 	ShaderInfo GetCurrentShaderInfo() override;
 	ShaderPreset GetCurrentShaderPreset() override;
 
-	std::string GetCurrentShaderDescriptorString() override;
+	std::string GetCurrentSymbolicShaderDescriptor() override;
 
 	void StartFrame(uint32_t*& pixels_out, int& pitch_out) override;
 	void EndFrame() override;

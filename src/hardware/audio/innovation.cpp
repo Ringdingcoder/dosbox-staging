@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2021-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2021-2026 The DOSBox Staging Team
 // SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
@@ -315,7 +315,8 @@ static void init_innovation_config_settings(SectionProp& sec_prop)
 	auto* hex_prop = sec_prop.AddHex("sidport", when_idle, 0x280);
 	hex_prop->SetValues({"240", "260", "280", "2a0", "2c0"});
 	hex_prop->SetHelp(
-	        "The IO port address of the Innovation SSI-2001 (280 by default).");
+	        "The IO port address of the Innovation SSI-2001 (280 by default).\n"
+	        "Possible values: 240, 260, 280, 2a0, 2c0");
 
 	// Filter strengths
 	auto* int_prop = sec_prop.AddInt("6581filter", when_idle, 50);

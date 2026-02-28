@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2020-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2020-2026 The DOSBox Staging Team
 // SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
@@ -174,7 +174,7 @@ std::unique_ptr<DOS_File> localDrive::FileOpen(const char* name, uint8_t flags)
 		}
 	}
 
-	NativeFileHandle file_handle = open_native_file(host_filename,
+	NativeFileHandle file_handle = open_native_file(host_filename.c_str(),
 	                                                host_write_access);
 
 	// If we couldn't open the file, then it's possible that
@@ -182,7 +182,7 @@ std::unique_ptr<DOS_File> localDrive::FileOpen(const char* name, uint8_t flags)
 	// requested RW access. So check if this is the case:
 	if (file_handle == InvalidNativeFileHandle && host_write_access) {
 		// If yes, check if the file can be opened with Read-only access:
-		file_handle = open_native_file(host_filename, false);
+		file_handle = open_native_file(host_filename.c_str(), false);
 		if (file_handle != InvalidNativeFileHandle && dos_write_access) {
 			flags                = OPEN_READ;
 			dos_write_access     = false;
@@ -214,7 +214,7 @@ std::unique_ptr<DOS_File> localDrive::FileOpen(const char* name, uint8_t flags)
 	}
 
 	auto file = std::make_unique<localFile>(name,
-	                                        host_filename,
+	                                        host_filename.c_str(),
 	                                        file_handle,
 	                                        basedir,
 	                                        IsReadOnly(),
@@ -420,7 +420,7 @@ bool localDrive::FindNext(DOS_DTA& dta)
 
 bool localDrive::GetFileAttr(const char* name, FatAttributeFlags* attr)
 {
-	if (local_drive_get_attributes(MapDosToHostFilename(name), *attr) != DOSERR_NONE) {
+	if (local_drive_get_attributes(MapDosToHostFilename(name).c_str(), *attr) != DOSERR_NONE) {
 		// The caller is responsible to act accordingly, possibly
 		// it should set DOS error code (setting it here is not allowed)
 		*attr = 0;
@@ -435,7 +435,7 @@ bool localDrive::SetFileAttr(const char* name, const FatAttributeFlags attr)
 	assert(!IsReadOnly());
 	const std::string host_filename = MapDosToHostFilename(name);
 
-	const auto result = local_drive_set_attributes(host_filename, attr);
+	const auto result = local_drive_set_attributes(host_filename.c_str(), attr);
 	dirCache.CacheOut(host_filename.c_str());
 
 	if (result != DOSERR_NONE) {
@@ -493,7 +493,7 @@ bool localDrive::TestDir(const char* dir)
 			return false;
 		}
 	}
-	return path_exists(host_dir);
+	return local_drive_path_exists(host_dir.c_str());
 }
 
 bool localDrive::Rename(const char* oldname, const char* newname)
@@ -505,12 +505,12 @@ bool localDrive::Rename(const char* oldname, const char* newname)
 	safe_strcpy(newnew, basedir);
 	safe_strcat(newnew, newname);
 	CROSS_FILENAME(newnew);
-	int temp = rename(old_host_filename.c_str(), dirCache.GetExpandNameAndNormaliseCase(newnew));
-	if (temp == 0) {
+	const bool success = local_drive_rename_file_or_directory(old_host_filename.c_str(), dirCache.GetExpandNameAndNormaliseCase(newnew));
+	if (success) {
 		timestamp_cache.erase(old_host_filename);
 		dirCache.CacheOut(newnew);
 	}
-	return temp == 0;
+	return success;
 }
 
 bool localDrive::AllocationInfo(uint16_t* _bytes_sector, uint8_t* _sectors_cluster,
@@ -584,7 +584,7 @@ bool localFile::Read(uint8_t* data, uint16_t* num_bytes)
 	// access noises
 	DiskNoises* disk_noises = DiskNoises::GetInstance();
 	if (disk_noises != nullptr) {
-		disk_noises->SetLastIoPath(path.string(),
+		disk_noises->SetLastIoPath(path,
 		                           DiskNoiseIoType::Read,
 		                           DOS_GetDiskTypeFromMediaByte(
 		                                   local_drive.lock()->GetMediaByte()));
@@ -636,7 +636,7 @@ bool localFile::Write(uint8_t* data, uint16_t* num_bytes)
 	// access noises
 	DiskNoises* disk_noises = DiskNoises::GetInstance();
 	if (disk_noises != nullptr) {
-		disk_noises->SetLastIoPath(path.string(),
+		disk_noises->SetLastIoPath(path,
 		                           DiskNoiseIoType::Write,
 		                           DOS_GetDiskTypeFromMediaByte(
 		                                   local_drive.lock()->GetMediaByte()));
@@ -672,7 +672,7 @@ bool localFile::Seek(uint32_t *pos_addr, uint32_t type)
 		case DOS_SEEK_CUR: {
 			const auto current_pos = get_native_file_position(file_handle);
 			if (current_pos == NativeSeekFailed) {
-				LOG_WARNING("FS: File seek failed for '%s'", path.string().c_str());
+				LOG_WARNING("FS: File seek failed for '%s'", path.c_str());
 				DOS_SetError(DOSERR_ACCESS_DENIED);
 				return false;
 			}
@@ -682,7 +682,7 @@ bool localFile::Seek(uint32_t *pos_addr, uint32_t type)
 		case DOS_SEEK_END: {
 			const auto end_pos = seek_native_file(file_handle, 0, NativeSeek::End);
 			if (end_pos == NativeSeekFailed) {
-				LOG_WARNING("FS: File seek failed for '%s'", path.string().c_str());
+				LOG_WARNING("FS: File seek failed for '%s'", path.c_str());
 				DOS_SetError(DOSERR_ACCESS_DENIED);
 				return false;
 			}
@@ -701,7 +701,7 @@ bool localFile::Seek(uint32_t *pos_addr, uint32_t type)
 	auto returned_pos = seek_native_file(file_handle, seek_to, NativeSeek::Set);
 
 	if (returned_pos == NativeSeekFailed) {
-		LOG_WARNING("FS: File seek failed for '%s'", path.string().c_str());
+		LOG_WARNING("FS: File seek failed for '%s'", path.c_str());
 		DOS_SetError(DOSERR_ACCESS_DENIED);
 		return false;
 	}
@@ -739,7 +739,7 @@ void localFile::MaybeFlushTime()
 	const auto drive_ptr = local_drive.lock();
 	if (drive_ptr) {
 		auto& cache = drive_ptr->timestamp_cache;
-		auto entry  = cache.find(path.string());
+		auto entry  = cache.find(path);
 		if (entry != cache.end()) {
 			// Only update the cache if it already contains
 			// the entry. This handles an edge case where
@@ -759,10 +759,10 @@ void localFile::Close()
 			assert(!IsOnReadOnlyMedium());
 			FatAttributeFlags attributes = {};
 			if (DOSERR_NONE ==
-			    local_drive_get_attributes(path, attributes)
+			    local_drive_get_attributes(path.c_str(), attributes)
 				&& !attributes.archive) {
 				attributes.archive = true;
-				local_drive_set_attributes(path, attributes);
+				local_drive_set_attributes(path.c_str(), attributes);
 			}
 			set_archive_on_close = false;
 		}
@@ -783,7 +783,7 @@ uint16_t localFile::GetInformation(void)
 	return read_only_medium ? 0x40 : 0;
 }
 
-localFile::localFile(const char* _name, const std_fs::path& path,
+localFile::localFile(const char* _name, const char* path,
                      const NativeFileHandle handle, const char* _basedir,
                      const bool _read_only_medium,
                      const std::weak_ptr<localDrive> drive,

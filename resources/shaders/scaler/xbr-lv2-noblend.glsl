@@ -1,10 +1,12 @@
 #version 330 core
 
-// SPDX-FileCopyrightText:  2020-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2020-2026 The DOSBox Staging Team
 // SPDX-FileCopyrightText:  2011-2016 Hyllian <sergiogdb@gmail.com>
 // SPDX-License-Identifier: MIT
 
 // Hyllian's xBR-lv2-noblend Shader
+
+/*
 
 #pragma use_nearest_texture_filter
 #pragma force_single_scan
@@ -13,6 +15,8 @@
 #pragma parameter XBR_EQ_THRESHOLD "Eq Threshold" 0.6 0.0 2.0 0.1
 #pragma parameter XBR_LV2_COEFFICIENT "Lv2 Coefficient" 2.0 1.0 3.0 0.1
 #pragma parameter XBR_CORNER_TYPE "Corner Calculation" 1.0 1.0 4.0 1.0
+
+*/
 
 #define mul(a,b) (b*a)
 

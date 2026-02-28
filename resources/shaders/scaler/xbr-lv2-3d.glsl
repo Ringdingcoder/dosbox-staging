@@ -1,6 +1,6 @@
 #version 330 core
 
-// SPDX-FileCopyrightText:  2020-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2020-2026 The DOSBox Staging Team
 // SPDX-FileCopyrightText:  2011-2015 Hyllian <sergiogdb@gmail.com>
 // SPDX-License-Identifier: MIT
 //
@@ -8,6 +8,8 @@
 //
 // Note from Hyllian:
 //   Incorporates some of the ideas from SABR shader. Thanks to Joshua Street.
+
+/*
 
 #pragma use_nearest_texture_filter
 #pragma force_single_scan
@@ -19,6 +21,8 @@
 #pragma parameter XBR_RES "Internal Res Multiplier" 1.0 1.0 8.0 1.0
 #pragma parameter XBR_SCALE "xBR Scale" 3.0 1.0 5.0 1.0
 #pragma parameter XBR_CORNER_TYPE "Corner Calculation" 3.0 1.0 4.0 1.0
+
+*/
 
 #define mul(a,b) (b*a)
 #define saturate(c) clamp(c, 0.0, 1.0)

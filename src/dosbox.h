@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2019-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2019-2026 The DOSBox Staging Team
 // SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
@@ -173,6 +173,7 @@ inline bool is_machine_hercules() {
 constexpr auto DefaultMt32RomsDir        = "mt32-roms";
 constexpr auto DefaultSoundCanvasRomsDir = "soundcanvas-roms";
 constexpr auto DefaultSoundfontsDir      = "soundfonts";
+constexpr auto DefaultWebserverDir       = "webserver";
 constexpr auto DiskNoisesDir             = "disk-noises";
 constexpr auto PluginsDir                = "plugins";
 constexpr auto ShaderPresetsDir          = "shader-presets";

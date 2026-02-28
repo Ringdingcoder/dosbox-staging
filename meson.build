@@ -1153,7 +1153,6 @@ internal_deps = []
 
 # bundled dependencies, in dependency-order
 #
-subdir('src/libs/ghc')
 subdir('src/libs/loguru')
 subdir('src/libs/decoders')
 subdir('src/libs/nuked')
@@ -1181,7 +1180,6 @@ third_party_deps = [
     sdl2_dep,
     threads_dep,
     asio_dep,
-    ghc_dep,
     libglad_dep,
     libiir_dep,
     libloguru_dep,
@@ -1207,6 +1205,7 @@ subdir('src/ints')
 subdir('src/midi')
 subdir('src/shell')
 subdir('src/utils')
+subdir('src/webserver')
 
 # debugger-specific libs
 if get_option('enable_debugger') != 'none'

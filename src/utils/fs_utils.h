@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2020-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2020-2026 The DOSBox Staging Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #ifndef DOSBOX_FS_UTILS_H
@@ -13,6 +13,7 @@
 #include <string>
 #include <vector>
 
+#include "misc/logging.h"
 #include "misc/std_filesystem.h"
 
 #if defined(WIN32)
@@ -21,6 +22,45 @@
 	using NativeFileHandle = HANDLE;
 	// Cannot be constexpr due to Win32 macro
 	#define InvalidNativeFileHandle INVALID_HANDLE_VALUE
+
+	template <int out_length>
+	bool codepage437_to_utf16(const char *in_string, wchar_t (&out_string)[out_length])
+	{
+		constexpr UINT Codepage = 437;
+		constexpr DWORD Flags = 0;
+		// -1 means read the entire null terminated string
+		constexpr int InLength = -1;
+		const auto num_chars = MultiByteToWideChar(Codepage, Flags, in_string, InLength, out_string, out_length);
+		if (num_chars >= out_length) {
+			LOG_ERR("FS: codepage437_to_utf16: Insufficient output buffer length");
+			return false;
+		}
+		if (num_chars > 0) {
+			// Ensure output string is null terminated (should be, but just in case)
+			out_string[num_chars] = 0;
+			return true;
+		}
+		const auto error = GetLastError();
+		// Message table source or something, is ignored for our usage
+		constexpr LPCVOID lpSource = nullptr;
+		// Also ignored, only used for FORMAT_MESSAGE_FROM_STRING
+		constexpr va_list* Arguments = nullptr;
+		char error_message[512] = {};
+		if (FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+							lpSource,
+							error,
+							LANG_USER_DEFAULT,
+							error_message,
+							sizeof(error_message),
+							Arguments)) {
+			// Just in case Windows does something dumb I'm sticking a null terminator on the end :)
+			error_message[sizeof(error_message) - 1] = 0;
+			LOG_ERR("FS: MultiByteToWideChar failed with error code %lu: %s", error, error_message);
+		} else {
+			LOG_ERR("FS: MultiByteToWideChar failed with error code %lu: FormatMessageA also failed", error);
+		}
+		return false;
+	}
 
 #else // Linux, macOS
 	using NativeFileHandle = int;
@@ -45,19 +85,9 @@ struct DosDateTime {
 std::optional<std::vector<std::string>> get_lines(const std_fs::path &text_file);
 
 // Is the candidate a directory or a symlink that points to one?
-bool is_directory(const std::string& candidate);
+bool is_dir(const std_fs::path& path);
 
 bool is_hidden_by_host(const std::filesystem::path& pathname);
-
-/* Check if the given path corresponds to an existing file or directory.
- */
-
-bool path_exists(const char *path) noexcept;
-
-inline bool path_exists(const std::string &path) noexcept
-{
-	return path_exists(path.c_str());
-}
 
 /* Convert path (possibly in format used by different OS) to a path
  * native for host OS.
@@ -83,21 +113,6 @@ std::string to_native_path(const std::string &path) noexcept;
 // The shortest valid path is considered the simplest form.
 std_fs::path simplify_path(const std_fs::path &path) noexcept;
 
-/* Cross-platform wrapper for following functions:
- *
- * - Unix: mkdir(const char *, mode_t)
- * - Windows: _mkdir(const char *)
- *
- * Normal behaviour of mkdir is to fail when directory exists already,
- * you can override this behaviour by calling:
- *
- *     create_dir(path, 0700, OK_IF_EXISTS)
- */
-
-constexpr uint32_t OK_IF_EXISTS = 0x1;
-
-int create_dir(const std_fs::path& path, uint32_t mode, uint32_t flags = 0x0) noexcept;
-
 // Behaves like fseek, but logs an error stating the module, byte offset, file
 // description, filename, and strerror on failure. Returns true on success and
 // false on failure. On failure, it closes the file as it's no longer in a good
@@ -106,30 +121,6 @@ int create_dir(const std_fs::path& path, uint32_t mode, uint32_t flags = 0x0) no
 bool check_fseek(const char* module_name, const char* file_description,
                  const char* filename, FILE*& stream, const long long offset,
                  const int whence);
-
-// Returns a 'check_fseek' function object that behaves like the above. This can
-// be used when lots of sequential seeks are needed.
-//
-inline auto make_check_fseek_func(const std::string& module_name,
-                                  const std::string& file_description,
-                                  const std_fs::path& filepath)
-{
-	// Use the lambda copy-operator to keep copies of the arguments inside
-	// the lambda, as these arguments would normally go out of scope with
-	// respect to the lifetime of the lamda.
-	//
-	auto check_fseek_lambda = [=](FILE*& stream,
-	                              const long long offset,
-	                              const int whence) {
-		return check_fseek(module_name.c_str(),
-		                   file_description.c_str(),
-		                   filepath.string().c_str(),
-		                   stream,
-		                   offset,
-		                   whence);
-	};
-	return check_fseek_lambda;
-}
 
 // Convert a filesystem time to a raw time_t value
 std::time_t to_time_t(const std_fs::file_time_type &fs_time);
@@ -177,18 +168,20 @@ std::deque<std_fs::path> get_xdg_data_dirs() noexcept;
 
 union FatAttributeFlags; // forward declaration
 
-uint16_t local_drive_create_dir(const std_fs::path& path);
-bool local_drive_remove_dir(const std_fs::path& path);
-uint16_t local_drive_get_attributes(const std_fs::path& path,
+bool local_drive_rename_file_or_directory(const char* old_path, const char* new_path);
+bool local_drive_path_exists(const char* path);
+uint16_t local_drive_create_dir(const char* path);
+bool local_drive_remove_dir(const char* path);
+uint16_t local_drive_get_attributes(const char* path,
                                     FatAttributeFlags& attributes);
-uint16_t local_drive_set_attributes(const std_fs::path& path,
+uint16_t local_drive_set_attributes(const char* path,
                                     const FatAttributeFlags attributes);
 
 // Native file I/O wrappers.
 // Currently only used by local drive and overlay drive but suitable for use
 // elsewhere.
-NativeFileHandle open_native_file(const std_fs::path& path, const bool write_access);
-NativeFileHandle create_native_file(const std_fs::path& path,
+NativeFileHandle open_native_file(const char* path, const bool write_access);
+NativeFileHandle create_native_file(const char* path,
                                     const std::optional<FatAttributeFlags> attributes);
 
 NativeIoResult read_native_file(const NativeFileHandle handle, uint8_t* buffer,
@@ -210,10 +203,9 @@ bool truncate_native_file(const NativeFileHandle handle);
 DosDateTime get_dos_file_time(const NativeFileHandle handle);
 void set_dos_file_time(const NativeFileHandle handle, const uint16_t date, const uint16_t time);
 
-bool delete_native_file(const std_fs::path& path);
+bool delete_native_file(const char* path);
 
 // Simple file/directory removal routines, without MS-DOS compatibility hacks
-bool delete_file(const std_fs::path& path);
-bool remove_dir(const std_fs::path& path);
+bool create_dir_if_not_exist(const std_fs::path& path);
 
 #endif

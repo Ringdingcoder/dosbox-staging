@@ -7,6 +7,7 @@ libgui_sources = files(
     'shader_manager.cpp',
     'titlebar.cpp',
 
+    'render/deinterlacer.cpp',
     'render/opengl_renderer.cpp',
     'render/render.cpp',
     'render/scaler/scalers.cpp',
@@ -18,7 +19,6 @@ libgui = static_library(
     libgui_sources,
     include_directories: incdir,
     dependencies: [
-        ghc_dep,
         libglad_dep,
         libiir_dep,
         libloguru_dep,

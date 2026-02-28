@@ -1,43 +1,33 @@
-// SPDX-FileCopyrightText:  2020-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2020-2026 The DOSBox Staging Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "utils/fs_utils.h"
 
 #if defined(WIN32)
 
-#include <direct.h>
-#include <fcntl.h>
-#include <io.h>
-#include <sys/stat.h>
+// Windows header needed for PathFileExistsW
+#include "Shlwapi.h"
 
 #include "dos/dos.h"
 #include "dos/dos_system.h"
-#include "misc/compiler.h"
-
-bool path_exists(const char *path) noexcept
-{
-	return (_access(path, 0) == 0);
-}
 
 std::string to_native_path(const std::string &path) noexcept
 {
-	if (path_exists(path))
+	if (local_drive_path_exists(path.c_str()))
 		return path;
 	return "";
 }
 
-int create_dir(const std_fs::path& path, [[maybe_unused]] uint32_t mode,
-               uint32_t flags) noexcept
+uint16_t local_drive_create_dir(const char* path)
 {
-	const auto path_str = path.string();
-	const int err       = _mkdir(path_str.c_str());
-	if ((errno == EEXIST) && (flags & OK_IF_EXISTS)) {
-		struct _stat pstat;
-		if ((_stat(path_str.c_str(), &pstat) == 0) &&
-		    ((pstat.st_mode & _S_IFMT) == _S_IFDIR))
-			return 0;
+	wchar_t utf16_path[MAX_PATH] = {};
+	if (!codepage437_to_utf16(path, utf16_path)) {
+		return DOSERR_ACCESS_DENIED;
 	}
-	return err;
+	if (CreateDirectoryW(utf16_path, nullptr)) {
+		return DOSERR_NONE;
+	}
+	return DOSERR_ACCESS_DENIED;
 }
 
 // ***************************************************************************
@@ -46,10 +36,14 @@ int create_dir(const std_fs::path& path, [[maybe_unused]] uint32_t mode,
 
 constexpr uint8_t WindowsAttributesMask = 0x3f;
 
-uint16_t local_drive_get_attributes(const std_fs::path& path,
+uint16_t local_drive_get_attributes(const char* path,
                                     FatAttributeFlags& attributes)
 {
-	const auto win32_attributes = GetFileAttributesW(path.c_str());
+	wchar_t utf16_path[MAX_PATH] = {};
+	if (!codepage437_to_utf16(path, utf16_path)) {
+		return DOSERR_ACCESS_DENIED;
+	}
+	const auto win32_attributes = GetFileAttributesW(utf16_path);
 	if (win32_attributes == INVALID_FILE_ATTRIBUTES) {
 		attributes = 0;
 		return static_cast<uint16_t>(GetLastError());
@@ -59,24 +53,32 @@ uint16_t local_drive_get_attributes(const std_fs::path& path,
 	return DOSERR_NONE;
 }
 
-uint16_t local_drive_set_attributes(const std_fs::path& path,
+uint16_t local_drive_set_attributes(const char* path,
                                     const FatAttributeFlags attributes)
 {
-	if (!SetFileAttributesW(path.c_str(), attributes._data)) {
+	wchar_t utf16_path[MAX_PATH] = {};
+	if (!codepage437_to_utf16(path, utf16_path)) {
+		return DOSERR_ACCESS_DENIED;
+	}
+	if (!SetFileAttributesW(utf16_path, attributes._data)) {
 		return static_cast<uint16_t>(GetLastError());
 	}
 
 	return DOSERR_NONE;
 }
 
-NativeFileHandle open_native_file(const std_fs::path& path, const bool write_access)
+NativeFileHandle open_native_file(const char* path, const bool write_access)
 {
+	wchar_t utf16_path[MAX_PATH] = {};
+	if (!codepage437_to_utf16(path, utf16_path)) {
+		return InvalidNativeFileHandle;
+	}
 	DWORD access = GENERIC_READ;
 	if (write_access) {
 		access |= GENERIC_WRITE;
 	}
 
-	return CreateFileW(path.c_str(),
+	return CreateFileW(utf16_path,
 	                   access,
 	                   FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
 	                   nullptr,
@@ -85,14 +87,18 @@ NativeFileHandle open_native_file(const std_fs::path& path, const bool write_acc
 	                   nullptr);
 }
 
-NativeFileHandle create_native_file(const std_fs::path& path,
+NativeFileHandle create_native_file(const char* path,
                                     const std::optional<FatAttributeFlags> attributes)
 {
+	wchar_t utf16_path[MAX_PATH] = {};
+	if (!codepage437_to_utf16(path, utf16_path)) {
+		return InvalidNativeFileHandle;
+	}
 	const auto win32_attributes = (attributes && attributes->_data != 0)
 	                                    ? static_cast<DWORD>(attributes->_data)
 	                                    : FILE_ATTRIBUTE_NORMAL;
 
-	return CreateFileW(path.c_str(),
+	return CreateFileW(utf16_path,
 	                   GENERIC_READ | GENERIC_WRITE,
 	                   FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
 	                   nullptr,
@@ -274,8 +280,16 @@ void set_dos_file_time(const NativeFileHandle handle, const uint16_t date,
 // This allows a file with the same name to be created even if there are open
 // file handles. See bug report about the game Abuse:
 // https://github.com/dosbox-staging/dosbox-staging/issues/4123
-bool delete_native_file(const std_fs::path& path)
+bool delete_native_file(const char* path)
 {
+	wchar_t utf16_path[MAX_PATH] = {};
+	if (!codepage437_to_utf16(path, utf16_path)) {
+		return false;
+	}
+
+	// This one should never throw as we've already converted to UTF-16 succesfully
+	std_fs::path stdpath(utf16_path);
+
 	// Prefix of the temp file. Only uses 3 characters.
 	// $ as convention to designate temp file followed by DB for DosBox.
 	const wchar_t* prefix = L"$DB";
@@ -290,18 +304,18 @@ bool delete_native_file(const std_fs::path& path)
 
 	// Create a temporary file inside the same directory as the file to be
 	// deleted. Returns unique identifier on success and 0 on failure.
-	if (GetTempFileNameW(path.parent_path().c_str(), prefix, UniqueNumber, temp_file) ==
+	if (GetTempFileNameW(stdpath.parent_path().c_str(), prefix, UniqueNumber, temp_file) ==
 	    0) {
 		LOG_ERR("FS: Failed to create temp file. Deleting '%s' directly.",
-		        path.string().c_str());
+		        stdpath.string().c_str());
 		// We failed to create a temp file but we should still try to
 		// delete the original file.
-		return DeleteFileW(path.c_str());
+		return DeleteFileW(stdpath.c_str());
 	}
 
 	// Above function creates the temp file so we replace it here with the
 	// flag MOVEFILE_REPLACE_EXISTING.
-	if (MoveFileExW(path.c_str(), temp_file, MOVEFILE_REPLACE_EXISTING)) {
+	if (MoveFileExW(stdpath.c_str(), temp_file, MOVEFILE_REPLACE_EXISTING)) {
 		// We can immediately delete the temporary file.
 		// Any open handles can be still be read from or written to.
 		// A new file can be created with the original file name.
@@ -318,23 +332,27 @@ bool delete_native_file(const std_fs::path& path)
 	// We failed to move the file. We need to delete both the temp file and
 	// the original file.
 	LOG_ERR("FS: Failed to move '%s' to temp file '%s' before delete.",
-	        path.string().c_str(),
+	        stdpath.string().c_str(),
 	        std_fs::path(temp_file).string().c_str());
 	if (!DeleteFileW(temp_file)) {
 		LOG_ERR("FS: Failed to delete temporary file: '%s'",
 		        std_fs::path(temp_file).string().c_str());
 	}
-	return DeleteFileW(path.c_str());
+	return DeleteFileW(stdpath.c_str());
 }
 
-bool local_drive_remove_dir(const std_fs::path& path)
+bool local_drive_remove_dir(const char* path)
 {
-	if (RemoveDirectoryW(path.c_str())) {
+	wchar_t utf16_path[MAX_PATH] = {};
+	if (!codepage437_to_utf16(path, utf16_path)) {
+		return false;
+	}
+	if (RemoveDirectoryW(utf16_path)) {
 		return true;
 	}
 	// Windows specific hack: MS-DOS allows removal of read-only directories.
 	// Windows does not. If we have a read-only directory, we need to make it not read-only.
-	DWORD attributes = GetFileAttributesW(path.c_str());
+	DWORD attributes = GetFileAttributesW(utf16_path);
 	if (attributes == INVALID_FILE_ATTRIBUTES) {
 		return false;
 	}
@@ -342,26 +360,38 @@ bool local_drive_remove_dir(const std_fs::path& path)
 		return false;
 	}
 	attributes &= ~FILE_ATTRIBUTE_READONLY;
-	if (!SetFileAttributesW(path.c_str(), attributes)) {
+	if (!SetFileAttributesW(utf16_path, attributes)) {
 		return false;
 	}
-	if (RemoveDirectoryW(path.c_str())) {
+	if (RemoveDirectoryW(utf16_path)) {
 		return true;
 	}
 	// Removal still failed. Restore original attributes.
 	attributes |= FILE_ATTRIBUTE_READONLY;
-	SetFileAttributesW(path.c_str(), attributes);
+	SetFileAttributesW(utf16_path, attributes);
 	return false;
 }
 
-bool delete_file(const std_fs::path& path)
+bool local_drive_path_exists(const char* path)
 {
-	return _unlink(path.string().c_str()) == 0;
+	wchar_t utf16_path[MAX_PATH] = {};
+	if (!codepage437_to_utf16(path, utf16_path)) {
+		return false;
+	}
+	return PathFileExistsW(utf16_path);
 }
 
-bool remove_dir(const std_fs::path& path)
+bool local_drive_rename_file_or_directory(const char* old_path, const char* new_path)
 {
-	return _rmdir(path.string().c_str()) == 0;
+	wchar_t utf16_old_path[MAX_PATH] = {};
+	if (!codepage437_to_utf16(old_path, utf16_old_path)) {
+		return false;
+	}
+	wchar_t utf16_new_path[MAX_PATH] = {};
+	if (!codepage437_to_utf16(new_path, utf16_new_path)) {
+		return false;
+	}
+	return MoveFileW(utf16_old_path, utf16_new_path);
 }
 
 #endif

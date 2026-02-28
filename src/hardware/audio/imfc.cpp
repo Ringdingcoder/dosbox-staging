@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2023-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2023-2026 The DOSBox Staging Team
 // SPDX-FileCopyrightText:  2017-2020  Loris Chiocca
 // SPDX-FileCopyrightText:  1999-2000  Daisuke Nagano <breeze.nagano@nifty.ne.jp>
 // SPDX-FileCopyrightText:  1997-1999  Jarek Burczynski <s0246@priv4.onet.pl>
@@ -13452,13 +13452,15 @@ static void init_imfc_config_settings(SectionProp& secprop)
 	assert(hex_prop);
 	hex_prop->SetValues({"2A20", "2A30"});
 	hex_prop->SetHelp(
-	        "The IO base address of the IBM Music Feature Card ('2A20' by default).");
+	        "The IO base address of the IBM Music Feature Card ('2A20' by default).\n"
+	        "Possible values: 2A20, 2A30");
 
 	const auto int_prop = secprop.AddInt("imfc_irq", when_idle, 3);
 	assert(int_prop);
 	int_prop->SetValues({"2", "3", "4", "5", "6", "7"});
 	int_prop->SetHelp(
-	        "The IRQ number of the IBM Music Feature Card (3 by default).");
+	        "The IRQ number of the IBM Music Feature Card (3 by default).\n"
+	        "Possible values: 2, 3, 4, 5, 6, 7");
 
 	const auto str_prop = secprop.AddString("imfc_filter", when_idle, "on");
 	assert(str_prop);

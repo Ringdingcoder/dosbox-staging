@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2021-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2021-2026 The DOSBox Staging Team
 // SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
@@ -55,13 +55,9 @@ static std_fs::path get_or_create_config_dir()
 {
 	const auto conf_path = resolve_home("~/Library/Preferences/DOSBox");
 
-	constexpr auto success = 0;
-	if (create_dir(conf_path, 0700, OK_IF_EXISTS) == success) {
-
-	} else {
-		LOG_ERR("CONFIG: Can't create config directory '%s': %s",
-		        conf_path.string().c_str(),
-		        safe_strerror(errno).c_str());
+	if (!create_dir_if_not_exist(conf_path)) {
+		LOG_ERR("CONFIG: Can't create config directory '%s'",
+		        conf_path.string().c_str());
 	}
 	return conf_path;
 }
@@ -96,11 +92,9 @@ static std_fs::path get_or_create_config_dir()
 
 	const auto conf_path = std_fs::path(appdata_path) / "DOSBox";
 
-	constexpr auto success_result = 0;
-	if (create_dir(conf_path, 0700, OK_IF_EXISTS) != success_result) {
-		LOG_ERR("CONFIG: Can't create config directory '%s': %s",
-		        conf_path.string().c_str(),
-		        safe_strerror(errno).c_str());
+	if (!create_dir_if_not_exist(conf_path)) {
+		LOG_ERR("CONFIG: Can't create config directory '%s'",
+		        conf_path.string().c_str());
 	}
 
 	return conf_path;
@@ -239,7 +233,7 @@ DirInformation* open_directory(const char* dirname) {
 
 	dir.handle = INVALID_HANDLE_VALUE;
 
-	return (path_exists(dirname) ? &dir : nullptr);
+	return (local_drive_path_exists(dirname) ? &dir : nullptr);
 }
 
 bool read_directory_first(DirInformation* dirp, char* entry_name, bool& is_directory) {

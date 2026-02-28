@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2025-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2025-2026 The DOSBox Staging Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "private/auto_image_adjustments.h"
@@ -64,7 +64,7 @@ static constexpr AutoImageAdjustments vga_settings = {
 // This emulates the colours of a Commodore 1084S and Philips CM8833-II 15 kHz
 // home computer monitor.
 //
-static AutoImageAdjustments arcade_settings = {
+static constexpr AutoImageAdjustments arcade_settings = {
         0.50f,                    // black level
         CrtColorProfile::Philips, // colour profile
         6500.0f                   // colour temperature

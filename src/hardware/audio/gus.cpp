@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2020-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2020-2026 The DOSBox Staging Team
 // SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
@@ -346,23 +346,24 @@ Gus::Gus(const io_port_t port_pref, const uint8_t dma_pref, const uint8_t irq_pr
 
 	RegisterIoHandlers();
 
-	constexpr bool Stereo = true;
-	constexpr bool SignedData = true;
+	constexpr bool Stereo      = true;
+	constexpr bool SignedData  = true;
 	constexpr bool NativeOrder = true;
 
 	// Register the Audio and DMA channels
-	const auto mixer_callback = std::bind(MIXER_PullFromQueueCallback<Gus, AudioFrame, Stereo, SignedData, NativeOrder>,
-	                                      std::placeholders::_1,
-	                                      this);
+	const auto mixer_callback = std::bind(
+	        MIXER_PullFromQueueCallback<Gus, AudioFrame, Stereo, SignedData, NativeOrder>,
+	        std::placeholders::_1,
+	        this);
 
 	channel = MIXER_AddChannel(mixer_callback,
-	                                 UseMixerRate,
-	                                 ChannelName::GravisUltrasound,
-	                                 {ChannelFeature::Sleep,
-	                                  ChannelFeature::Stereo,
-	                                  ChannelFeature::ReverbSend,
-	                                  ChannelFeature::ChorusSend,
-	                                  ChannelFeature::DigitalAudio});
+	                           UseMixerRate,
+	                           ChannelName::GravisUltrasound,
+	                           {ChannelFeature::Sleep,
+	                            ChannelFeature::Stereo,
+	                            ChannelFeature::ReverbSend,
+	                            ChannelFeature::ChorusSend,
+	                            ChannelFeature::DigitalAudio});
 
 	assert(channel);
 
@@ -371,7 +372,7 @@ Gus::Gus(const io_port_t port_pref, const uint8_t dma_pref, const uint8_t irq_pr
 	// real GF1 chip which always outputs a 44.1 kHz sample stream to
 	// the DAC, but starts dropping samples in the internal mixer above
 	// 14 active voices due to bandwidth limitations. Technically, we
-	// could emulate this exact behaviour, but in practice it would 
+	// could emulate this exact behaviour, but in practice it would
 	// make little to no difference compared to our current method.
 	//
 	channel->SetResampleMethod(ResampleMethod::ZeroOrderHoldAndResample);
@@ -663,14 +664,14 @@ bool Gus::SizedDmaTransfer()
 	LOG_MSG("GUS DMA event: max %u bytes. DMA: tc=%u mask=0 cnt=%u",
 	        BYTES_PER_DMA_XFER,
 	        dma_channel->has_reached_terminal_count ? 1 : 0,
-	        dma_channel->curr_count + 1);
+	        static_cast<uint32_t>(dma_channel->curr_count + 1));
 #endif
 
 	// Get the current DMA offset relative to the block of GUS memory
 	const auto offset = GetDmaOffset();
 
 	// Get the pending DMA count from channel
-	const uint16_t desired = dma_channel->curr_count + 1;
+	const uint32_t desired = dma_channel->curr_count + 1;
 
 	// Will the maximum transfer stay within the GUS RAM's size?
 	assert(static_cast<size_t>(offset) + desired <= ram.size());
@@ -1113,7 +1114,7 @@ void Gus::Reset() noexcept
 	should_change_irq_dma = false;
 	PIC_RemoveEvents(gus_timer_event);
 
-	reset_register.data = {};
+	reset_register.data       = {};
 	mix_control_register.data = MixControlRegisterDefaultState;
 }
 
@@ -1167,7 +1168,7 @@ void Gus::WriteToPort(io_port_t port, io_val_t value, io_width_t width)
 	switch (port - port_base) {
 	case 0x200:
 		mix_control_register.data = static_cast<uint8_t>(val);
-		should_change_irq_dma = true;
+		should_change_irq_dma     = true;
 		return;
 	case 0x208: adlib_command_reg = static_cast<uint8_t>(val); break;
 	case 0x209:
@@ -1210,7 +1211,8 @@ void Gus::WriteToPort(io_port_t port, io_val_t value, io_width_t width)
 			//  Section 2.13.
 			should_change_irq_dma = false;
 
-			const auto address_select = AddressSelectRegister{static_cast<uint8_t>(val)};
+			const auto address_select = AddressSelectRegister{
+			        static_cast<uint8_t>(val)};
 
 			const auto ch1_selector = address_select.channel1_selector;
 
@@ -1219,17 +1221,22 @@ void Gus::WriteToPort(io_port_t port, io_val_t value, io_width_t width)
 			if (mix_control_register.irq_control_selected) {
 
 				// Application is selecting IRQ addresses
-				if (ch1_selector && ch1_selector < IrqAddresses.size()) {
-					irq1 = to_internal_irq(IrqAddresses[ch1_selector]);
+				if (ch1_selector &&
+				    ch1_selector < IrqAddresses.size()) {
+					irq1 = to_internal_irq(
+					        IrqAddresses[ch1_selector]);
 				}
 
 				if (address_select.channel2_combined_with_channel1) {
-					// Channel 2 can be combined if it's selector is 0
+					// Channel 2 can be combined if it's
+					// selector is 0
 					if (ch2_selector == 0) {
 						irq2 = irq1;
 					}
-				} else if (ch2_selector && ch2_selector < IrqAddresses.size()) {
-					irq2 = to_internal_irq(IrqAddresses[ch2_selector]);
+				} else if (ch2_selector &&
+				           ch2_selector < IrqAddresses.size()) {
+					irq2 = to_internal_irq(
+					        IrqAddresses[ch2_selector]);
 				}
 #if LOG_GUS
 				LOG_MSG("GUS: Assigned GF1 IRQ to %d and MIDI IRQ to %d",
@@ -1239,17 +1246,22 @@ void Gus::WriteToPort(io_port_t port, io_val_t value, io_width_t width)
 			} else {
 
 				// Application is selecting DMA addresses
-				if (ch1_selector && ch1_selector < DmaAddresses.size()) {
-					UpdatePlaybackDmaAddress(DmaAddresses[ch1_selector]);
+				if (ch1_selector &&
+				    ch1_selector < DmaAddresses.size()) {
+					UpdatePlaybackDmaAddress(
+					        DmaAddresses[ch1_selector]);
 				}
 
 				if (address_select.channel2_combined_with_channel1) {
-					// Channel 2 can be combined if it's selector is 0
+					// Channel 2 can be combined if it's
+					// selector is 0
 					if (ch2_selector == 0) {
 						UpdateRecordingDmaAddress(dma1);
 					}
-				} else if (ch2_selector && ch2_selector < DmaAddresses.size()) {
-					UpdateRecordingDmaAddress(DmaAddresses[ch2_selector]);
+				} else if (ch2_selector &&
+				           ch2_selector < DmaAddresses.size()) {
+					UpdateRecordingDmaAddress(
+					        DmaAddresses[ch2_selector]);
 				}
 			}
 		}
@@ -1543,17 +1555,22 @@ static void init_gus_config_settings(SectionProp& secprop)
 	assert(hex_prop);
 	hex_prop->SetValues({"210", "220", "230", "240", "250", "260"});
 	hex_prop->SetHelp(
-	        "The IO base address of the Gravis UltraSound (240 by default).");
+	        "The IO base address of the Gravis UltraSound (240 by default).\n"
+	        "Possible values: 210, 220, 230, 240, 250, 260");
 
 	auto* int_prop = secprop.AddInt("gusirq", when_idle, 5);
 	assert(int_prop);
 	int_prop->SetValues({"2", "3", "5", "7", "11", "12", "15"});
-	int_prop->SetHelp("The IRQ number of the Gravis UltraSound (5 by default).");
+	int_prop->SetHelp(
+	        "The IRQ number of the Gravis UltraSound (5 by default).\n"
+	        "Possible values: 2, 3, 5, 7, 11, 12, 15");
 
 	int_prop = secprop.AddInt("gusdma", when_idle, 3);
 	assert(int_prop);
 	int_prop->SetValues({"1", "3", "5", "6", "7"});
-	int_prop->SetHelp("The DMA channel of the Gravis UltraSound (3 by default).");
+	int_prop->SetHelp(
+	        "The DMA channel of the Gravis UltraSound (3 by default).\n"
+	        "Possible values: 1, 3, 5, 6, 7");
 
 	auto* str_prop = secprop.AddString("gus_filter", when_idle, "on");
 	assert(str_prop);

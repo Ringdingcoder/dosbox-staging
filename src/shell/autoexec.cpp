@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2020-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2020-2026 The DOSBox Staging Team
 // SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
@@ -33,7 +33,6 @@ static const std::string CmdBoot          = "@Z:\\BOOT.COM ";
 static const std::string CmdConfig        = "@Z:\\CONFIG.COM ";
 static const std::string CmdMount         = "@Z:\\MOUNT.COM ";
 static const std::string CmdMouse         = "@Z:\\MOUSE.COM ";
-static const std::string CmdImgMount      = "@Z:\\IMGMOUNT.COM ";
 static const std::string CmdEchoOff       = "@ECHO OFF";
 static const std::string CmdSet           = "@SET ";
 static const std::string CmdSetPath       = "@SET PATH=";
@@ -347,10 +346,10 @@ AutoExecModule::AutoExecModule(Section* configuration)
 
 		// Check if argument is a file/directory
 		std_fs::path path = argument;
-		bool is_directory = std_fs::is_directory(path);
+		bool is_directory = is_dir(path);
 		if (!is_directory) {
 			path         = std_fs::current_path() / path;
-			is_directory = std_fs::is_directory(path);
+			is_directory = is_dir(path);
 		}
 
 		if (is_directory) {
@@ -644,7 +643,7 @@ std::string build_auto_mount_cd_images_cmd(const std::string_view dir_letter,
                                            const std::vector<std_fs::path>& image_paths,
                                            const std::optional<AutoMountSettings>& settings)
 {
-	auto command = CmdImgMount;
+	auto command = CmdMount;
 
 	if (!settings.has_value() || settings->override_drive.empty()) {
 		command += dir_letter;
@@ -724,7 +723,7 @@ void AutoExecModule::AutoMountDriveD(const std::string& cdrom_images,
                                      const Placement placement)
 {
 	AddLine(placement, CmdMount + "-u D" + ToNul);
-	AddLine(placement, CmdImgMount + "D " + cdrom_images + " -t iso" + ToNul);
+	AddLine(placement, CmdMount + "D " + cdrom_images + " -t iso" + ToNul);
 }
 
 void AutoExecModule::ReMountDirAsDriveC(const std::string& directory)

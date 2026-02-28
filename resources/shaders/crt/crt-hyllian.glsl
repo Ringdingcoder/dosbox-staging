@@ -1,6 +1,6 @@
 #version 330 core
 
-// SPDX-FileCopyrightText:  2020-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2020-2026 The DOSBox Staging Team
 // SPDX-FileCopyrightText:  2021-2020 Hyllian <sergiogdb@gmail.com>
 // SPDX-FileCopyrightText:  2020-2020 Tyrells
 // SPDX-License-Identifier: MIT
@@ -9,6 +9,8 @@
 //
 // Ported from Libretro's GLSL shader crt-hyllian.glslp to DOSBox-compatible
 // format by Tyrells.
+
+/*
 
 #pragma parameter BEAM_PROFILE "BEAM PROFILE (BP)" 0.0 0.0 2.0 1.0
 #pragma parameter HFILTER_PROFILE "HORIZONTAL FILTER PROFILE [ HERMITE | CATMULL-ROM ]" 0.0 0.0 1.0 1.0
@@ -23,6 +25,8 @@
 #pragma parameter INPUT_GAMMA "INPUT GAMMA" 2.4 0.0 5.0 0.1
 #pragma parameter OUTPUT_GAMMA "OUTPUT GAMMA" 2. 0.0 5.0 0.1
 #pragma parameter VSCANLINES "VERTICAL SCANLINES [ OFF | ON ]" 0.0 0.0 1.0 1.0
+
+*/
 
 /////////////////////////////////////////////////////////////////////////////
 

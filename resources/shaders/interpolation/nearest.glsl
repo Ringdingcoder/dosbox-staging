@@ -1,13 +1,17 @@
 #version 330 core
 
-// SPDX-FileCopyrightText:  2020-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2020-2026 The DOSBox Staging Team
 // SPDX-FileCopyrightText:  2020-2020 Hyllian <sergiogdb@gmail.com>
 // SPDX-FileCopyrightText:  2020-2020 jmarsh <jmarsh@vogons.org>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+/*
+
 #pragma use_nearest_texture_filter
 #pragma force_single_scan
 #pragma force_no_pixel_doubling
+
+*/
 
 #if defined(VERTEX)
 

@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2021-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2021-2026 The DOSBox Staging Team
 // SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
@@ -20,8 +20,8 @@ public:
 	void ListImgMounts();
 	void Run() override;
 
-    private:
-        static void AddMessages();
+private:
+	static void AddMessages();
 };
 
 #endif // DOSBOX_PROGRAM_IMGMOUNT_H

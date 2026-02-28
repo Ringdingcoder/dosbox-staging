@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2020-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2020-2026 The DOSBox Staging Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #ifndef DOSBOX_STRING_UTILS_H
@@ -191,6 +191,8 @@ char* rtrim(char* str);
 char* trim(char* str);
 char* upcase(char* str);
 char* lowcase(char* str);
+std::string upcase(const std::string_view sv);
+std::string lowcase(const std::string_view sv);
 
 inline bool is_empty(const char* str) noexcept
 {

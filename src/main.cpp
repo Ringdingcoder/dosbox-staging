@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2020-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2020-2026 The DOSBox Staging Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "dosbox.h"
@@ -273,7 +273,8 @@ static int erase_primary_config_file()
 		return 1;
 	}
 
-	if (!delete_file(path)) {
+	std::error_code ec = {};
+	if (!std_fs::remove(path, ec)) {
 		fprintf(stderr,
 		        "Cannot delete primary config '%s'",
 		        path.string().c_str());
@@ -300,7 +301,8 @@ static int erase_mapper_file()
 		       "a custom mapper file.\n");
 	}
 
-	if (!delete_file(path)) {
+	std::error_code ec = {};
+	if (!std_fs::remove(path, ec)) {
 		fprintf(stderr,
 		        "Cannot delete mapper file '%s'",
 		        path.string().c_str());
@@ -366,7 +368,7 @@ static void maybe_write_primary_config(const CommandLineArguments& args)
 constexpr char version_msg[] =
         R"(%s, version %s
 
-Copyright (C) 2020-2025 The DOSBox Staging Team
+Copyright (C) 2020-2026 The DOSBox Staging Team
 License: GNU GPL-2.0-or-later <https://www.gnu.org/licenses/gpl-2.0.html>
 
 This is free software, and you are welcome to change and redistribute it under
@@ -428,17 +430,17 @@ static void handle_cli_set_commands(const std::vector<std::string>& set_args)
 			continue;
 		}
 
-		std::vector<std::string> pvars(1, std::move(command));
+		std::vector<std::string> parameters(1, command);
 
-		const auto warning_message = control->SetProperty(pvars);
+		if (const auto warning_message = control->SetPropertyFromCli(parameters);
+		    !warning_message.empty()) {
 
-		if (!warning_message.empty()) {
 			// TODO convert to notification
 			LOG_WARNING("CONFIG: %s", warning_message.c_str());
 
 		} else {
-			Section* tsec = control->GetSection(pvars[0]);
-			std::string value(pvars[2]);
+			auto section = control->GetSection(parameters[0]);
+			std::string value(parameters[2]);
 
 			// Due to parsing, there can be a '=' at the
 			// start of the value.
@@ -447,18 +449,17 @@ static void handle_cli_set_commands(const std::vector<std::string>& set_args)
 				value.erase(0, 1);
 			}
 
-			for (size_t i = 3; i < pvars.size(); i++) {
-				value += (std::string(" ") + pvars[i]);
+			for (size_t i = 3; i < parameters.size(); i++) {
+				value += (std::string(" ") + parameters[i]);
 			}
 
-			std::string inputline = pvars[1] + "=" + value;
-
-			bool change_success = tsec->HandleInputLine(inputline);
+			auto input_line = parameters[1] + "=" + value;
+			bool change_success = section->HandleInputLine(input_line);
 
 			if (!change_success && !value.empty()) {
 				// TODO convert to notification
 				LOG_WARNING("CONFIG: Cannot set '%s'",
-				            inputline.c_str());
+				            input_line.c_str());
 			}
 		}
 	}
@@ -500,10 +501,9 @@ static void apply_windows_debugger_workaround(const bool is_console_disabled)
 static void maybe_create_resource_directories()
 {
 	auto try_create_resource_dir = [](std_fs::path const& dir) {
-		if (create_dir(dir, 0700, OK_IF_EXISTS) != 0) {
-			LOG_WARNING("CONFIG: Can't create directory '%s': %s",
-						dir.string().c_str(),
-						safe_strerror(errno).c_str());
+		if (!create_dir_if_not_exist(dir)) {
+			LOG_WARNING("CONFIG: Can't create directory '%s'",
+						dir.string().c_str());
 		}
 	};
 	const auto plugins_dir = get_config_dir() / PluginsDir;
@@ -524,6 +524,9 @@ static void maybe_create_resource_directories()
 
 	const auto soundcanvas_rom_dir = get_config_dir() / DefaultSoundCanvasRomsDir;
 	try_create_resource_dir(soundcanvas_rom_dir);
+
+	const auto webserver_dir = get_config_dir() / DefaultWebserverDir;
+	try_create_resource_dir(webserver_dir);
 }
 
 static void quit_func()

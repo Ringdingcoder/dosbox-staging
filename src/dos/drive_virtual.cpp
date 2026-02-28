@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2021-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2021-2026 The DOSBox Staging Team
 // SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
@@ -258,7 +258,7 @@ void VFILE_RegisterZDrive(const std_fs::path &z_drive_path)
 	constexpr auto dir_indicator = "/";
 
 	// Check if the provided path is invalid
-	if (z_drive_path.empty() || !std_fs::is_directory(z_drive_path))
+	if (z_drive_path.empty() || !is_dir(z_drive_path))
 		return;
 
 	std::error_code ec = {};

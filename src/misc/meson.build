@@ -12,6 +12,7 @@ libmisc_nomsg_sources = [
     'host_locale_macos.cpp',
     'host_locale_posix.cpp',
     'host_locale_win32.cpp',
+    'image_decoder.cpp',
     'iso_locale_codes.cpp',
     'messages_adjust.cpp',
     'messages_po_entry.cpp',
@@ -30,7 +31,6 @@ libmisc_stubs_sources = libmisc_nomsg_sources + ['messages_stubs.cpp']
 
 libmisc_dependencies = [
     corefoundation_dep,
-    ghc_dep,
     libiir_dep,
     libloguru_dep,
     libwhereami_dep,

@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2021-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2021-2026 The DOSBox Staging Team
 // SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
@@ -124,6 +124,9 @@ void INT10_PutPixel(uint16_t x,uint16_t y,uint8_t page,uint8_t color) {
 		}
 		[[fallthrough]];
 	case M_EGA: {
+		/* Enable writing to all planes */
+		IO_Write(0x3c4, 0x2);
+		IO_Write(0x3c5, 0xf);
 		/* Set the correct bitmask for the pixel position */
 		IO_Write(0x3ce, 0x8);
 		uint8_t mask = 128 >> (x & 7);

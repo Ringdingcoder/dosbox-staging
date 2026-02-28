@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2019-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2019-2026 The DOSBox Staging Team
 // SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
@@ -129,7 +129,7 @@ public:
 
 	void ParseConfigFiles(const std_fs::path& config_path);
 
-	std::string SetProperty(std::vector<std::string>& pvars);
+	std::string SetPropertyFromCli(std::vector<std::string>& parameters);
 
 	const std::string& GetArgumentLanguage();
 

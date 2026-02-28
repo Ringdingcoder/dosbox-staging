@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2020-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2020-2026 The DOSBox Staging Team
 // SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
@@ -172,7 +172,7 @@ public:
 		return default_value;
 	}
 
-	void SetQueueableValue(std::string&& value);
+	void SetQueuedValue(const std::string& value);
 
 	const std::optional<std::string>& GetQueuedValue() const;
 
@@ -216,7 +216,7 @@ protected:
 	std::vector<Value> valid_values                        = {};
 	std::vector<std::string> enabled_options               = {};
 	std::map<Value, Value> deprecated_and_alternate_values = {};
-	std::optional<std::string> queueable_value             = {};
+	std::optional<std::string> queued_value                = {};
 	bool is_positive_bool_valid                            = false;
 	bool is_negative_bool_valid                            = false;
 

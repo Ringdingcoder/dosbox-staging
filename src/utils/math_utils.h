@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2020-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2020-2026 The DOSBox Staging Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #ifndef DOSBOX_MATH_UTILS_H
@@ -306,6 +306,11 @@ inline std::vector<uint8_t> ascii_to_bcd(const std::string& string)
 		bcd.push_back(static_cast<uint8_t>(string.back()) << 4);
 	}
 	return bcd;
+}
+
+constexpr uint8_t bcd_to_decimal(const uint8_t byte)
+{
+	return static_cast<uint8_t>(high_nibble(byte) * 10 + low_nibble(byte));
 }
 
 // Explicit instantiations for invlerp and remap

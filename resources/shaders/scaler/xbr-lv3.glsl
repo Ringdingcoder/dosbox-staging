@@ -1,6 +1,6 @@
 #version 330 core
 
-// SPDX-FileCopyrightText:  2020-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2020-2026 The DOSBox Staging Team
 // SPDX-FileCopyrightText:  2011-2015 Hyllian <sergiogdb@gmail.com>
 // SPDX-License-Identifier: MIT
 
@@ -8,6 +8,8 @@
 //
 // Note from Hyllian:
 //   Incorporates some of the ideas from SABR shader. Thanks to Joshua Street.
+
+/*
 
 #pragma use_nearest_texture_filter
 #pragma force_single_scan
@@ -18,6 +20,8 @@
 #pragma parameter XBR_EQ_THRESHOLD2 "EQ Threshold 2" 2.0 0.0 4.0 1.0
 #pragma parameter XBR_LV2_COEFFICIENT "Lv2 Coefficient" 2.0 1.0 3.0 1.0
 #pragma parameter XBR_CORNER_TYPE "Corner Calculation" 3.0 1.0 3.0 1.0
+
+*/
 
 #if defined(VERTEX)
 

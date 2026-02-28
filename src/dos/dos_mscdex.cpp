@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2019-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2019-2026 The DOSBox Staging Team
 // SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
@@ -266,11 +266,11 @@ int CMscdex::RemoveDrive(uint16_t _drive)
 
 static std::unique_ptr<CDROM_Interface> create_cdrom_interface(const char *path)
 {
-	if (!path_exists(path)) {
+	if (!local_drive_path_exists(path)) {
 		return {};
 	}
 
-	if (!is_directory(path)) {
+	if (!is_dir(path)) {
 		if (auto cdrom_interface = std::make_unique<CDROM_Interface_Image>();
 		    cdrom_interface->SetDevice(path)) {
 			return cdrom_interface;

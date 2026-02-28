@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2020-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2020-2026 The DOSBox Staging Team
 // SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
@@ -71,6 +71,8 @@
 #include "shell/autoexec.h"
 #include "shell/shell.h"
 #include "utils/math_utils.h"
+#include "webserver/webserver.h"
+#include "webserver/bridge.h"
 
 MachineType machine   = MachineType::None;
 SvgaType    svga_type = SvgaType::None;
@@ -114,6 +116,8 @@ static Bitu normal_loop()
 
 	while (true) {
 		if (PIC_RunQueue()) {
+			Webserver::DebugBridge::Instance().ProcessRequests();
+
 			ret = (*cpudecoder)();
 			if (ret < 0) {
 				return 1;
@@ -565,7 +569,15 @@ void DOSBOX_Restart(std::vector<std::string>& parameters)
 		if (!first) {
 			command_line.push_back(' ');
 		}
-		command_line.append(arg);
+
+		// On Linux and macOS, command line arguments are passed as an
+		// array of strings to execvp() and can contain spaces. On
+		// Windows, the entire command line is passed to CreateProcess()
+		// as a single string, therefore we need to enclose the
+		// arguments in double quotes, otherwise things will break if
+		// one or more arguments contain spaces.
+		//
+		command_line.append("\"" + arg + "\"");
 		first = false;
 	}
 #else
@@ -890,15 +902,15 @@ static void add_dosbox_config_section(const ConfigPtr& conf)
 	pstring->SetHelp(
 	        "Set video memory access delay emulation ('off' by default). Possible values:\n"
 	        "\n"
-	        "  off:      Disable video memory access delay emulation (default).\n"
-	        "            This is preferable for most games to avoid slowdowns.\n"
+	        "  off:       Disable video memory access delay emulation (default).\n"
+	        "             This is preferable for most games to avoid slowdowns.\n"
 	        "\n"
-	        "  on:       Enable video memory access delay emulation (3000 ns).\n"
-	        "            This can help reduce or eliminate flicker in Hercules,\n"
-	        "            CGA, EGA, and early VGA games.\n"
+	        "  on:        Enable video memory access delay emulation (3000 ns).\n"
+	        "             This can help reduce or eliminate flicker in Hercules,\n"
+	        "             CGA, EGA, and early VGA games.\n"
 	        "\n"
-	        "  <value>:  Set access delay in nanoseconds. Valid range is 0 to 20000 ns;\n"
-	        "            500 to 5000 ns is the most useful range.\n"
+	        "  <number>:  Set access delay in nanoseconds. Valid range is 0 to 20000 ns;\n"
+	        "             500 to 5000 ns is the most useful range.\n"
 	        "\n"
 	        "Note: Only set this on a per-game basis when necessary as it slows down\n"
 	        "      the whole emulator.");
@@ -908,18 +920,18 @@ static void add_dosbox_config_section(const ConfigPtr& conf)
 	        "Override the emulated DOS video mode's refresh rate with a custom rate\n"
 	        "('default' by default). Possible values:\n"
 	        "\n"
-	        "  default:  Don't override; use the emulated DOS video mode's refresh rate\n"
-	        "            (default).\n"
+	        "  default:   Don't override; use the emulated DOS video mode's refresh rate\n"
+	        "             (default).\n"
 	        "\n"
-	        "  host:     Override the refresh rate of all DOS video modes with the refresh\n"
-	        "            rate of your monitor. This might allow you to play some 70 Hz VGA\n"
-	        "            games with perfect vsync on a 60 Hz fixed refresh rate monitor (see\n"
-	        "            'vsync' for further details).\n"
+	        "  host:      Override the refresh rate of all DOS video modes with the refresh\n"
+	        "             rate of your monitor. This might allow you to play some 70 Hz VGA\n"
+	        "             games with perfect vsync on a 60 Hz fixed refresh rate monitor (see\n"
+	        "             'vsync' for further details).\n"
 	        "\n"
-	        "  <value>:  Override the refresh rate of all DOS video modes with a fixed rate\n"
-	        "            specified in Hz (valid range is from %d.000 to %d.000). This is a\n"
-	        "            niche option for a select few fast-paced mid to late 1990s 3D games\n"
-	        "            for high refresh rate gaming.\n"
+	        "  <number>:  Override the refresh rate of all DOS video modes with a fixed rate\n"
+	        "             specified in Hz (valid range is from %d.000 to %d.000). This is a\n"
+	        "             niche option for a select few fast-paced mid to late 1990s 3D games\n"
+	        "             for high refresh rate gaming.\n"
 	        "\n"
 	        "Note: Many games will misbehave when overriding the DOS video mode's refresh\n"
 	        "      rate with non-standard values. This can manifest in glitchy video,\n"
@@ -1082,6 +1094,7 @@ void DOSBOX_InitModuleConfigsAndMessages()
 	IPX_AddConfigSection(control);
 
 	ETHERNET_AddConfigSection(control);
+	WEBSERVER_AddConfigSection(control);
 
 	control->AddAutoexecSection();
 
@@ -1147,12 +1160,14 @@ void DOSBOX_InitModules()
 	ETHERNET_Init();
 	VIRTUALBOX_Init();
 	VMWARE_Init();
+	WEBSERVER_Init();
 
 	AUTOEXEC_Init();
 }
 
 void DOSBOX_DestroyModules()
 {
+	WEBSERVER_Destroy();
 	VMWARE_Destroy();
 	VIRTUALBOX_Destroy();
 	ETHERNET_Destroy();
