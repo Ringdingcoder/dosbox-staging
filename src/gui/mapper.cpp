@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2020-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2020-2026 The DOSBox Staging Team
 // SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
@@ -329,9 +329,10 @@ void CEvent::ClearBinds() {
 	}
 	bindlist.clear();
 }
-void CEvent::DeActivateAll() {
-	for (CBindList_it bit = bindlist.begin() ; bit != bindlist.end(); ++bit) {
-		(*bit)->DeActivateBind(true);
+void CEvent::DeActivateAll()
+{
+	for (auto& entry : bindlist) {
+		entry->DeActivateBind(true);
 	}
 }
 
@@ -445,7 +446,7 @@ public:
 
 	bool CheckEvent(SDL_Event * event) override {
 		if (event->type!=SDL_KEYDOWN && event->type!=SDL_KEYUP) return false;
-		uintptr_t key = static_cast<uintptr_t>(event->key.keysym.scancode);
+		auto key = static_cast<uintptr_t>(event->key.keysym.scancode);
 		if (event->type==SDL_KEYDOWN) ActivateBindList(&lists[key],0x7fff,true);
 		else DeactivateBindList(&lists[key],true);
 		return 0;
@@ -718,8 +719,8 @@ public:
 			int but = atoi(strip_word(buf));
 			bind = CreateButtonBind(but);
 		} else if (!strcasecmp(type, "hat")) {
-			uint8_t hat = static_cast<uint8_t>(atoi(strip_word(buf)));
-			uint8_t dir = static_cast<uint8_t>(atoi(strip_word(buf)));
+			auto hat = static_cast<uint8_t>(atoi(strip_word(buf)));
+			auto dir = static_cast<uint8_t>(atoi(strip_word(buf)));
 			bind = CreateHatBind(hat, dir);
 		}
 		return bind;
@@ -1075,8 +1076,8 @@ private:
 		constexpr int16_t joy_centered = 0;
 		constexpr int16_t joy_full_negative = INT16_MIN;
 		constexpr int16_t joy_full_positive = INT16_MAX;
-		constexpr int16_t joy_50pct_negative = static_cast<int16_t>(INT16_MIN / 2);
-		constexpr int16_t joy_50pct_positive = static_cast<int16_t>(INT16_MAX / 2);
+		constexpr auto joy_50pct_negative = static_cast<int16_t>(INT16_MIN / 2);
+		constexpr auto joy_50pct_positive = static_cast<int16_t>(INT16_MAX / 2);
 
 		switch (hat_pos) {
 		case SDL_HAT_CENTERED: JOYSTICK_Move_Y(1, joy_full_positive); break;
@@ -1220,7 +1221,7 @@ void MAPPER_AutoType(std::vector<std::string>& buttons, uint32_t wait_ms,
 		if (button == ",") {
 			running_delay_ms += pace_ms;
 		} else {
-			auto_type_queue.emplace(std::move(button));
+			auto_type_queue.emplace(button);
 
 			PIC_AddEvent(auto_type_queued_button,
 			             running_delay_ms,
@@ -1237,7 +1238,7 @@ void MAPPER_AutoType(std::vector<std::string>& buttons, uint32_t wait_ms,
 	}
 }
 
-void MAPPER_StopAutoTyping()
+static void stop_auto_typing()
 {
 	auto_type_queue = {};
 	PIC_RemoveEvents(auto_type_queued_button);
@@ -1897,7 +1898,7 @@ static CKeyEvent* AddKeyButtonEvent(int32_t x, int32_t y, int32_t dx,
 	char buf[64];
 	safe_strcpy(buf, "key_");
 	safe_strcat(buf, entry);
-	CKeyEvent * event=new CKeyEvent(buf,key);
+	auto event=new CKeyEvent(buf,key);
 	new CEventButton(x,y,dx,dy,title,event);
 	return event;
 }
@@ -1922,7 +1923,7 @@ static CJAxisEvent* AddJAxisButton(int32_t x, int32_t y, int32_t dx, int32_t dy,
 	                            static_cast<int>(axis),
 	                            positive ? "+" : "-");
 
-	CJAxisEvent* event = new CJAxisEvent(buf.c_str(), stick, axis, positive, opposite_axis);
+	auto event = new CJAxisEvent(buf.c_str(), stick, axis, positive, opposite_axis);
 
 	new CEventButton(x, y, dx, dy, title, event);
 	return event;
@@ -1945,7 +1946,7 @@ static void AddJButtonButton(int32_t x, int32_t y, int32_t dx, int32_t dy,
 	                            static_cast<int>(stick),
 	                            static_cast<int>(button));
 
-	CJButtonEvent* event = new CJButtonEvent(buf.c_str(), stick, button);
+	auto event = new CJButtonEvent(buf.c_str(), stick, button);
 	new CEventButton(x, y, dx, dy, title, event);
 }
 static void AddJButtonButton_hidden(Bitu stick, Bitu button)
@@ -1965,7 +1966,7 @@ static void AddJHatButton(int32_t x, int32_t y, int32_t dx, int32_t dy,
 	                            static_cast<int>(_hat),
 	                            static_cast<int>(_dir));
 
-	CJHatEvent* event = new CJHatEvent(buf.c_str(), _stick, _hat, _dir);
+	auto event = new CJHatEvent(buf.c_str(), _stick, _hat, _dir);
 	new CEventButton(x, y, dx, dy, title, event);
 }
 
@@ -1974,7 +1975,7 @@ static void AddModButton(int32_t x, int32_t y, int32_t dx, int32_t dy,
 {
 	const auto buf = format_str("mod_%d", mod);
 
-	CModEvent* event = new CModEvent(buf.c_str(), mod);
+	auto event = new CModEvent(buf.c_str(), mod);
 	new CEventButton(x, y, dx, dy, title, event);
 }
 
@@ -2075,7 +2076,7 @@ static void CreateLayout() {
 		                  combo_4[i].entry,
 		                  combo_4[i].key);
 	}
-	AddKeyButtonEvent(pos_x(14), pos_y(4), button_width * 3, button_height, "SHIFT", "rshift", KBD_rightshift);
+	AddKeyButtonEvent(pos_x(14), pos_y(4), button_width * 2, button_height, "SHIFT", "rshift", KBD_rightshift);
 
 	/* Bottom Row */
 	AddKeyButtonEvent(pos_x(0), pos_y(5), button_width * 2, button_height, MMOD1_NAME, "lctrl", KBD_leftctrl);
@@ -2176,33 +2177,36 @@ static void CreateLayout() {
 
 #define XO 10
 #define YO 7
+
+	const auto y_offs = 10;
+
 	/* Joystick Buttons/Texts */
 	/* Buttons 1+2 of 1st Joystick */
-	AddJButtonButton(pos_x(XO), pos_y(YO), button_width, button_height, "1", 0, 0);
-	AddJButtonButton(pos_x(XO + 2), pos_y(YO), button_width, button_height, "2", 0, 1);
+	AddJButtonButton(pos_x(XO), pos_y(YO) + y_offs, button_width, button_height, "1", 0, 0);
+	AddJButtonButton(pos_x(XO + 2), pos_y(YO) + y_offs, button_width, button_height, "2", 0, 1);
 	/* Axes 1+2 (X+Y) of 1st Joystick */
-	CJAxisEvent* cjaxis = AddJAxisButton(pos_x(XO + 1), pos_y(YO), button_width, button_height, "Y-", 0, 1, false, nullptr);
-	AddJAxisButton(pos_x(XO + 1), pos_y(YO + 1), button_width, button_height, "Y+", 0, 1, true, cjaxis);
-	cjaxis = AddJAxisButton(pos_x(XO), pos_y(YO + 1), button_width, button_height, "X-", 0, 0, false, nullptr);
-	AddJAxisButton(pos_x(XO + 2), pos_y(YO + 1), button_width, button_height, "X+", 0, 0, true, cjaxis);
+	CJAxisEvent* cjaxis = AddJAxisButton(pos_x(XO + 1), pos_y(YO) + y_offs, button_width, button_height, "Y-", 0, 1, false, nullptr);
+	AddJAxisButton(pos_x(XO + 1), pos_y(YO + 1) + y_offs, button_width, button_height, "Y+", 0, 1, true, cjaxis);
+	cjaxis = AddJAxisButton(pos_x(XO), pos_y(YO + 1) + y_offs, button_width, button_height, "X-", 0, 0, false, nullptr);
+	AddJAxisButton(pos_x(XO + 2), pos_y(YO + 1) + y_offs, button_width, button_height, "X+", 0, 0, true, cjaxis);
 
 	CJAxisEvent * tmp_ptr;
 
 	assert(joytype != JOY_UNSET);
 	if (joytype == JOY_2AXIS) {
 		/* Buttons 1+2 of 2nd Joystick */
-		AddJButtonButton(pos_x(XO + 4), pos_y(YO), button_width, button_height, "1", 1, 0);
-		AddJButtonButton(pos_x(XO + 4 + 2), pos_y(YO), button_width, button_height, "2", 1, 1);
+		AddJButtonButton(pos_x(XO + 4), pos_y(YO) + y_offs, button_width, button_height, "1", 1, 0);
+		AddJButtonButton(pos_x(XO + 4 + 2), pos_y(YO) + y_offs, button_width, button_height, "2", 1, 1);
 		/* Buttons 3+4 of 1st Joystick, not accessible */
 		AddJButtonButton_hidden(0,2);
 		AddJButtonButton_hidden(0,3);
 
 		/* Axes 1+2 (X+Y) of 2nd Joystick */
-		cjaxis  = AddJAxisButton(pos_x(XO + 4), pos_y(YO + 1), button_width, button_height, "X-", 1, 0, false, nullptr);
-		tmp_ptr = AddJAxisButton(pos_x(XO + 4 + 2), pos_y(YO + 1), button_width, button_height, "X+", 1, 0, true, cjaxis);
+		cjaxis  = AddJAxisButton(pos_x(XO + 4), pos_y(YO + 1) + y_offs, button_width, button_height, "X-", 1, 0, false, nullptr);
+		tmp_ptr = AddJAxisButton(pos_x(XO + 4 + 2), pos_y(YO + 1) + y_offs, button_width, button_height, "X+", 1, 0, true, cjaxis);
 		(void)tmp_ptr;
-		cjaxis  = AddJAxisButton(pos_x(XO + 4 + 1), pos_y(YO + 0), button_width, button_height, "Y-", 1, 1, false, nullptr);
-		tmp_ptr = AddJAxisButton(pos_x(XO + 4 + 1), pos_y(YO + 1), button_width, button_height, "Y+", 1, 1, true, cjaxis);
+		cjaxis  = AddJAxisButton(pos_x(XO + 4 + 1), pos_y(YO + 0) + y_offs, button_width, button_height, "Y-", 1, 1, false, nullptr);
+		tmp_ptr = AddJAxisButton(pos_x(XO + 4 + 1), pos_y(YO + 1) + y_offs, button_width, button_height, "Y+", 1, 1, true, cjaxis);
 		(void)tmp_ptr;
 		/* Axes 3+4 (X+Y) of 1st Joystick, not accessible */
 		cjaxis  = AddJAxisButton_hidden(0, 2, false, nullptr);
@@ -2213,18 +2217,18 @@ static void CreateLayout() {
 		(void)tmp_ptr;
 	} else {
 		/* Buttons 3+4 of 1st Joystick */
-		AddJButtonButton(pos_x(XO + 4), pos_y(YO), button_width, button_height, "3", 0, 2);
-		AddJButtonButton(pos_x(XO + 4 + 2), pos_y(YO), button_width, button_height, "4", 0, 3);
+		AddJButtonButton(pos_x(XO + 4), pos_y(YO) + y_offs, button_width, button_height, "3", 0, 2);
+		AddJButtonButton(pos_x(XO + 4 + 2), pos_y(YO) + y_offs, button_width, button_height, "4", 0, 3);
 		/* Buttons 1+2 of 2nd Joystick, not accessible */
 		AddJButtonButton_hidden(1, 0);
 		AddJButtonButton_hidden(1, 1);
 
 		/* Axes 3+4 (X+Y) of 1st Joystick */
-		cjaxis  = AddJAxisButton(pos_x(XO + 4), pos_y(YO + 1), button_width, button_height, "X-", 0, 2, false, nullptr);
-		tmp_ptr = AddJAxisButton(pos_x(XO + 4 + 2), pos_y(YO + 1), button_width, button_height, "X+", 0, 2, true, cjaxis);
+		cjaxis  = AddJAxisButton(pos_x(XO + 4), pos_y(YO + 1) + y_offs, button_width, button_height, "X-", 0, 2, false, nullptr);
+		tmp_ptr = AddJAxisButton(pos_x(XO + 4 + 2), pos_y(YO + 1) + y_offs, button_width, button_height, "X+", 0, 2, true, cjaxis);
 		(void)tmp_ptr;
-		cjaxis  = AddJAxisButton(pos_x(XO + 4 + 1), pos_y(YO + 0), button_width, button_height, "Y-", 0, 3, false, nullptr);
-		tmp_ptr = AddJAxisButton(pos_x(XO + 4 + 1), pos_y(YO + 1), button_width, button_height, "Y+", 0, 3, true, cjaxis);
+		cjaxis  = AddJAxisButton(pos_x(XO + 4 + 1), pos_y(YO + 0) + y_offs, button_width, button_height, "Y-", 0, 3, false, nullptr);
+		tmp_ptr = AddJAxisButton(pos_x(XO + 4 + 1), pos_y(YO + 1) + y_offs, button_width, button_height, "Y+", 0, 3, true, cjaxis);
 		(void)tmp_ptr;
 		/* Axes 1+2 (X+Y) of 2nd Joystick , not accessible*/
 		cjaxis  = AddJAxisButton_hidden(1, 0, false, nullptr);
@@ -2237,8 +2241,8 @@ static void CreateLayout() {
 
 	if (joytype == JOY_CH) {
 		/* Buttons 5+6 of 1st Joystick */
-		AddJButtonButton(pos_x(XO + 8), pos_y(YO), button_width, button_height, "5", 0, 4);
-		AddJButtonButton(pos_x(XO + 8 + 2), pos_y(YO), button_width, button_height, "6", 0, 5);
+		AddJButtonButton(pos_x(XO + 8), pos_y(YO) + y_offs, button_width, button_height, "5", 0, 4);
+		AddJButtonButton(pos_x(XO + 8 + 2), pos_y(YO) + y_offs, button_width, button_height, "6", 0, 5);
 	} else {
 		/* Buttons 5+6 of 1st Joystick, not accessible */
 		AddJButtonButton_hidden(0, 4);
@@ -2246,37 +2250,37 @@ static void CreateLayout() {
 	}
 
 	/* Hat directions up, left, down, right */
-	AddJHatButton(pos_x(XO + 8 + 1), pos_y(YO), button_width, button_height, "UP", 0, 0, 0);
-	AddJHatButton(pos_x(XO + 8 + 0), pos_y(YO + 1), button_width, button_height, "LFT", 0, 0, 3);
-	AddJHatButton(pos_x(XO + 8 + 1), pos_y(YO + 1), button_width, button_height, "DWN", 0, 0, 2);
-	AddJHatButton(pos_x(XO + 8 + 2), pos_y(YO + 1), button_width, button_height, "RGT", 0, 0, 1);
+	AddJHatButton(pos_x(XO + 8 + 1), pos_y(YO) + y_offs, button_width, button_height, "UP", 0, 0, 0);
+	AddJHatButton(pos_x(XO + 8 + 0), pos_y(YO + 1) + y_offs, button_width, button_height, "LFT", 0, 0, 3);
+	AddJHatButton(pos_x(XO + 8 + 1), pos_y(YO + 1) + y_offs, button_width, button_height, "DWN", 0, 0, 2);
+	AddJHatButton(pos_x(XO + 8 + 2), pos_y(YO + 1) + y_offs, button_width, button_height, "RGT", 0, 0, 1);
 
 	/* Labels for the joystick */
 	CTextButton * btn;
 	if (joytype == JOY_2AXIS) {
-		new CTextButton(pos_x(XO + 0), pos_y(YO - 1), 3 * button_width, 20, "Joystick 1");
-		new CTextButton(pos_x(XO + 4), pos_y(YO - 1), 3 * button_width, 20, "Joystick 2");
-		btn = new CTextButton(pos_x(XO + 8), pos_y(YO - 1), 3 * button_width, 20, "Disabled");
+		new CTextButton(pos_x(XO + 0), pos_y(YO - 1) + y_offs, 3 * button_width, 20, "Joystick 1");
+		new CTextButton(pos_x(XO + 4), pos_y(YO - 1) + y_offs, 3 * button_width, 20, "Joystick 2");
+		btn = new CTextButton(pos_x(XO + 8), pos_y(YO - 1) + y_offs, 3 * button_width, 20, "Disabled");
 		btn->SetColor(color_grey);
 	} else if(joytype == JOY_4AXIS || joytype == JOY_4AXIS_2) {
-		new CTextButton(pos_x(XO + 0), pos_y(YO - 1), 3 * button_width, 20, "Axis 1/2");
-		new CTextButton(pos_x(XO + 4), pos_y(YO - 1), 3 * button_width, 20, "Axis 3/4");
-		btn = new CTextButton(pos_x(XO + 8), pos_y(YO - 1), 3 * button_width, 20, "Disabled");
+		new CTextButton(pos_x(XO + 0), pos_y(YO - 1) + y_offs, 3 * button_width, 20, "Axis 1/2");
+		new CTextButton(pos_x(XO + 4), pos_y(YO - 1) + y_offs, 3 * button_width, 20, "Axis 3/4");
+		btn = new CTextButton(pos_x(XO + 8), pos_y(YO - 1) + y_offs, 3 * button_width, 20, "Disabled");
 		btn->SetColor(color_grey);
 	} else if(joytype == JOY_CH) {
-		new CTextButton(pos_x(XO + 0), pos_y(YO - 1), 3 * button_width, 20, "Axis 1/2");
-		new CTextButton(pos_x(XO + 4), pos_y(YO - 1), 3 * button_width, 20, "Axis 3/4");
-		new CTextButton(pos_x(XO + 8), pos_y(YO - 1), 3 * button_width, 20, "Hat/D-pad");
+		new CTextButton(pos_x(XO + 0), pos_y(YO - 1) + y_offs, 3 * button_width, 20, "Axis 1/2");
+		new CTextButton(pos_x(XO + 4), pos_y(YO - 1) + y_offs, 3 * button_width, 20, "Axis 3/4");
+		new CTextButton(pos_x(XO + 8), pos_y(YO - 1) + y_offs, 3 * button_width, 20, "Hat/D-pad");
 	} else if ( joytype == JOY_FCS) {
-		new CTextButton(pos_x(XO + 0), pos_y(YO - 1), 3 * button_width, 20, "Axis 1/2");
-		new CTextButton(pos_x(XO + 4), pos_y(YO - 1), 3 * button_width, 20, "Axis 3");
-		new CTextButton(pos_x(XO + 8), pos_y(YO - 1), 3 * button_width, 20, "Hat/D-pad");
+		new CTextButton(pos_x(XO + 0), pos_y(YO - 1) + y_offs, 3 * button_width, 20, "Axis 1/2");
+		new CTextButton(pos_x(XO + 4), pos_y(YO - 1) + y_offs, 3 * button_width, 20, "Axis 3");
+		new CTextButton(pos_x(XO + 8), pos_y(YO - 1) + y_offs, 3 * button_width, 20, "Hat/D-pad");
 	} else if (joytype == JOY_DISABLED) {
-		btn = new CTextButton(pos_x(XO + 0), pos_y(YO - 1), 3 * button_width, 20, "Disabled");
+		btn = new CTextButton(pos_x(XO + 0), pos_y(YO - 1) + y_offs, 3 * button_width, 20, "Disabled");
 		btn->SetColor(color_grey);
-		btn = new CTextButton(pos_x(XO + 4), pos_y(YO - 1), 3 * button_width, 20, "Disabled");
+		btn = new CTextButton(pos_x(XO + 4), pos_y(YO - 1) + y_offs, 3 * button_width, 20, "Disabled");
 		btn->SetColor(color_grey);
-		btn = new CTextButton(pos_x(XO + 8), pos_y(YO - 1), 3 * button_width, 20, "Disabled");
+		btn = new CTextButton(pos_x(XO + 8), pos_y(YO - 1) + y_offs, 3 * button_width, 20, "Disabled");
 		btn->SetColor(color_grey);
 	}
 
@@ -2288,7 +2292,7 @@ static void CreateLayout() {
 	/* Create Handler buttons */
 	int32_t xpos = 0;
 	int32_t ypos = 10;
-	constexpr auto bw = button_width + 5;
+	constexpr auto bw = button_width + 8;
 	for (const auto &handler_event : handlergroup) {
 		new CEventButton(200 + xpos * 3 * bw, pos_y(ypos), bw * 3, button_height,
 		                 handler_event->button_name.c_str(), handler_event);
@@ -2302,10 +2306,10 @@ static void CreateLayout() {
 //	new CTextButton(pos_x(6), 0, 124, 20, "Keyboard Layout");
 //	new CTextButton(pos_x(17), 0, 124, 20, "Joystick Layout");
 
-	bind_but.action = new CCaptionButton(0, 335, 0, 0);
+	bind_but.action = new CCaptionButton(0, 355, 0, 0);
 
-	bind_but.event_title=new CCaptionButton(0,350,0,0);
-	bind_but.bind_title=new CCaptionButton(0,365,0,0);
+	bind_but.event_title=new CCaptionButton(0,370,0,0);
+	bind_but.bind_title=new CCaptionButton(0,385,0,0);
 
 	/* Create binding support buttons */
 
@@ -2314,11 +2318,11 @@ static void CreateLayout() {
 	bind_but.mod3 = new CCheckButton(20, 454, 110, 20, "Mod3", BC_Mod3);
 	bind_but.hold = new CCheckButton(150, 410, 60, 20, "Hold", BC_Hold);
 
-	bind_but.add = new CBindButton(250, 380, 100, 20, "Add bind", BB_Add);
-	bind_but.del = new CBindButton(250, 400, 100, 20, "Remove bind", BB_Del);
-	bind_but.next = new CBindButton(250, 420, 100, 20, "Next bind", BB_Next);
+	bind_but.add = new CBindButton(250, 410, 100, 20, "Add bind", BB_Add);
+	bind_but.del = new CBindButton(250, 432, 100, 20, "Remove bind", BB_Del);
+	bind_but.next = new CBindButton(250, 454, 100, 20, "Next bind", BB_Next);
 
-	bind_but.exit=new CBindButton(450,450,50,20,"Exit",BB_Exit);
+	bind_but.exit=new CBindButton(450,454,50,20,"Exit",BB_Exit);
 
 	bind_but.bind_title->Change("Bind Title");
 }
@@ -2338,8 +2342,8 @@ static void CreateStringBind(char * line) {
 foundevent:
 	CBind * bind = nullptr;
 	for (char * bindline=strip_word(line);*bindline;bindline=strip_word(line)) {
-		for (CBindGroup_it it = bindgroups.begin(); it != bindgroups.end(); ++it) {
-			bind=(*it)->CreateConfigBind(bindline);
+		for (auto& entry : bindgroups) {
+			bind = entry->CreateConfigBind(bindline);
 			if (bind) {
 				event->AddBind(bind);
 				bind->SetFlags(bindline);
@@ -2475,7 +2479,7 @@ static struct {
 
 static void ClearAllBinds()
 {
-	MAPPER_StopAutoTyping();
+	stop_auto_typing();
 
 	for (const auto& event : events) {
 		event->ClearBinds();
@@ -2576,8 +2580,8 @@ static void MAPPER_SaveBinds() {
 	}
 	for (const auto& event : events) {
 		fprintf(savefile,"%s ",event->GetName());
-		for (CBindList_it bind_it = event->bindlist.begin(); bind_it != event->bindlist.end(); ++bind_it) {
-			CBind * bind=*(bind_it);
+		for (auto& entry : event->bindlist) {
+			CBind * bind = entry;
 			const auto buffer = bind->GetConfigName() + bind->GetFlags();
 			fprintf(savefile, "\"%s\" ", buffer.c_str());
 		}
@@ -2599,7 +2603,7 @@ static bool load_binds_from_file(const std::string_view mapperfile_path,
 		return false;
 	}
 
-	auto try_loading = [](const std_fs::path &mapper_path) -> bool {
+	auto try_loading = [](const std_fs::path &mapper_path) {
 		constexpr auto optional = ResourceImportance::Optional;
 		auto lines = get_resource_lines(mapper_path, optional);
 		if (lines.empty())
@@ -2768,7 +2772,7 @@ void BIND_MappingEvents()
 			mapper.exit=true;
 			break;
 		default:
-			if (mapper.addbind) for (CBindGroup_it it = bindgroups.begin(); it != bindgroups.end(); ++it) {
+			if (mapper.addbind) for (auto it = bindgroups.begin(); it != bindgroups.end(); ++it) {
 				CBind * newbind=(*it)->CreateEventBind(&event);
 				if (!newbind) continue;
 				mapper.aevent->AddBind(newbind);
@@ -2899,7 +2903,7 @@ static void ClearBindGroups()
 
 static void CreateBindGroups()
 {
-	CKeyBindGroup* key_bind_group = new CKeyBindGroup(SDL_NUM_SCANCODES);
+	auto key_bind_group = new CKeyBindGroup(SDL_NUM_SCANCODES);
 	keybindgroups.push_back(key_bind_group);
 
 	assert(joytype != JOY_UNSET);
@@ -3050,6 +3054,16 @@ void MAPPER_DisplayUI() {
 			E_Exit("MAPPER: OpenGL support in SDL renderer is unavailable but required for OpenGL output");
 		}
 
+		// Since our OpenGL renderer started requesting a version 3.3 context,
+		// the call to SDL_GL_MakeCurrent() when exiting the mapper started failing.
+		//
+		// This is a bit of hack (but so is a lot of this mapper code).
+		// Resetting attributes to default before creating the mapper's render fixes the problem.
+		//
+		// As far as I know, attributes are only evalutated before window and/or context creation
+		// so this should not affect our regular (non-mapper) OpenGL renderer.
+		SDL_GL_ResetAttributes();
+
 		constexpr uint32_t renderer_flags = 0;
 
 		mapper.renderer = SDL_CreateRenderer(mapper.window,
@@ -3144,7 +3158,7 @@ void MAPPER_DisplayUI() {
 
 void MAPPER_Destroy() {
 	// Stop any ongoing typing as soon as possible (because it access events)
-	MAPPER_StopAutoTyping();
+	stop_auto_typing();
 
 	// Release all the accumulated allocations by the mapper
 	events.clear();

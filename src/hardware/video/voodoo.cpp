@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2023-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2023-2026 The DOSBox Staging Team
 // SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
 // SPDX-FileCopyrightText:  Aaron Giles
 // SPDX-FileCopyrightText:  kekko
@@ -3129,10 +3129,10 @@ static inline void raster_generic(const voodoo_state* vs, uint32_t TMUS, uint32_
 	const int32_t dx = startx - (fbi.ax >> 4);
 	const int32_t dy = y - (fbi.ay >> 4);
 
-	int32_t iterr = fbi.startr + dy * fbi.drdy + dx * fbi.drdx;
-	int32_t iterg = fbi.startg + dy * fbi.dgdy + dx * fbi.dgdx;
-	int32_t iterb = fbi.startb + dy * fbi.dbdy + dx * fbi.dbdx;
-	int32_t itera = fbi.starta + dy * fbi.dady + dx * fbi.dadx;
+	int64_t iterr = fbi.startr + dy * fbi.drdy + dx * fbi.drdx;
+	int64_t iterg = fbi.startg + dy * fbi.dgdy + dx * fbi.dgdx;
+	int64_t iterb = fbi.startb + dy * fbi.dbdy + dx * fbi.dbdx;
+	int64_t itera = fbi.starta + dy * fbi.dady + dx * fbi.dadx;
 	int32_t iterz = fbi.startz + dy * fbi.dzdy + dx * fbi.dzdx;
 	int64_t iterw = fbi.startw + dy * fbi.dwdy + dx * fbi.dwdx;
 	int64_t iterw0 = 0;
@@ -3505,7 +3505,7 @@ static raster_info *add_rasterizer(voodoo_state *vs, const raster_info *cinfo)
 -------------------------------------------------*/
 static raster_info *find_rasterizer(voodoo_state *vs, int texcount)
 {
-	raster_info *info, *prev = NULL;
+	raster_info *info, *prev = nullptr;
 	raster_info curinfo;
 	int hash;
 
@@ -3554,7 +3554,7 @@ static raster_info *find_rasterizer(voodoo_state *vs, int texcount)
 	curinfo.polys = 0;
 	curinfo.hits = 0;
 #endif
-	curinfo.next = 0;
+	curinfo.next = nullptr;
 	curinfo.shader_ready = false;
 
 	return add_rasterizer(vs, &curinfo);
@@ -5827,7 +5827,7 @@ static void register_w(uint32_t offset, uint32_t data)
 			if (vtype < VOODOO_2) {
 				break;
 			}
-			/* else fall through... */
+		        [[fallthrough]];
 
 		/* fbiInitX can only be written if initEnable says we can -- Voodoo/Voodoo2 only */
 		/* most of these affect memory layout, so always recompute that when done */
@@ -6831,7 +6831,7 @@ static uint32_t register_r(const uint32_t offset)
 {
 	using namespace bit::literals;
 
-	const auto regnum = static_cast<uint8_t>((offset) & 0xff);
+	const auto regnum = static_cast<uint8_t>(offset & 0xff);
 
 	//LOG(LOG_VOODOO,LOG_WARN)("Voodoo:read chip %x reg %x (%s)", chips, regnum<<2, voodoo_reg_name[regnum]);
 
@@ -7503,11 +7503,7 @@ static void Voodoo_UpdateScreen()
 			const auto frames_per_second = static_cast<float>(
 			        1000.0 / v->draw.frame_period_ms);
 
-			constexpr auto ReinitRender = false;
-
-			RENDER_MaybeAutoSwitchShader(GFX_GetCanvasSizeInPixels(),
-			                             video_mode,
-			                             ReinitRender);
+			RENDER_NotifyVideoModeChanged(video_mode);
 
 			RENDER_SetSize(image_info, frames_per_second);
 		}
@@ -7941,20 +7937,25 @@ static void init_voodoo_config_settings(SectionProp& section)
 	auto* str_prop = section.AddString("voodoo_memsize", OnlyAtStart, "4");
 	str_prop->SetValues({"4", "12"});
 	str_prop->SetHelp(
-	        "Set the amount of video memory for 3dfx Voodoo graphics. The memory is used by\n"
-	        "the Frame Buffer Interface (FBI) and Texture Mapping Unit (TMU) as follows:\n"
+	        "Set the amount of video memory for 3dfx Voodoo graphics (4 by default). The\n"
+	        "memory is used by the Frame Buffer Interface (FBI) and Texture Mapping Unit\n"
+	        "(TMU). Possible values:\n"
+	        "\n"
 	        "   4: 2 MB for the FBI and one TMU with 2 MB (default).\n"
 	        "  12: 4 MB for the FBI and two TMUs, each with 4 MB.");
 
 	// Deprecate the boolean Voodoo multithreading setting
 	bool_prop = section.AddBool("voodoo_multithreading", Deprecated, false);
-	bool_prop->SetHelp("Renamed to 'voodoo_threads'");
+	bool_prop->SetHelp("Renamed to [color=light-green]'voodoo_threads'.[reset]");
 
 	str_prop = section.AddString("voodoo_threads", OnlyAtStart, "auto");
 	str_prop->SetHelp(
-	        "Use threads to improve 3dfx Voodoo performance:\n"
-	        "  auto:     Use up to 16 threads based on available CPU cores (default).\n"
-	        "  <value>:  Set a specific number of threads between 1 and 128.\n"
+	        "Use threads to improve 3dfx Voodoo performance ('auto' by default). Possible\n"
+	        "values:\n"
+	        "\n"
+	        "  auto:      Use up to 16 threads based on available CPU cores (default).\n"
+	        "  <number>:  Set a specific number of threads between 1 and 128.\n"
+	        "\n"
 	        "Note: Setting this to a higher value than the number of logical CPUs your\n"
 	        "      hardware supports is very likely to harm performance. This has been\n"
 	        "      measured to scale well up to 8-16 threads, but it has not been tested\n"

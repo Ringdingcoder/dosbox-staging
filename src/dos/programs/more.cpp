@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2022-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2022-2026 The DOSBox Staging Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "more.h"
@@ -48,7 +48,7 @@ bool MORE::ParseCommandLine(MoreOutputFiles &output)
 	std::string tmp_str;
 
 	// Check if specified tabulation size
-	if (cmd->FindStringBegin("/t", tmp_str, true)) {
+	if (cmd->FindStringBeginCaseSensitive("/t", tmp_str, true)) {
 		const auto value = parse_int(tmp_str);
 		if (!value || *value < 1 || *value > 9) {
 			std::string full_switch = std::string("/t") + tmp_str;
@@ -61,7 +61,7 @@ bool MORE::ParseCommandLine(MoreOutputFiles &output)
 	}
 
 	// Check if specified start line
-	if (cmd->FindStringBegin("+", tmp_str, true)) {
+	if (cmd->FindStringBeginCaseSensitive("+", tmp_str, true)) {
 		const auto value = parse_int(tmp_str);
 		if (!value || *value < 0) {
 			std::string full_switch = std::string("+") + tmp_str;
@@ -74,7 +74,7 @@ bool MORE::ParseCommandLine(MoreOutputFiles &output)
 	}
 
 	// Make sure no other switches are supplied
-	if (cmd->FindStringBegin("/", tmp_str)) {
+	if (cmd->FindStringBeginCaseSensitive("/", tmp_str)) {
 		tmp_str = std::string("/") + tmp_str;
 		result_errorcode = DOSERR_FUNCTION_NUMBER_INVALID;
 		WriteOut(MSG_Get("SHELL_ILLEGAL_SWITCH"), tmp_str.c_str());
@@ -117,8 +117,10 @@ bool MORE::FindInputFiles(MoreOutputFiles &output)
 		}
 
 		found = true;
-		while (!DOSBOX_IsShutdownRequested()) {
-			CALLBACK_Idle();
+		while (true) {
+			if (CALLBACK_Idle()) {
+				return false;
+			}
 
 			DOS_DTA::Result search_result = {};
 

@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2022-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2022-2026 The DOSBox Staging Team
 // SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
@@ -9,7 +9,6 @@
 #include <memory>
 #include <tuple>
 
-#include "directserial.h"
 #include "nullmodem.h"
 #include "serialdummy.h"
 #include "serialmouse.h"
@@ -243,22 +242,34 @@ void CSerial::handleEvent(uint16_t type)
 		break;
 
 	case SERIAL_ERRMSG_EVENT:
-		LOG_MSG("SERIAL: Port %" PRIu8 " errors:\n"
-		        "  - framing %" PRIu32 "\n"
-		        "  - parity %" PRIu32 "\n"
-		        "  - RX overruns %" PRIu32 "\n"
-		        "  - IF0 overruns: %" PRIu32 "\n"
-		        "  - TX overruns: %" PRIu32 "\n"
-		        "  - break %" PRIu32,
-		        GetPortNumber(), framingErrors, parityErrors,
-		        overrunErrors, overrunIF0, txOverrunErrors, breakErrors);
+		LOG_WARNING("SERIAL: Port %" PRIu8
+		            " errors:\n"
+		            "  - framing %" PRIu32
+		            "\n"
+		            "  - parity %" PRIu32
+		            "\n"
+		            "  - RX overruns %" PRIu32
+		            "\n"
+		            "  - IF0 overruns: %" PRIu32
+		            "\n"
+		            "  - TX overruns: %" PRIu32
+		            "\n"
+		            "  - break %" PRIu32,
+		            GetPortNumber(),
+		            framingErrors,
+		            parityErrors,
+		            overrunErrors,
+		            overrunIF0,
+		            txOverrunErrors,
+		            breakErrors);
+
 		errormsg_pending = false;
-		framingErrors = 0;
-		parityErrors = 0;
-		overrunErrors = 0;
-		txOverrunErrors = 0;
-		overrunIF0 = 0;
-		breakErrors = 0;
+		framingErrors    = 0;
+		parityErrors     = 0;
+		overrunErrors    = 0;
+		txOverrunErrors  = 0;
+		overrunIF0       = 0;
+		breakErrors      = 0;
 		break;
 
 	case SERIAL_RX_TIMEOUT_EVENT:
@@ -476,7 +487,7 @@ void CSerial::Write_THR(uint8_t data)
 {
 	// 0-7 transmit data
 
-	if ((LCR & LCR_DIVISOR_Enable_MASK)) {
+	if (LCR & LCR_DIVISOR_Enable_MASK) {
 		// write to DLL
 		baud_divider&=0xFF00;
 		baud_divider |= data;
@@ -485,7 +496,7 @@ void CSerial::Write_THR(uint8_t data)
 		// write to THR
         clear (TX_PRIORITY);
 
-		if((LSR & LSR_TX_EMPTY_MASK))
+		if(LSR & LSR_TX_EMPTY_MASK)
 		{	// we were idle before
 			// LOG_MSG("SERIAL: Port %" PRIu8 " starting new transmit cycle", GetPortNumber());
 			// if(sync_guardtime) LOG_MSG("SERIAL: Port %" PRIu8 " internal error 1", GetPortNumber());
@@ -531,7 +542,7 @@ void CSerial::Write_THR(uint8_t data)
 uint32_t CSerial::Read_RHR()
 {
 	// 0-7 received data
-	if ((LCR & LCR_DIVISOR_Enable_MASK)) return baud_divider&0xff;
+	if (LCR & LCR_DIVISOR_Enable_MASK) return baud_divider&0xff;
 	else {
 		uint8_t data = rxfifo->getb();
 		if(FCR&FCR_ACTIVATE) {
@@ -575,7 +586,7 @@ uint32_t CSerial::Read_IER()
 
 void CSerial::Write_IER(uint8_t data)
 {
-	if ((LCR & LCR_DIVISOR_Enable_MASK)) { // write to DLM
+	if (LCR & LCR_DIVISOR_Enable_MASK) { // write to DLM
 		baud_divider&=0xff;
 		baud_divider |= ((uint16_t)data) << 8;
 		changeLineProperties();
@@ -720,9 +731,9 @@ void CSerial::Write_MCR(uint8_t data)
 	// WARNING: At the time setRTSDTR is called rts and dsr members are
 	// still wrong.
 	if (data & FIFO_FLOWCONTROL)
-		LOG_MSG("SERIAL: Port %" PRIu8 " warning, tried to activate hardware "
-		        "handshake.",
-		        GetPortNumber());
+		LOG_WARNING("SERIAL: Port %" PRIu8
+		            " warning, tried to activate hardware handshake",
+		            GetPortNumber());
 	bool new_dtr = data & MCR_DTR_MASK? true:false;
 	bool new_rts = data & MCR_RTS_MASK? true:false;
 	bool new_op1 = data & MCR_OP1_MASK? true:false;
@@ -1167,7 +1178,7 @@ bool CSerial::getUintFromString(const char *name, uint32_t &data, CommandLine *c
 {
 	bool result = false;
 	std::string tmpstring;
-	if (cmd->FindStringCaseInsensitiveBegin(name, tmpstring, false))
+	if (cmd->FindStringBegin(name, tmpstring, false))
 		result = (sscanf(tmpstring.c_str(), "%" PRIu32, &data) == 1);
 	return result;
 }
@@ -1178,11 +1189,11 @@ CSerial::~CSerial() {
 		removeEvent(i);
 
 	// Free the fifos and devices
-	delete(errorfifo);
+	delete errorfifo;
 	errorfifo = nullptr;
-	delete(rxfifo);
+	delete rxfifo;
 	rxfifo = nullptr;
-	delete(txfifo);
+	delete txfifo;
 	txfifo = nullptr;
 
 	// Uninstall the IO handlers
@@ -1194,7 +1205,9 @@ CSerial::~CSerial() {
 
 static bool idle(const double start, const uint32_t timeout)
 {
-	CALLBACK_Idle();
+	if (CALLBACK_Idle()) {
+		return true;
+	}
 	return PIC_FullIndex() - start > timeout;
 }
 
@@ -1205,14 +1218,15 @@ bool CSerial::Getchar(uint8_t *data, uint8_t *lsr, bool wait_dsr, uint32_t timeo
 
 	// Wait until we're ready to receive (or we've timed out)
 	const uint32_t ready_flag = (wait_dsr ? MSR_DSR_MASK : 0x0);
-	while ((Read_MSR() & ready_flag) != ready_flag && !timed_out)
+	while ((Read_MSR() & ready_flag) != ready_flag && !timed_out) {
 		timed_out = idle(starttime, timeout);
+	}
 
 	// wait for a byte to arrive (or we've timed out)
 	*lsr = static_cast<uint8_t>(Read_LSR());
 	while (!(*lsr & LSR_RX_DATA_READY_MASK) && !timed_out) {
 		timed_out = idle(starttime, timeout);
-		*lsr = static_cast<uint8_t>(Read_LSR());
+		*lsr      = static_cast<uint8_t>(Read_LSR());
 	}
 
 	if (timed_out) {
@@ -1242,14 +1256,16 @@ bool CSerial::Putchar(uint8_t data, bool wait_dsr, bool wait_cts, uint32_t timeo
 	bool timed_out = false;
 
 	// Wait until our transfer queue is empty (or we've timed out)
-	while (!(Read_LSR() & LSR_TX_HOLDING_EMPTY_MASK) && !timed_out)
+	while (!(Read_LSR() & LSR_TX_HOLDING_EMPTY_MASK) && !timed_out) {
 		timed_out = idle(start_time, timeout);
+	}
 
 	// Wait until the receiver is ready (or we've timed out)
 	const uint32_t ready_flags = (wait_dsr ? MSR_DSR_MASK : 0x0) |
 	                             (wait_cts ? MSR_CTS_MASK : 0x0);
-	while ((Read_MSR() & ready_flags) != ready_flags && !timed_out)
+	while ((Read_MSR() & ready_flags) != ready_flags && !timed_out) {
 		timed_out = idle(start_time, timeout);
+	}
 
 	if (timed_out) {
 #if SERIAL_DEBUG
@@ -1278,12 +1294,10 @@ public:
 	SerialPorts(Section* sec)
 	{
 		uint16_t biosParameter[SERIAL_MAX_PORTS] = {0};
-		SectionProp* section = static_cast<SectionProp*>(sec);
+		auto section = static_cast<SectionProp*>(sec);
 
-#if C_MODEM
 		const PropPath *pbFilename = section->GetPath("phonebookfile");
 		MODEM_ReadPhonebook(pbFilename->realpath);
-#endif
 
 		char s_property[] = "serialx";
 		for (uint8_t i = 0; i < SERIAL_MAX_PORTS; ++i) {
@@ -1298,21 +1312,8 @@ public:
 				serialports[i] = new CSerialDummy (i, &cmd);
 				serialports[i]->serialType = SERIAL_PORT_TYPE::DUMMY;
 				cmd.GetStringRemain(serialports[i]->commandLineString);
-			}
-#ifdef C_DIRECTSERIAL
-			else if (type=="direct") {
-				serialports[i] = new CDirectSerial (i, &cmd);
-				serialports[i]->serialType = SERIAL_PORT_TYPE::DIRECT;
-				cmd.GetStringRemain(serialports[i]->commandLineString);
-				if (!serialports[i]->InstallationSuccessful) {
-					// serial port name was wrong or already in use
-					delete serialports[i];
-					serialports[i] = nullptr;
-				}
-			}
-#endif
-#if C_MODEM
-			else if(type=="modem") {
+
+			} else if (type == "modem") {
 				serialports[i] = new CSerialModem (i, &cmd);
 				serialports[i]->serialType = SERIAL_PORT_TYPE::MODEM;
 				cmd.GetStringRemain(serialports[i]->commandLineString);
@@ -1320,8 +1321,8 @@ public:
 					delete serialports[i];
 					serialports[i] = nullptr;
 				}
-			}
-			else if(type=="nullmodem") {
+
+			} else if (type == "nullmodem") {
 				serialports[i] = new CNullModem (i, &cmd);
 				serialports[i]->serialType = SERIAL_PORT_TYPE::NULL_MODEM;
 				cmd.GetStringRemain(serialports[i]->commandLineString);
@@ -1329,9 +1330,7 @@ public:
 					delete serialports[i];
 					serialports[i] = nullptr;
 				}
-			}
-#endif
-			else if(type=="mouse") {
+			} else if (type == "mouse") {
 				serialports[i] = new CSerialMouse (i, &cmd);
 				serialports[i]->serialType = SERIAL_PORT_TYPE::MOUSE;
 				cmd.GetStringRemain(serialports[i]->commandLineString);
@@ -1339,13 +1338,14 @@ public:
 					delete serialports[i];
 					serialports[i] = nullptr;
 				}
-			}
-			else if(type=="disabled") {
+			} else if (has_false(type)) {
 				serialports[i] = nullptr;
 			} else {
 				serialports[i] = nullptr;
-				LOG_MSG("SERIAL: Port %" PRIu8 " invalid type \"%s\".",
-				        static_cast<uint8_t>(i + 1), type.c_str());
+				LOG_WARNING("SERIAL: Port %" PRIu8
+				            " invalid type \"%s\".",
+				            static_cast<uint8_t>(i + 1),
+				            type.c_str());
 			}
 			if(serialports[i]) biosParameter[i] = serial_baseaddr[i];
 		} // for 1-4
@@ -1360,9 +1360,7 @@ public:
 				serialports[i] = nullptr;
 			}
 		}
-#if C_MODEM
 		MODEM_ClearPhonebook();
-#endif
 	}
 };
 
@@ -1401,19 +1399,33 @@ static void add_serial_config_settings(SectionProp& section)
 	pstring->SetValues(serials);
 	pmulti_remain->GetSection()->AddString("parameters", WhenIdle, "");
 	pmulti_remain->SetHelp(
-	        "Set type of device connected to the COM1 port.\n"
-	        "Can be disabled, dummy, mouse, modem, nullmodem, direct ('dummy' by default).\n"
-	        "Additional parameters must be on the same line in the form of\n"
-	        "parameter:value. The optional 'irq' parameter is common for all types.\n"
+	        "Set type of device connected to the COM1 port ('dummy' by default).\n"
+	        "Possible values:\n"
+	        "\n"
+	        "  disabled:  Disables the port.\n"
+	        "  dummy:     Emulates the port without a device attached to it.\n"
+	        "  mouse:     Emulates a serial mouse attached to the port.\n"
+	        "  modem:     Emulates a modem attached to the port.\n"
+	        "  nullmodem: Emulates a nullmoden attached to the port.\n"
+	        "  direct:    Emulates a direct serial link.\n"
+	        "\n"
+	        "Additional parameters must be on the same line in the form of PARAMETER:VALUE.\n"
+	        "The optional 'irq' parameter is common for all types. Available parameters:\n"
+	        "\n"
 	        "  - for 'mouse':      model (optional; overrides the 'com_mouse_model' setting).\n"
+	        "\n"
 	        "  - for 'direct':     realport (required), rxdelay (optional).\n"
 	        "                      (e.g., realport:COM1, realport:ttyS0).\n"
+	        "\n"
 	        "  - for 'modem':      listenport, sock, bps (all optional).\n"
+	        "\n"
 	        "  - for 'nullmodem':  server, rxdelay, txdelay, telnet, usedtr,\n"
 	        "                      transparent, port, inhsocket, sock (all optional).\n"
+	        "\n"
 	        "The 'sock' parameter specifies the protocol to use at both sides of the\n"
 	        "connection. Valid values are 0 for TCP, and 1 for ENet reliable UDP.\n"
-	        "Example: serial1=modem listenport:5000 sock:1");
+	        "Example:\n"
+	        "  serial1=modem listenport:5000 sock:1");
 
 	pmulti_remain = section.AddMultiValRemain("serial2", WhenIdle, " ");
 	pstring = pmulti_remain->GetSection()->AddString("type", WhenIdle, "dummy");

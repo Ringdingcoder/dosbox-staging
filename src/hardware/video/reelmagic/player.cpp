@@ -27,7 +27,7 @@
 
 // bring in the MPEG-1 decoder library...
 #define PL_MPEG_IMPLEMENTATION
-#include "mpeg_decoder.h"
+#include "libs/PL_MPEG/mpeg_decoder.h"
 
 // global config
 static ReelMagic_PlayerConfiguration _globalDefaultPlayerConfiguration;
@@ -229,7 +229,8 @@ class ReelMagic_MediaPlayerImplementation : public ReelMagic_MediaPlayer,
 		case PLM_VIDEO_PICTURE_TYPE_B:
 			self->motion_backward.r_size =
 			        ((ReelMagic_MediaPlayerImplementation*)user)->_magicalRSizeOverride;
-			// fallthrough
+			[[fallthrough]];
+
 		case PLM_VIDEO_PICTURE_TYPE_PREDICTIVE:
 			self->motion_forward.r_size = ((ReelMagic_MediaPlayerImplementation*)user)->_magicalRSizeOverride;
 		}
@@ -300,7 +301,7 @@ class ReelMagic_MediaPlayerImplementation : public ReelMagic_MediaPlayer,
 					LOG(LOG_REELMAGIC, LOG_WARN)
 					("Unknown magic key: 0x%08X. Defaulting to the common key: 0x%08X",
 					 _config.MagicDecodeKey, common_magic_key);
-					// fall-through
+					[[fallthrough]];
 
 				// most ReelMagic games seem to use this "key"
 				case common_magic_key:

@@ -1,12 +1,12 @@
-// SPDX-FileCopyrightText:  2022-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2022-2026 The DOSBox Staging Team
 // SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "mouse.h"
 
+#include "private/mouse_config.h"
+#include "private/mouse_interfaces.h"
 #include "private/mouseif_dos_driver_state.h"
-#include "mouse_config.h"
-#include "mouse_interfaces.h"
 
 #include <algorithm>
 
@@ -18,6 +18,9 @@
 #include "hardware/pic.h"
 #include "ints/bios.h"
 #include "ints/int10.h"
+#include "misc/host_locale.h"
+#include "misc/iso_locale_codes.h"
+#include "misc/messages.h"
 #include "utils/bitops.h"
 #include "utils/byteorder.h"
 #include "utils/checks.h"
@@ -40,6 +43,20 @@ CHECK_NARROWING();
 // Versions are stored in BCD code - 0x09 = version 9, 0x10 = version 10, etc.
 static constexpr uint8_t DriverVersionMajor = 0x08;
 static constexpr uint8_t DriverVersionMinor = 0x05;
+
+// Mouse driver languages known by 'msd.exe' (the Microsoft Diagnostics tool)
+static const std::unordered_map<std::string, uint16_t> LanguageCodes = {
+        {Iso639::English,    0x00},
+        {Iso639::French,     0x01},
+        {Iso639::Dutch,      0x02},
+        {Iso639::German,     0x03},
+        {Iso639::LowGerman,  0x03}, // a German dialect
+        {Iso639::Swedish,    0x04},
+        {Iso639::Finnish,    0x05},
+        {Iso639::Spanish,    0x06},
+        {Iso639::Portuguese, 0x07},
+        {Iso639::Italian,    0x08},
+};
 
 static constexpr auto CharToPixelRatio = 8;
 
@@ -93,7 +110,7 @@ static bool rate_is_set     = false;
 static uint16_t rate_hz     = 0;
 static uint16_t min_rate_hz = 0;
 
-// Language of messages displayed by the driver - fake value, not used
+// Language of messages displayed by the driver
 static uint16_t driver_language = 0;
 
 // Data from mouse events which were already received,
@@ -253,7 +270,7 @@ static void maybe_trigger_event()
 	}
 
 	maybe_start_delay_timer(delay_ms);
-	PIC_ActivateIRQ(mouse_predefined.IRQ_PS2);
+	PIC_ActivateIRQ(Mouse::IrqPs2);
 }
 
 static void clear_pending_events()
@@ -293,6 +310,9 @@ static uint16_t get_pos_x()
 	MouseDriverState state(*state_segment);
 
 	const auto pos_x = static_cast<uint16_t>(std::lround(state.GetPosX()));
+	if (mouse_config.dos_driver_no_granularity) {
+		return pos_x;
+	}
 	return pos_x & state.GetGranularityX();
 }
 
@@ -301,12 +321,10 @@ static uint16_t get_pos_y()
 	MouseDriverState state(*state_segment);
 
 	const auto pos_y = static_cast<uint16_t>(std::lround(state.GetPosY()));
+	if (mouse_config.dos_driver_no_granularity) {
+		return pos_y;
+	}
 	return pos_y & state.GetGranularityY();
-}
-
-static uint16_t mickey_counter_to_reg16(const float x)
-{
-	return static_cast<uint16_t>(std::lround(x));
 }
 
 // ***************************************************************************
@@ -407,7 +425,7 @@ static void draw_cursor_text()
 		          read_high_byte(result),
 		          true);
 	} else {
-		uint16_t address = static_cast<uint16_t>(
+		auto address = static_cast<uint16_t>(
 		        page * real_readw(BIOSMEM_SEG, BIOSMEM_PAGE_SIZE));
 		address = static_cast<uint16_t>(
 		        address +
@@ -862,16 +880,17 @@ static void notify_interface_rate()
 
 	constexpr uint16_t DefaultRateHz = 200;
 
+	auto& interface = MouseInterface::GetInstance(MouseInterfaceId::DOS);
 	if (rate_is_set) {
 		// Rate was set by guest application - use this value. The
 		// minimum will be enforced by MouseInterface nevertheless
-		MouseInterface::GetDOS()->NotifyInterfaceRate(rate_hz);
+		interface.NotifyInterfaceRate(rate_hz);
 	} else if (min_rate_hz) {
 		// If user set the minimum mouse rate - follow it
-		MouseInterface::GetDOS()->NotifyInterfaceRate(min_rate_hz);
+		interface.NotifyInterfaceRate(min_rate_hz);
 	} else {
 		// No user setting in effect - use default value
-		MouseInterface::GetDOS()->NotifyInterfaceRate(DefaultRateHz);
+		interface.NotifyInterfaceRate(DefaultRateHz);
 	}
 }
 
@@ -901,8 +920,10 @@ static uint8_t get_interrupt_rate()
 		// Rate was set by the application - report what was requested
 		rate_to_report = rate_hz;
 	} else {
-		// Raate wasn't set - report the value closest to the real rate
-		rate_to_report = MouseInterface::GetDOS()->GetRate();
+		// Rate wasn't set - report the value closest to the real rate
+		const auto& interface = MouseInterface::GetInstance(MouseInterfaceId::DOS);
+
+		rate_to_report = interface.GetRate();
 	}
 
 	if (rate_to_report == 0) {
@@ -918,6 +939,20 @@ static uint8_t get_interrupt_rate()
 	return 4; // report 200 Hz
 }
 
+static void synchronize_driver_language()
+{
+	// Get the translation language
+	const auto language = LanguageTerritory(MSG_GetLanguage()).GetIsoLanguageCode();
+
+	// Find the mouse driver language code
+	if (LanguageCodes.contains(language)) {
+		driver_language = LanguageCodes.at(language);
+	} else {
+		// Couldn't match the language, set a dummy value (English)
+		driver_language = 0;
+	}
+}
+
 static void reset_hardware()
 {
 	MouseDriverState state(*state_segment);
@@ -928,11 +963,17 @@ static void reset_hardware()
 	state.SetWheelApi(0);
 	state.SetCounterWheel(0);
 
-	PIC_SetIRQMask(mouse_predefined.IRQ_PS2, false); // lower IRQ line
+	// Lower the IRQ line
+	PIC_SetIRQMask(Mouse::IrqPs2, false);
 
 	// Reset mouse refresh rate
 	rate_is_set = false;
 	notify_interface_rate();
+}
+
+void MOUSE_NotifyLanguageChanged()
+{
+	synchronize_driver_language();
 }
 
 void MOUSEDOS_NotifyMinRate(const uint16_t value_hz)
@@ -1134,8 +1175,10 @@ static void reset()
 	state.SetPosX(static_cast<float>((state.GetMaxPosX() + 1) / 2));
 	state.SetPosY(static_cast<float>((state.GetMaxPosY() + 1) / 2));
 
-	state.SetMickeyCounterX(0.0f);
-	state.SetMickeyCounterY(0.0f);
+	state.SetPreciseMickeyCounterX(0.0f);
+	state.SetPreciseMickeyCounterY(0.0f);
+	state.SetMickeyCounterX(0);
+	state.SetMickeyCounterY(0);
 	state.SetCounterWheel(0);
 
 	state.SetLastWheelMovedX(0);
@@ -1162,8 +1205,8 @@ static void limit_coordinates()
 	MouseDriverState state(*state_segment);
 
 	auto limit = [](float& pos, const int16_t minpos, const int16_t maxpos) {
-		const float min = static_cast<float>(minpos);
-		const float max = static_cast<float>(maxpos);
+		const auto min = static_cast<float>(minpos);
+		const auto max = static_cast<float>(maxpos);
 
 		pos = std::clamp(pos, min, max);
 	};
@@ -1201,13 +1244,18 @@ static void update_mickeys_on_move(float& dx, float& dy,
 		return d;
 	};
 
-	auto update_mickey =
-	        [](float& mickey, const float d, const float mickeys_per_pixel) {
-		        mickey += d * mickeys_per_pixel;
-		        if (mickey > 32767.5f || mickey < -32768.5f) {
-			        mickey -= std::copysign(65536.0f, mickey);
-		        }
-	        };
+	auto update_mickey = [](int16_t& mickey,
+	                        float& precise,
+	                        const float displacement,
+	                        const float mickeys_per_pixel,
+	                        const float threshold) {
+		precise += displacement * mickeys_per_pixel;
+		if (std::fabs(precise) < threshold) {
+			return;
+		}
+
+		mickey = clamp_to_int16(mickey + MOUSE_ConsumeInt16(precise));
+	};
 
 	// Calculate cursor displacement
 	dx = calculate_d(x_rel,
@@ -1217,11 +1265,25 @@ static void update_mickeys_on_move(float& dx, float& dy,
 	                 state.GetPixelsPerMickeyY(),
 	                 state.GetSensitivityCoeffY());
 
-	// Update mickey counters
-	auto mickey_counter_x = state.GetMickeyCounterX();
-	auto mickey_counter_y = state.GetMickeyCounterY();
-	update_mickey(mickey_counter_x, dx, state.GetMickeysPerPixelX());
-	update_mickey(mickey_counter_y, dy, state.GetMickeysPerPixelY());
+	auto precise_counter_x = state.GetPreciseMickeyCounterX();
+	auto precise_counter_y = state.GetPreciseMickeyCounterY();
+	auto mickey_counter_x  = state.GetMickeyCounterX();
+	auto mickey_counter_y  = state.GetMickeyCounterY();
+
+	update_mickey(mickey_counter_x,
+	              precise_counter_x,
+	              dx,
+	              state.GetMickeysPerPixelX(),
+	              mouse_config.dos_driver_move_threshold_x);
+
+	update_mickey(mickey_counter_y,
+	              precise_counter_y,
+	              dy,
+	              state.GetMickeysPerPixelY(),
+	              mouse_config.dos_driver_move_threshold_y);
+
+	state.SetPreciseMickeyCounterX(precise_counter_x);
+	state.SetPreciseMickeyCounterY(precise_counter_y);
 	state.SetMickeyCounterX(mickey_counter_x);
 	state.SetMickeyCounterY(mickey_counter_y);
 }
@@ -1293,8 +1355,8 @@ static uint8_t move_cursor()
 	const auto old_pos_x = get_pos_x();
 	const auto old_pos_y = get_pos_y();
 
-	const auto old_mickey_x = static_cast<int16_t>(state.GetMickeyCounterX());
-	const auto old_mickey_y = static_cast<int16_t>(state.GetMickeyCounterY());
+	const auto old_mickey_x = state.GetMickeyCounterX();
+	const auto old_mickey_y = state.GetMickeyCounterY();
 
 	if (use_relative) {
 		move_cursor_captured(MOUSE_ClampRelativeMovement(pending.x_rel),
@@ -1547,6 +1609,115 @@ void MOUSEDOS_NotifyModelChanged()
 	MOUSEDOS_NotifyButton(pending.button_state);
 }
 
+// Requires function parameters to be present in the CPU registers
+static bool is_known_oem_function()
+{
+	// Reference:
+	// -
+	// https://mirror.math.princeton.edu/pub/oldlinux/Linux.old/docs/interrupts/int-html/int-33.htm
+
+	if (reg_ax >= 0xffe6) {
+		// Switch-It task switcher software
+		return true;
+	}
+
+	if (reg_al == 0x6c && (reg_ah >= 0x13 && reg_ah <= 0x27)) {
+		// Logitech Mouse function, some known functions:
+		// 0x156c - get signature and version strings
+		// 0x1d6c - get compass parameter
+		// 0x1e6c - set compass parameter
+		// 0x1f6c - get ballistics information
+		// 0x206c - set left or right parameter
+		// 0x216c - get left or right parameter
+		// 0x226c - remove driver from memory
+		// 0x236c - set ballistics information
+		// 0x246c - get parameters and reset serial mouse
+		// 0x256c - set parameters (serial mice only):
+		//          BX = 0x0000 - set baud rate
+		//          BX = 0x0001 - set emulation
+		//          BX = 0x0002 - set report rate
+		//          BX = 0x0003 - set mouse port
+		//          BX = 0x0004 - set mouse logical buttons
+		// 0x266c - get version (?)
+		return true;
+	}
+
+	switch (reg_ax) {
+	default: return false;
+		// Do not silence out unknown functions up to 0x6f; we have no
+		// information about possible extra functions available in the
+		// Microsoft mouse driver 8.x-11.x; there is a chance that some
+		// early OEM drivers have functions with a conflicting ID
+	case 0x0070:
+		// Mouse Systems - installation check
+	case 0x0072:
+		// Mouse Systems 7.01+ - unknown functionality
+		// Genius Mouse 9.06+  - unknown functionality
+	case 0x0073:
+		// Mouse Systems 7.01+ - (BX = 0xabcd) get button assignments
+		// VBADOS driver       - get driver info
+	case 0x00a0:
+		// TrueDOX Mouse driver - set PC mode (3 button)
+	case 0x00a1:
+		// TrueDOX Mouse driver - set MS mode (2 button)
+	case 0x00a6:
+		// TrueDOX Mouse driver - get resolution
+	case 0x00b0:
+		// LCS/Telegraphics Mouse Driver - unknown functionality
+	case 0x00d6:
+		// Twiddler TWMOUSE - get button/tilt state
+	case 0x00f0:
+	case 0x00f1:
+	case 0x00f2:
+	case 0x00f3:
+		// LCS/Telegraphics Mouse Driver - unknown functionality
+	case 0x0100:
+		// GRT Mouse 1.00+ - installation check
+	case 0x0101:
+		// GRT Mouse 1.00+ - set mouse cursor shape
+	case 0x0102:
+		// GRT Mouse 1.00+ - get mouse cursor shape
+	case 0x0103:
+		// GRT Mouse 1.00+ - set active characters
+	case 0x0104:
+		// GRT Mouse 1.00+ - get active characters
+	case 0x0666:
+		// TrueDOX Mouse driver v4.01 - get copyright string
+	case 0x3000:
+		// Smooth Mouse Driver, PrecisePoint - installation check
+	case 0x3001:
+		// Smooth Mouse Driver, PrecisePoint - enable smooth mouse
+	case 0x3002:
+		// Smooth Mouse Driver, PrecisePoint - disable smooth mouse
+	case 0x3003:
+		// Smooth Mouse Driver, PrecisePoint - get information
+	case 0x3004:
+	case 0x3005:
+		// Smooth Mouse Driver, PrecisePoint - reserved
+	case 0x4f00:
+	case 0x4f01:
+		// Logitech Mouse 6.10+ - unknown functionality
+	case 0x5301:
+		// Logitech CyberMan - get 3D position, orientation, and button
+		// status
+	case 0x5330:
+		// Logitech CyberMan - generate tactile feedback
+	case 0x53c0:
+		// Logitech CyberMan - exchange event handlers
+	case 0x53c1:
+		// Logitech CyberMan - get static device data and driver support
+		// status
+	case 0x53c2:
+		// Logitech CyberMan - get dynamic device data
+	case 0x6f00:
+		// Hewlett Packard - driver installation check
+	case 0x8800:
+		// InfoTrack IMOUSE.COM - unhook mouse IRQ
+		//                      - (BX = 0xffff) - get active IRQ
+		return true;
+	}
+}
+
 static Bitu int33_handler()
 {
 	maybe_disable_wheel_api();
@@ -1760,11 +1931,10 @@ static Bitu int33_handler()
 		[[fallthrough]];
 	case 0x0b:
 		// MS MOUSE v1.0+ - read motion data
-		reg_cx = mickey_counter_to_reg16(state.GetMickeyCounterX());
-		reg_dx = mickey_counter_to_reg16(state.GetMickeyCounterY());
-		// TODO: We might be losing partial mickeys, to be investigated
-		state.SetMickeyCounterX(0.0f);
-		state.SetMickeyCounterY(0.0f);
+		reg_cx = static_cast<uint16_t>(state.GetMickeyCounterX());
+		reg_dx = static_cast<uint16_t>(state.GetMickeyCounterY());
+		state.SetMickeyCounterX(0);
+		state.SetMickeyCounterY(0);
 		break;
 	case 0x0c:
 		// MS MOUSE v1.0+ - define user callback parameters
@@ -1954,7 +2124,10 @@ static Bitu int33_handler()
 		// 00h = English, 01h = French, 02h = Dutch, 03h = German, 04h =
 		// Swedish 05h = Finnish, 06h = Spanish, 07h = Portugese, 08h =
 		// Italian
-		driver_language = reg_bx;
+		if (reg_bx != driver_language) {
+			LOG_WARNING("MOUSE (DOS): Overriding the driver language not supported");
+			driver_language = reg_bx;
+		}
 		break;
 	case 0x23:
 		// MS MOUSE v6.0+ - get language for messages
@@ -2070,7 +2243,7 @@ static Bitu int33_handler()
 		break;
 	case 0x30:
 		// MS MOUSE v7.04+ - get/set BallPoint information
-		LOG_WARNING("MOUSE (DOS): Get/set BallPoint information not implemented");
+		LOG_WARNING("MOUSE (DOS): Get/Set BallPoint information not implemented");
 		// TODO: once implemented, update function 0x32
 		break;
 	case 0x31:
@@ -2124,38 +2297,19 @@ static Bitu int33_handler()
 		SegSet16(es, info_segment);
 		reg_di = info_offset_version;
 		break;
-	case 0x70:
-		// Mouse Systems - installation check
-	case 0x72:
-		// Mouse Systems 7.01+ - unknown functionality
-		// Genius Mouse 9.06+  - unknown functionality
-	case 0x73:
-		// Mouse Systems 7.01+ - get button assignments
-		// VBADOS driver       - get driver info
-	case 0x5301:
-		// Logitech CyberMan - get 3D position, orientation, and button
-		// status
-	case 0x5330:
-		// Logitech CyberMan - generate tactile feedback
-	case 0x53c0:
-		// Logitech CyberMan - exchange event handlers
-	case 0x53c1:	
-		// Logitech CyberMan - get static device data and driver support
-		// status	
-	case 0x53c2:
-		// Logitech CyberMan - get dynamic device data
-
+	default:
 		// Do not print out any warnings for known 3rd party oem driver
 		// extensions - every software (except the one bound to the
 		// particular driver) should continue working correctly even if
 		// we completely ignore the call
-		break;
-	default:
-		// Unknown function
-		LOG_WARNING("MOUSE (DOS): Interrupt 0x33 function 0x%04x not implemented",
-		            reg_ax);
+		if (!is_known_oem_function()) {
+			// Unknown function
+			LOG_WARNING("MOUSE (DOS): Interrupt 0x33 function 0x%04x not implemented",
+			            reg_ax);
+		}
 		break;
 	}
+
 	return CBRET_NONE;
 }
 
@@ -2380,8 +2534,8 @@ void MOUSEDOS_DoCallback(const uint8_t mask)
 	reg_bh = wheel_moved ? get_reset_wheel_8bit() : 0;
 	reg_cx = get_pos_x();
 	reg_dx = get_pos_y();
-	reg_si = mickey_counter_to_reg16(state.GetMickeyCounterX());
-	reg_di = mickey_counter_to_reg16(state.GetMickeyCounterY());
+	reg_si = static_cast<uint16_t>(state.GetMickeyCounterX());
+	reg_di = static_cast<uint16_t>(state.GetMickeyCounterY());
 
 	CPU_Push16(RealSegment(user_callback));
 	CPU_Push16(RealOffset(user_callback));
@@ -2666,9 +2820,10 @@ static void start_driver()
 	reset_hardware();
 	reset();
 
-	driver_language = 0;
+	synchronize_driver_language();
 
-	MouseInterface::GetDOS()->NotifyDosDriverStartup();
+	auto& interface = MouseInterface::GetInstance(MouseInterfaceId::DOS);
+	interface.NotifyDosDriverStartup();
 }
 
 bool MOUSEDOS_StartDriver(const bool force_low_memory)

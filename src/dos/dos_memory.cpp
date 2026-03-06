@@ -49,7 +49,7 @@ void DOS_SetMcbFaultStrategy(const char * mcb_fault_strategy_pref)
 // returns true if the MCB block needed triaging
 static bool triage_block(DOS_MCB &mcb, const uint8_t repair_type)
 {
-	auto mcb_type_is_valid = [&]() -> bool {
+	auto mcb_type_is_valid = [&]() {
 		const auto t = mcb.GetType();
 		return t == middle_mcb_type || t == ending_mcb_type;
 	};
@@ -298,7 +298,8 @@ bool DOS_ResizeMemory(uint16_t segment,uint16_t * blocks) {
 	DOS_MCB	mcb_next(segment+total);
 	if (*blocks<=total) {
 		if (*blocks == total) {
-			/* Nothing to do */
+			/* Size unchanged */
+			mcb.SetPSPSeg(dos.psp());
 			return true;
 		}
 		/* Shrinking MCB */
@@ -347,7 +348,11 @@ bool DOS_ResizeMemory(uint16_t segment,uint16_t * blocks) {
 	}
 	mcb.SetSize(total);
 	mcb.SetPSPSeg(dos.psp());
-	if (*blocks==total) return true;	/* block fit exactly */
+	if (*blocks == total) {
+		/* block fit exactly */
+		mcb.SetPSPSeg(dos.psp());
+		return true;
+	}
 
 	*blocks=total;	/* return maximum */
 	DOS_SetError(DOSERR_INSUFFICIENT_MEMORY);
@@ -399,7 +404,7 @@ void DOS_BuildUMBChain(bool umb_active, bool ems_active)
 
 		/* A system MCB has to cover the space between the
 		   regular MCB-chain and the UMBs */
-		uint16_t cover_mcb=(uint16_t)(mcb_segment+mcb.GetSize()+1);
+		auto cover_mcb = static_cast<uint16_t>(mcb_segment+mcb.GetSize() + 1);
 		mcb.SetPt(cover_mcb);
 		mcb.SetType(middle_mcb_type);
 		mcb.SetPSPSeg(0x0008);

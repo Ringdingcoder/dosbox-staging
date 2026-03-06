@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2023-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2023-2026 The DOSBox Staging Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "setver.h"
@@ -59,7 +59,7 @@ void SETVER::Run()
 
 	// Make sure no other switches are supplied
 	std::string tmp_str;
-	if (cmd->FindStringBegin("/", tmp_str)) {
+	if (cmd->FindStringBeginCaseSensitive("/", tmp_str)) {
 		tmp_str = std::string("/") + tmp_str;
 		WriteOut(MSG_Get("SHELL_ILLEGAL_SWITCH"), tmp_str.c_str());
 		return;

@@ -158,6 +158,11 @@ msgstr "Latin"
 >
 > Some dedicated `PO` editors use a different name for the `fuzzy` flag in
 > their user interfaces, like _translation status_, _work needed_, etc.
+>
+> Some important messages (command help, config option help, introduction) are
+> displayed in English if the current translation marks the message as `fuzzy`.
+> This is to prevent displaying outdated (very likely no longer correct) help
+> messages if the translation is not up to date.
 
 ### Translatable entries
 
@@ -326,6 +331,22 @@ like `SHELL_CMD_CLS_HELP`.
 Do not exceed 80 characters in a line, or commands like `cls /?` won't be able to
 display the help properly. Also test that the `help /all` command properly extracts
 and displays the shortened command descriptions.
+
+### ANSI colours and the 80-character line limit
+
+Adhering to the 80 character line limit is very hard when using ANSI colour
+tags (e.g., `[color=light-green]COMMAND[reset]`). The web-based ANSI Markup
+Editor tool can make this a lot easier:
+
+https://www.dosbox-staging.org/tools/ansi-editor/
+
+Press the **Help** button and just follow the instructions.
+
+> [!TIP]
+>
+> This is a single-page webapp; if you want to use it offline, just save
+> the page's source to your computer as a `.html` file and open it in any
+> browser.
 
 ### Startup screen strings
 

@@ -234,7 +234,7 @@ void vga_write_p3d5(io_port_t, io_val_t value, io_width_t)
 			                           val;
 		}
 
-		//0-7	Lower 8 bits of the start address of the display buffer.
+		// 0-7	Lower 8 bits of the start address of the display buffer.
 		break;
 
 	case 0x0e: // Cursor Location High Register

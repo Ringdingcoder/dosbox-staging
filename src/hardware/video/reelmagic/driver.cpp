@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2022-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2022-2026 The DOSBox Staging Team
 // SPDX-FileCopyrightText:  2022-2022 Jon Dennis
 // SPDX-License-Identifier: GPL-2.0-or-later
 
@@ -489,7 +489,7 @@ static void EnqueueTopUserCallbackOnCPUResume()
 	UserCallbackCall& ucc = _userCallbackStack.top();
 
 	// snapshot the current state...
-	_preservedUserCallbackStates.push(UserCallbackPreservedState());
+	_preservedUserCallbackStates.emplace(UserCallbackPreservedState());
 
 	// prepare the function call...
 	switch (_userCallbackType) { // AFAIK, _userCallbackType dictates the calling convention...
@@ -508,7 +508,7 @@ static void EnqueueTopUserCallbackOnCPUResume()
 		LOG(LOG_REELMAGIC, LOG_WARN)
 		("Unknown user callback type %04Xh. Defaulting to 0000. This is probably gonna screw something up!",
 		 (unsigned)_userCallbackType);
-		// fall through
+		[[fallthrough]];
 
 	case 0x0000: // The Horde style... shit is passed in registers...
 		reg_bx = ((ucc.command << 8) & 0xFF00) | (ucc.handle & 0xFF);
@@ -1442,14 +1442,18 @@ static void init_reelmagic_config_settings(SectionProp& section)
 
 	auto pstring = section.AddString("reelmagic", WhenIdle, "off");
 	pstring->SetHelp(
-	        "ReelMagic (aka REALmagic) MPEG playback support:\n"
+	        "ReelMagic (aka REALmagic) MPEG playback support ('off' by default).\n"
+	        "Possible values:\n"
+	        "\n"
 	        "  off:       Disable support (default).\n"
 	        "  cardonly:  Initialize the card without loading the FMPDRV.EXE driver.\n"
 	        "  on:        Initialize the card and load the FMPDRV.EXE on startup.");
 
 	pstring = section.AddString("reelmagic_key", WhenIdle, "auto");
 	pstring->SetHelp(
-	        "Set the 32-bit magic key used to decode the game's videos:\n"
+	        "Set the 32-bit magic key used to decode the game's videos ('auto' by default).\n"
+	        "Possible values:\n"
+	        "\n"
 	        "  auto:      Use the built-in routines to determine the key (default).\n"
 	        "  common:    Use the most commonly found key, which is 0x40044041.\n"
 	        "  thehorde:  Use The Horde's key, which is 0xC39D7088.\n"
@@ -1457,8 +1461,11 @@ static void init_reelmagic_config_settings(SectionProp& section)
 
 	auto pint = section.AddInt("reelmagic_fcode", WhenIdle, 0);
 	pint->SetHelp(
-	        "Override the frame rate code used during video playback:\n"
+	        "Override the frame rate code used during video playback (0 by default).\n"
+	        "Possible values:\n"
+	        "\n"
 	        "  0:       No override: attempt automatic rate discovery (default).\n"
+	        "\n"
 	        "  1 to 7:  Override the frame rate to one the following (use 1 through 7):\n"
 	        "           1=23.976, 2=24, 3=25, 4=29.97, 5=30, 6=50, or 7=59.94 FPS.");
 }

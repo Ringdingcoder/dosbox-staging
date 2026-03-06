@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2021-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2021-2026 The DOSBox Staging Team
 // SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
@@ -182,7 +182,7 @@ bool DOS_IOCTL(void) {
 
 					char const* find_ext=strchr(bufin,'.');
 					if (find_ext) {
-						Bitu size=(Bitu)(find_ext-bufin);
+						auto size=(Bitu)(find_ext-bufin);
 						if (size>8) size=8;
 						memcpy(buffer,bufin,size);
 						find_ext++;

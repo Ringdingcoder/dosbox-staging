@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2023-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2023-2026 The DOSBox Staging Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "png_writer.h"
@@ -25,7 +25,7 @@ PngWriter::~PngWriter()
 	png_info_ptr = nullptr;
 }
 
-bool PngWriter::InitRgb888(FILE* fp, const uint16_t width, const uint16_t height,
+bool PngWriter::InitRgb888(FILE* fp, const int width, const int height,
                            const Fraction& pixel_aspect_ratio,
                            const VideoMode& video_mode)
 {
@@ -33,22 +33,22 @@ bool PngWriter::InitRgb888(FILE* fp, const uint16_t width, const uint16_t height
 		return false;
 	}
 
-	constexpr auto is_paletted  = false;
-	constexpr auto palette_data = nullptr;
-	WritePngInfo(width, height, pixel_aspect_ratio, video_mode, is_paletted, palette_data);
+	constexpr auto IsPaletted = false;
+	WritePngInfo(width, height, pixel_aspect_ratio, video_mode, IsPaletted, {});
 	return true;
 }
 
-bool PngWriter::InitIndexed8(FILE* fp, const uint16_t width, const uint16_t height,
+bool PngWriter::InitIndexed8(FILE* fp, const int width, const int height,
                              const Fraction& pixel_aspect_ratio,
-                             const VideoMode& video_mode, const uint8_t* palette_data)
+                             const VideoMode& video_mode,
+                             const std::array<Rgb888, NumVgaColors>& palette)
 {
 	if (!Init(fp)) {
 		return false;
 	}
 
-	constexpr auto is_paletted = true;
-	WritePngInfo(width, height, pixel_aspect_ratio, video_mode, is_paletted, palette_data);
+	constexpr auto IsPaletted = true;
+	WritePngInfo(width, height, pixel_aspect_ratio, video_mode, IsPaletted, palette);
 	return true;
 }
 
@@ -115,37 +115,38 @@ void PngWriter::SetPngCompressionsParams()
 	png_set_compression_method(png_ptr, Z_DEFLATED);
 }
 
-void PngWriter::WritePngInfo(const uint16_t width, const uint16_t height,
+void PngWriter::WritePngInfo(const int width, const int height,
                              const Fraction& pixel_aspect_ratio,
-                             const VideoMode& video_mode,
-                             const bool is_paletted, const uint8_t* palette_data)
+                             const VideoMode& video_mode, const bool is_paletted,
+                             const std::array<Rgb888, NumVgaColors>& palette)
 {
 	assert(png_ptr);
 	assert(png_info_ptr);
 
-	constexpr auto png_bit_depth = 8;
-	const auto png_color_type    = is_paletted ? PNG_COLOR_TYPE_PALETTE
-	                                           : PNG_COLOR_TYPE_RGB;
+	constexpr auto PngBitDepth = 8;
+	const auto png_color_type  = is_paletted ? PNG_COLOR_TYPE_PALETTE
+	                                         : PNG_COLOR_TYPE_RGB;
 	png_set_IHDR(png_ptr,
 	             png_info_ptr,
-	             width,
-	             height,
-	             png_bit_depth,
+	             check_cast<uint16_t>(width),
+	             check_cast<uint16_t>(height),
+	             PngBitDepth,
 	             png_color_type,
 	             PNG_INTERLACE_NONE,
 	             PNG_COMPRESSION_TYPE_DEFAULT,
 	             PNG_FILTER_TYPE_DEFAULT);
 
 	if (is_paletted) {
-		constexpr auto NumPaletteEntries     = 256;
-		png_color palette[NumPaletteEntries] = {};
+		constexpr auto NumPaletteEntries = NumVgaColors;
+
+		png_color palette_data[NumPaletteEntries] = {};
 
 		for (auto i = 0; i < NumPaletteEntries; ++i) {
-			palette[i].red   = palette_data[i * 4 + 0];
-			palette[i].green = palette_data[i * 4 + 1];
-			palette[i].blue  = palette_data[i * 4 + 2];
+			palette_data[i].red   = palette[i].red;
+			palette_data[i].green = palette[i].green;
+			palette_data[i].blue  = palette[i].blue;
 		}
-		png_set_PLTE(png_ptr, png_info_ptr, palette, NumPaletteEntries);
+		png_set_PLTE(png_ptr, png_info_ptr, palette_data, NumPaletteEntries);
 	}
 
 #ifdef PNG_gAMA_SUPPORTED
@@ -170,10 +171,10 @@ void PngWriter::WritePngInfo(const uint16_t width, const uint16_t height,
 	//   Portable Network Graphics (PNG) Specification (Second Edition)
 	//   https://www.w3.org/TR/2003/REC-PNG-20031110/#11pHYs)
 	//
-	const uint32_t pixels_per_unit_x = static_cast<uint32_t>(
+	const auto pixels_per_unit_x = static_cast<uint32_t>(
 	        pixel_aspect_ratio.Num());
 
-	const uint32_t pixels_per_unit_y = static_cast<uint32_t>(
+	const auto pixels_per_unit_y = static_cast<uint32_t>(
 	        pixel_aspect_ratio.Denom());
 
 	// "When the unit specifier is 0, the pHYs chunk defines pixel aspect
@@ -225,7 +226,7 @@ void PngWriter::WritePngInfo(const uint16_t width, const uint16_t height,
 void PngWriter::WriteRow(std::vector<uint8_t>::const_iterator row)
 {
 	assert(png_ptr);
-	png_write_row(png_ptr, const_cast<png_bytep>(&*row));
+	png_write_row(png_ptr, const_cast<png_bytep>(std::to_address(row)));
 }
 
 void PngWriter::FinalisePng()

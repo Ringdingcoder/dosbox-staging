@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
+// SPDX-FileCopyrightText:  2020-2026 The DOSBox Staging Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "vga.h"
@@ -8,6 +9,7 @@
 #include <string>
 #include <utility>
 
+#include "config/setup.h"
 #include "gui/common.h"
 #include "hardware/pic.h"
 #include "ints/int10.h"
@@ -291,9 +293,6 @@ void VGA_SetCGA4Table(uint8_t val0,uint8_t val1,uint8_t val2,uint8_t val3) {
 
 void VGA_AllowVgaScanDoubling(const bool allow)
 {
-	if (!is_machine_vga_or_better()) {
-		return;
-	}
 	if (allow && !vga.draw.scan_doubling_allowed) {
 		LOG_MSG("VGA: Double scanning VGA video modes enabled");
 	}
@@ -317,6 +316,10 @@ void VGA_AllowPixelDoubling(const bool allow)
 void VGA_Init()
 {
 	vga.draw.resizing = false;
+
+	const auto section = get_section("dosbox");
+	assert(section);
+	vga.draw.vga_render_per_scanline = section->GetBool("vga_render_per_scanline");
 
 	// For first init
 	vga.mode = M_ERROR;
@@ -404,7 +407,7 @@ void SVGA_Setup_Driver(void)
 	}
 }
 
-const VideoMode& VGA_GetCurrentVideoMode()
+VideoMode VGA_GetCurrentVideoMode()
 {
 	// This function is only 100% safe to call from *outside* of the VGA
 	// code! Outside of the VGA and video BIOS related code, this function

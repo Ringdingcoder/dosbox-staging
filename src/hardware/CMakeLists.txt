@@ -39,8 +39,6 @@ target_sources(libdosboxcommon PRIVATE
   network/ipxserver.cpp
   network/ne2000.cpp
 
-  serialport/directserial.cpp
-  serialport/libserial.cpp
   serialport/misc_util.cpp
   serialport/nullmodem.cpp
   serialport/serialdummy.cpp
@@ -89,6 +87,5 @@ target_link_libraries(libdosboxcommon PRIVATE
   $<IF:$<BOOL:${C_MANYMOUSE}>,libmanymouse,>
   libnuked
   PkgConfig::SPEEXDSP
-  $<IF:$<TARGET_EXISTS:SDL2_net::SDL2_net>,SDL2_net::SDL2_net,SDL2_net::SDL2_net-static>
 )
 

@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2019-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2019-2026 The DOSBox Staging Team
 // SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
@@ -27,6 +27,45 @@
 // Set by parseconfigfile so PropPath can use it to construct the realpath
 std_fs::path current_config_dir;
 
+static void write_property(const Property& prop, FILE* outfile)
+{
+	auto help_text = prop.GetHelpRaw();
+
+	// Percentage signs are encoded as '%%' in the config descriptions
+	// because they are sent through printf-like functions (e.g.,
+	// WriteOut()). So we need to de-escape them before writing them into
+	// the config.
+	help_text = format_str(help_text);
+
+	auto lines = split_with_empties(help_text, '\n');
+
+	// Write help text
+	for (auto& line : lines) {
+		if (line.empty()) {
+			fprintf(outfile, "#\n");
+		} else {
+			fprintf(outfile, "# %s\n", line.c_str());
+		}
+	}
+
+	fprintf(outfile, "#\n");
+
+	// Write 'setting = value' pair
+	fprintf(outfile,
+	        "%s = %s\n\n",
+	        prop.propname.c_str(),
+	        prop.GetValue().ToString().c_str());
+}
+
+static void write_section(SectionProp& sec, FILE* outfile)
+{
+	for (size_t i = 0; const auto prop = sec.GetProperty(i); ++i) {
+		if (!prop->IsDeprecated()) {
+			write_property(*prop, outfile);
+		}
+	}
+}
+
 bool Config::WriteConfig(const std_fs::path& path) const
 {
 	char temp[50];
@@ -41,98 +80,16 @@ bool Config::WriteConfig(const std_fs::path& path) const
 	fprintf(outfile, MSG_GetTranslatedRaw("CONFIGFILE_INTRO").c_str(), DOSBOX_VERSION);
 	fprintf(outfile, "\n");
 
-	for (auto tel = sections.cbegin(); tel != sections.cend(); ++tel) {
+	for (auto section = sections.cbegin(); section != sections.cend(); ++section) {
 		// Print section header
-		safe_strcpy(temp, (*tel)->GetName());
+		safe_strcpy(temp, (*section)->GetName());
 		lowcase(temp);
-		fprintf(outfile, "[%s]\n", temp);
+		fprintf(outfile, "[%s]\n\n", temp);
 
-		SectionProp* sec = dynamic_cast<SectionProp*>(*tel);
+		auto sec = dynamic_cast<SectionProp*>(*section);
 		if (sec) {
-			Property* p;
-			int i = 0;
+			write_section(*sec, outfile);
 
-			size_t maxwidth = 0;
-
-			while ((p = sec->GetProperty(i++))) {
-				maxwidth = std::max(maxwidth, p->propname.length());
-			}
-
-			i = 0;
-
-			char prefix[80];
-			int intmaxwidth = std::min<int>(60, check_cast<int>(maxwidth));
-			safe_sprintf(prefix, "\n# %*s  ", intmaxwidth, "");
-
-			while ((p = sec->GetProperty(i++))) {
-				if (p->IsDeprecated()) {
-					continue;
-				}
-
-				auto help = p->GetHelpRaw();
-
-				std::string::size_type pos = std::string::npos;
-
-				while ((pos = help.find('\n', pos + 1)) !=
-				       std::string::npos) {
-					help.replace(pos, 1, prefix);
-				}
-
-				// Percentage signs are encoded as '%%' in the
-				// config descriptions because they are sent
-				// through printf-like functions (e.g.,
-				// WriteOut()). So we need to de-escape them
-				// before writing them into the config.
-				auto s = format_str(help);
-
-				fprintf(outfile,
-				        "# %*s: %s",
-				        intmaxwidth,
-				        p->propname.c_str(),
-				        s.c_str());
-
-				auto print_values = [&](const char* values_msg_key,
-				                        const std::vector<Value>& values) {
-					if (values.empty()) {
-						return;
-					}
-					fprintf(outfile,
-					        "%s%s:",
-					        prefix,
-					        MSG_GetTranslatedRaw(values_msg_key)
-					                .c_str());
-
-					std::vector<Value>::const_iterator it =
-					        values.begin();
-
-					while (it != values.end()) {
-						if ((*it).ToString() != "%u") {
-							// Hack hack hack. else
-							// we need to modify
-							// GetValues, but that
-							// one is const...
-							if (it != values.begin()) {
-								fputs(",", outfile);
-							}
-
-							fprintf(outfile,
-							        " %s",
-							        (*it).ToString().c_str());
-						}
-						++it;
-					}
-					fprintf(outfile, ".");
-				};
-
-				print_values("PROGRAM_CONFIG_VALID_VALUES",
-				             p->GetValues());
-
-				print_values("PROGRAM_CONFIG_DEPRECATED_VALUES",
-				             p->GetDeprecatedValues());
-
-				fprintf(outfile, "\n");
-				fprintf(outfile, "#\n");
-			}
 		} else {
 			upcase(temp);
 			strcat(temp, "_CONFIGFILE_HELP");
@@ -160,10 +117,11 @@ bool Config::WriteConfig(const std_fs::path& path) const
 			}
 		}
 
-		fprintf(outfile, "\n");
-		(*tel)->PrintData(outfile);
+		// This will effectively only print the autoexec section
+		// TODO Do this in a nicer way and get rid of PrintData()
+		// altogether.
+		(*section)->PrintData(outfile);
 
-		// Always add empty line between sections
 		fprintf(outfile, "\n");
 	}
 
@@ -176,15 +134,15 @@ SectionProp* Config::AddSection(const char* section_name)
 	assertm(std::regex_match(section_name, std::regex{"[a-zA-Z0-9]+"}),
 	        "Only letters and digits are allowed in section name");
 
-	SectionProp* s = new SectionProp(section_name);
+	auto section_prop = new SectionProp(section_name);
 
-	sections.push_back(s);
-	return s;
+	sections.push_back(section_prop);
+	return section_prop;
 }
 
-SectionLine* Config::AddAutoexecSection()
+AutoExecSection* Config::AddAutoexecSection()
 {
-	SectionLine* section = new SectionLine("autoexec");
+	auto section = new AutoExecSection("autoexec");
 	sections.push_back(section);
 
 	return section;
@@ -262,7 +220,7 @@ void Config::OverwriteAutoexec(const std::string& conf, const std::string& line)
 		overwritten_autoexec_conf = conf;
 		overwritten_autoexec_section.data.clear();
 	}
-	overwritten_autoexec_section.HandleInputline(line);
+	overwritten_autoexec_section.HandleInputLine(line);
 }
 
 const std::string& Config::GetOverwrittenAutoexecConf() const
@@ -270,7 +228,7 @@ const std::string& Config::GetOverwrittenAutoexecConf() const
 	return overwritten_autoexec_conf;
 }
 
-const SectionLine& Config::GetOverwrittenAutoexecSection() const
+const AutoExecSection& Config::GetOverwrittenAutoexecSection() const
 {
 	return overwritten_autoexec_section;
 }
@@ -338,7 +296,7 @@ bool Config::ParseConfigFile(const std::string& type,
 		}
 
 		if (!is_comment(line)) {
-			current_section->HandleInputline(line);
+			current_section->HandleInputLine(line);
 			OverwriteAutoexec(config_file_name, line);
 		}
 	};
@@ -375,7 +333,7 @@ bool Config::ParseConfigFile(const std::string& type,
 				is_autoexec_section = (section_name == "autoexec");
 			}
 		} else if (current_section) {
-			current_section->HandleInputline(line);
+			current_section->HandleInputLine(line);
 		}
 	}
 
@@ -507,108 +465,121 @@ void Config::ParseConfigFiles(const std_fs::path& config_dir)
 	MSG_LoadMessages();
 }
 
-std::string Config::SetProperty(std::vector<std::string>& pvars)
+std::string Config::SetPropertyFromCli(std::vector<std::string>& parameters)
 {
 	// Attempt to split off the first word
-	std::string::size_type spcpos = pvars[0].find_first_of(' ');
-	std::string::size_type equpos = pvars[0].find_first_of('=');
+	const auto space_pos  = parameters[0].find_first_of(' ');
+	const auto equals_pos = parameters[0].find_first_of('=');
 
-	if ((equpos != std::string::npos) &&
-	    ((spcpos == std::string::npos) || (equpos < spcpos))) {
+	const auto space_found  = (space_pos != std::string::npos);
+	const auto equals_found = (equals_pos != std::string::npos);
 
-		// If we have a '=' possibly before a ' ' split on the =
-		pvars.emplace(pvars.begin() + 1, pvars[0].substr(equpos + 1));
-		pvars[0].erase(equpos);
+	if ((equals_found && !space_found) || (equals_pos < space_pos)) {
 
-		// As we had a = the first thing must be a property now
-		Section* sec = GetSectionFromProperty(pvars[0].c_str());
+		// If we have a '=' possibly before a space, split on the '='
+		parameters.emplace(parameters.begin() + 1,
+		                   parameters[0].substr(equals_pos + 1));
+
+		parameters[0].erase(equals_pos);
+
+		// As we had a '=', the first thing must be a property now
+		const auto sec = GetSectionFromProperty(parameters[0].c_str());
 
 		if (sec) {
-			pvars.emplace(pvars.begin(), std::string(sec->GetName()));
+			parameters.emplace(parameters.begin(),
+			                   std::string(sec->GetName()));
 		} else {
 			return format_str(MSG_Get("PROGRAM_CONFIG_SECTION_OR_SETTING_NOT_FOUND"),
-			                  pvars[0].c_str());
+			                  parameters[0].c_str());
 		}
 		// Order in the vector should be ok now
 
 	} else {
-		if ((spcpos != std::string::npos) &&
-		    ((equpos == std::string::npos) || (spcpos < equpos))) {
+		if ((space_found && !equals_found) || (space_pos < equals_pos)) {
 
-			// ' ' before a possible '=', split on the ' '
-			pvars.emplace(pvars.begin() + 1,
-			              pvars[0].substr(spcpos + 1));
-			pvars[0].erase(spcpos);
+			// Space before a possible '=', split on the ' '
+			parameters.emplace(parameters.begin() + 1,
+			                   parameters[0].substr(space_pos + 1));
+
+			parameters[0].erase(space_pos);
 		}
 
 		// Check if the first parameter is a section or property
-		Section* sec = GetSection(pvars[0]);
+		const auto sec = GetSection(parameters[0]);
 
 		if (!sec) {
-			// Not a section: little duplicate from above
-			Section* secprop = GetSectionFromProperty(pvars[0].c_str());
+			// Not a section; little duplicate from above
+			const auto secprop = GetSectionFromProperty(
+			        parameters[0].c_str());
 
 			if (secprop) {
-				pvars.emplace(pvars.begin(),
-				              std::string(secprop->GetName()));
+				parameters.emplace(parameters.begin(),
+				                   std::string(secprop->GetName()));
 			} else {
 				return format_str(MSG_Get("PROGRAM_CONFIG_SECTION_OR_SETTING_NOT_FOUND"),
-				                  pvars[0].c_str());
+				                  parameters[0].c_str());
 			}
 		} else {
-			// First of pvars is most likely a section, but could
-			// still be gus have a look at the second parameter
-			if (pvars.size() < 2) {
+			// First of parameters is most likely a section, but
+			// could still be gus have a look at the second
+			// parameter
+			if (parameters.size() < 2) {
 				return MSG_Get("PROGRAM_CONFIG_SET_SYNTAX");
 			}
 
-			std::string::size_type spcpos2 = pvars[1].find_first_of(' ');
-			std::string::size_type equpos2 = pvars[1].find_first_of('=');
+			const auto space_pos2 = parameters[1].find_first_of(' ');
+			const auto equals_pos2 = parameters[1].find_first_of('=');
 
-			if ((equpos2 != std::string::npos) &&
-			    ((spcpos2 == std::string::npos) || (equpos2 < spcpos2))) {
-				// Split on the =
-				pvars.emplace(pvars.begin() + 2,
-				              pvars[1].substr(equpos2 + 1));
+			const auto space_found2 = (space_pos2 != std::string::npos);
+			const auto equals_found2 = (equals_pos2 != std::string::npos);
 
-				pvars[1].erase(equpos2);
+			if ((equals_found2 && !space_found2) ||
+			    (equals_pos2 < space_pos2)) {
+				// Split on the '='
+				parameters.emplace(parameters.begin() + 2,
+				                   parameters[1].substr(
+				                           equals_pos2 + 1));
 
-			} else if ((spcpos2 != std::string::npos) &&
-			           ((equpos2 == std::string::npos) ||
-			            (spcpos2 < equpos2))) {
-				// Split on the ' '
-				pvars.emplace(pvars.begin() + 2,
-				              pvars[1].substr(spcpos2 + 1));
+				parameters[1].erase(equals_pos2);
 
-				pvars[1].erase(spcpos2);
+			} else if ((space_found2 && !equals_found2) ||
+			           (space_pos2 < equals_pos2)) {
+				// Split on the space
+				parameters.emplace(parameters.begin() + 2,
+				                   parameters[1].substr(
+				                           space_pos2 + 1));
+
+				parameters[1].erase(space_pos2);
 			}
 
 			// Is this a property?
-			Section* sec2 = GetSectionFromProperty(pvars[1].c_str());
+			const auto sec2 = GetSectionFromProperty(
+			        parameters[1].c_str());
 
 			if (!sec2) {
 				// Not a property
-				Section* sec3 = GetSectionFromProperty(
-				        pvars[0].c_str());
+				const auto sec3 = GetSectionFromProperty(
+				        parameters[0].c_str());
 				if (sec3) {
 					// Section and property name are identical
-					pvars.emplace(pvars.begin(), pvars[0]);
+					parameters.emplace(parameters.begin(),
+					                   parameters[0]);
 				}
-				// else has been checked above already
+				// Else has been checked above already
 			}
 		}
 	}
 
-	if (pvars.size() < 3) {
+	if (parameters.size() < 3) {
 		return MSG_Get("PROGRAM_CONFIG_SET_SYNTAX");
 	}
 
 	// Check if the property actually exists in the section
-	const auto sec2 = GetSectionFromProperty(pvars[1].c_str());
+	const auto sec2 = GetSectionFromProperty(parameters[1].c_str());
 	if (!sec2) {
 		return format_str(MSG_Get("PROGRAM_CONFIG_NO_PROPERTY"),
-		                  pvars[1].c_str(),
-		                  pvars[0].c_str());
+		                  parameters[1].c_str(),
+		                  parameters[0].c_str());
 	}
 
 	return "";
@@ -623,7 +594,7 @@ void Config::ParseArguments()
 	arguments.list_countries = cmdline->FindRemoveBoolArgument("list-countries");
 	arguments.list_layouts = cmdline->FindRemoveBoolArgument("list-layouts");
 	arguments.list_code_pages = cmdline->FindRemoveBoolArgument("list-code-pages");
-	arguments.list_glshaders = cmdline->FindRemoveBoolArgument("list-glshaders");
+	arguments.list_shaders = cmdline->FindRemoveBoolArgument("list-shaders");
 	arguments.noconsole   = cmdline->FindRemoveBoolArgument("noconsole");
 	arguments.startmapper = cmdline->FindRemoveBoolArgument("startmapper");
 	arguments.exit        = cmdline->FindRemoveBoolArgument("exit");
@@ -635,7 +606,7 @@ void Config::ParseArguments()
 	arguments.erasemapper = cmdline->FindRemoveBoolArgument("erasemapper") ||
 	                        cmdline->FindRemoveBoolArgument("resetmapper");
 
-	arguments.version = cmdline->FindRemoveBoolArgument("version", 'v');
+	arguments.version = cmdline->FindRemoveBoolArgument("version", 'V');
 	arguments.help    = (cmdline->FindRemoveBoolArgument("help", 'h') ||
                           cmdline->FindRemoveBoolArgument("help", '?'));
 

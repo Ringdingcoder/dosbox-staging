@@ -10,6 +10,7 @@
 
 #include "utils/checks.h"
 #include "dosbox.h"
+#include "utils/env_utils.h"
 #include "utils/fs_utils.h"
 #include "misc/std_filesystem.h"
 #include "utils/string_utils.h"
@@ -785,17 +786,11 @@ static std::vector<std::string> get_command_output(const std::string& command)
 	return result;
 }
 
-static std::string get_env_variable(const std::string& variable)
-{
-	const auto result = getenv(variable.c_str());
-	return result ? result : "";
-}
-
 static std::pair<std::string, std::string> get_env_variable_from_list(
         const std::vector<std::string>& list)
 {
 	for (const auto& variable : list) {
-		const auto value = get_env_variable(variable);
+		const auto value = get_env_var(variable);
 		if (!value.empty()) {
 			return {variable, value};
 		}
@@ -816,7 +811,7 @@ static bool is_xdg_desktop_session(const XdgDesktopSession session)
 	// New mechanism to detect desktop environment, it seems it isn't
 	// universally available yet (mid 2024)
 	auto get_xdg_current_desktop = []() {
-		auto variable = get_env_variable(XdgCurrentDesktop);
+		auto variable = get_env_var(XdgCurrentDesktop);
 		upcase(variable);
 		const auto tmp = split(variable, ":");
 		return std::set<std::string>(tmp.begin(), tmp.end());
@@ -824,7 +819,7 @@ static bool is_xdg_desktop_session(const XdgDesktopSession session)
 
 	// Older mechanism to detect desktop environment
 	auto get_xdg_session_desktop = []() {
-		auto variable = get_env_variable(XdgSessionDesktop);
+		auto variable = get_env_var(XdgSessionDesktop);
 		upcase(variable);
 		return variable;
 	};
@@ -873,39 +868,6 @@ struct DesktopKeyboardLayouts {
 	std::vector<DesktopKeyboardLayoutEntry> list = {};
 };
 
-static bool is_language_generic(const std::string& language)
-{
-	return iequals(language, "C") || iequals(language, "POSIX");
-}
-
-// Split locale string into language and territory, drop the rest
-static std::pair<std::string, std::string> split_posix_locale(const std::string& value)
-{
-	// Format: language[_TERRITORY][.codeset][@modifier]
-	std::string tmp = value;
-
-	// Strip the modifier and the codeset
-	tmp = tmp.substr(0, tmp.rfind('@'));
-	tmp = tmp.substr(0, tmp.rfind('.'));
-
-	std::pair<std::string, std::string> result = {};
-
-	// Get the language
-	result.first = tmp.substr(0, tmp.find('_'));
-	trim(result.first);
-	lowcase(result.first);
-
-	const auto position = tmp.rfind('_');
-	if (position != std::string::npos) {
-		// Get the territory
-		result.second = tmp.substr(position + 1);
-		trim(result.second);
-		upcase(result.second);
-	}
-
-	return result;
-}
-
 static HostLocaleElement get_dos_country(const std::string& category)
 {
 	HostLocaleElement result = {};
@@ -918,12 +880,13 @@ static HostLocaleElement get_dos_country(const std::string& category)
 	}
 	result.log_info = variable + "=" + value;
 
-	const auto [language, teritory] = split_posix_locale(value);
-	if (is_language_generic(language)) {
+	const auto country_code = LanguageTerritory(value).GetDosCountryCode();
+	if (!country_code) {
+		// Country not recognized
 		return {};
 	}
 
-	result.country_code = iso_to_dos_country(language, teritory);
+	result.country_code = country_code;
 	return result;
 }
 
@@ -931,27 +894,27 @@ static HostLanguages get_host_languages()
 {
 	HostLanguages result = {};
 
-	auto get_language_files = [](const std::string& input) {
-		const auto [language, teritory] = split_posix_locale(input);
-		return iso_to_language_files(language, teritory);
+	auto try_add_gui_language = [&](const std::string& input) {
+		const auto language = LanguageTerritory(input);
+		if (!language.IsEmpty()) {
+			result.gui_languages.push_back(language);
+		}
 	};
 
 	// First try the LANGUAGE variable, according to specification:
 	// https://www.gnu.org/software/gettext/manual/html_node/The-LANGUAGE-variable.html
-	const auto values = get_env_variable(VariableLanguage);
+	const auto values = get_env_var(VariableLanguage);
 	if (!values.empty()) {
 		result.log_info = VariableLanguage + "=" + values;
 		for (const auto& entry : split(values, ":")) {
-			const auto files = get_language_files(entry);
-			result.language_files.insert(result.language_files.end(),
-			                             files.begin(),
-			                             files.end());
+			try_add_gui_language(entry);
 		}
+
 		return result;
 	}
 
-	// If variable is not present, try the others - they store at most one
-	// value
+	// If LANGUAGE variable is not present, try the others; they are easier
+	// to parse, they store at most one value
 	const std::vector<std::string> Variables = {
 	        LcAll,
 	        LcMessages,
@@ -964,7 +927,7 @@ static HostLanguages get_host_languages()
 	}
 	result.log_info = variable + "=" + value;
 
-	result.language_files_gui = get_language_files(value);
+	try_add_gui_language(value);
 	return result;
 }
 
@@ -1050,7 +1013,7 @@ static DesktopKeyboardLayouts get_keyboard_layouts_kde()
 
 static DesktopKeyboardLayouts get_keyboard_layouts_wayfire()
 {
-	auto config_file = get_env_variable(WayfireConfigFile);
+	auto config_file = get_env_var(WayfireConfigFile);
 	if (config_file.empty()) {
 		// I have seen the Raspberry Pi OS sometimes does not populate
 		// the config file location to the environment variable; in such
@@ -1058,7 +1021,7 @@ static DesktopKeyboardLayouts get_keyboard_layouts_wayfire()
 		config_file = (get_xdg_config_home() / "wayfire.ini").string();
 	}
 
-	return get_keyboard_layouts_ini(get_env_variable(WayfireConfigFile),
+	return get_keyboard_layouts_ini(get_env_var(WayfireConfigFile),
 	                                "[input]",
 	                                "xkb_model",
 	                                "xkb_layout",

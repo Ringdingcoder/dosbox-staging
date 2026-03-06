@@ -39,8 +39,6 @@ libhardware_sources = files(
     'network/ipxserver.cpp',
     'network/ne2000.cpp',
 
-    'serialport/directserial.cpp',
-    'serialport/libserial.cpp',
     'serialport/misc_util.cpp',
     'serialport/nullmodem.cpp',
     'serialport/serialdummy.cpp',
@@ -85,7 +83,6 @@ libhardware = static_library(
     libhardware_sources,
     include_directories: incdir,
     dependencies: [
-        ghc_dep,
         libesfmu_dep,
         libiir_dep,
         libloguru_dep,
@@ -95,10 +92,9 @@ libhardware = static_library(
         libym7128bemu_dep,
         libzmbv_dep,
         png_dep,
+        asio_dep,
         sdl2_dep,
-        sdl2_net_dep,
         speexdsp_dep,
-        tracy_dep,
         winsock2_dep,
     ],
     cpp_args: warnings,

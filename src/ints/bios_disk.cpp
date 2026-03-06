@@ -16,20 +16,21 @@
 #include "utils/string_utils.h"
 
 diskGeo DiskGeometryList[] = {
-	{ 160,  8, 1, 40, 0},	// SS/DD 5.25"
-	{ 180,  9, 1, 40, 0},	// SS/DD 5.25"
-	{ 200, 10, 1, 40, 0},	// SS/DD 5.25" (booters)
-	{ 320,  8, 2, 40, 1},	// DS/DD 5.25"
-	{ 360,  9, 2, 40, 1},	// DS/DD 5.25"
-	{ 400, 10, 2, 40, 1},	// DS/DD 5.25" (booters)
-	{ 720,  9, 2, 80, 3},	// DS/DD 3.5"
-	{1200, 15, 2, 80, 2},	// DS/HD 5.25"
-	{1440, 18, 2, 80, 4},	// DS/HD 3.5"
-	{1520, 19, 2, 80, 2},	// DS/HD 5.25" (XDF)
-	{1680, 21, 2, 80, 4},	// DS/HD 3.5"  (DMF)
-	{1840, 23, 2, 80, 4},	// DS/HD 3.5"  (XDF)
-	{2880, 36, 2, 80, 6},	// DS/ED 3.5"
-	{0, 0, 0, 0, 0}
+        { 160,  8, 1, 40, 0}, // SS/DD 5.25"
+        { 180,  9, 1, 40, 0}, // SS/DD 5.25"
+        { 200, 10, 1, 40, 0}, // SS/DD 5.25" (booters)
+        { 320,  8, 2, 40, 1}, // DS/DD 5.25"
+        { 360,  9, 2, 40, 1}, // DS/DD 5.25"
+        { 400, 10, 2, 40, 1}, // DS/DD 5.25" (booters)
+        { 720,  9, 2, 80, 3}, // DS/DD 3.5"
+        {1200, 15, 2, 80, 2}, // DS/HD 5.25"
+        {1440, 18, 2, 80, 4}, // DS/HD 3.5"
+        {1520, 19, 2, 80, 2}, // DS/HD 5.25" (XDF)
+        {1680, 21, 2, 80, 4}, // DS/HD 3.5"  (DMF)
+        {1720, 21, 2, 82, 4}, // DS/HD 3.5"  (DMF)
+        {1840, 23, 2, 80, 4}, // DS/HD 3.5"  (XDF)
+        {2880, 36, 2, 80, 6}, // DS/ED 3.5"
+        {   0,  0, 0,  0, 0}
 };
 
 callback_number_t call_int13 = 0;
@@ -160,8 +161,16 @@ uint8_t imageDisk::Read_AbsoluteSector(uint32_t sectnum, void *data)
 			return 0xff;
 		}
 	}
-	size_t ret = fread(data, 1, sector_size, diskimg);
-	current_fpos=bytenum+ret;
+
+	// Only perform delay if we booted from a disk image
+	// Otherwise this would result in delay duplication in the int21 handler
+	if (DOS_IsGuestOsBooted()) {
+		DiskType type = hardDrive ? DiskType::HardDisk : DiskType::Floppy;
+		DOS_PerformDiskIoDelay(sector_size, type);
+	}
+
+	size_t ret   = fread(data, 1, sector_size, diskimg);
+	current_fpos = bytenum + ret;
 	last_action=READ;
 
 	return 0x00;
@@ -190,8 +199,16 @@ uint8_t imageDisk::Write_AbsoluteSector(uint32_t sectnum, void *data) {
 			return 0xff;
 		}
 	}
-	size_t ret = fwrite(data, 1, sector_size, diskimg);
-	current_fpos=bytenum+ret;
+
+	// Only perform delay if we booted from a disk image
+	// Otherwise this would result in delay duplication in the int21 handler
+	if (DOS_IsGuestOsBooted()) {
+		DiskType type = hardDrive ? DiskType::HardDisk : DiskType::Floppy;
+		DOS_PerformDiskIoDelay(sector_size, type);
+	}
+
+	size_t ret   = fwrite(data, 1, sector_size, diskimg);
+	current_fpos = bytenum + ret;
 	last_action=WRITE;
 
 	return ((ret>0)?0x00:0x05);
@@ -403,7 +420,7 @@ static Bitu INT13_DiskHandler(void) {
 		bufptr = reg_bx;
 		for (Bitu i = 0; i < reg_al; i++) {
 			last_status = imageDiskList[drivenum]->Read_Sector((uint32_t)reg_dh, (uint32_t)(reg_ch | ((reg_cl & 0xc0)<< 2)), (uint32_t)((reg_cl & 63)+i), sectbuf);
-			if((last_status != 0x00) || (killRead)) {
+			if((last_status != 0x00) || killRead) {
 				LOG_MSG("Error in disk read");
 				killRead = false;
 				reg_ah = 0x04;
@@ -536,7 +553,7 @@ static Bitu INT13_DiskHandler(void) {
 			largesize *= tmpcyl;
 			largesize *= tmpsect;
 			largesize *= tmpsize;
-			const uint32_t ts = static_cast<uint32_t>(largesize / 512);
+			const auto ts = static_cast<uint32_t>(largesize / 512);
 
 			reg_ah = (drivenum <2)?1:3; //With 2 for floppy MSDOS starts calling int 13 ah 16
 			if(reg_ah == 3) {

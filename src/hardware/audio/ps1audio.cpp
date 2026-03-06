@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2021-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2021-2026 The DOSBox Staging Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "private/ps1audio.h"
@@ -245,7 +245,7 @@ void Ps1Dac::WriteTimingPort203(io_port_t, io_val_t value, io_width_t)
 	adder = (data_rate_hz << FracShift) / sample_rate_hz;
 
 	regs.status = CalcStatus();
-	if ((regs.status & FifoNearlyEmptyFlag) && (can_trigger_irq)) {
+	if ((regs.status & FifoNearlyEmptyFlag) && can_trigger_irq) {
 		// Generate request for stuff.
 		regs.status |= FifoIrqFlag;
 		can_trigger_irq = false;
@@ -309,7 +309,7 @@ void Ps1Dac::PicCallback(const int frames_requested)
 		regs.status = CalcStatus();
 		pending     = static_cast<int32_t>(bytes_pending);
 		add         = adder;
-		if ((regs.status & FifoNearlyEmptyFlag) && (can_trigger_irq)) {
+		if ((regs.status & FifoNearlyEmptyFlag) && can_trigger_irq) {
 			// More bytes needed.
 			regs.status |= FifoIrqFlag;
 			can_trigger_irq = false;
@@ -578,14 +578,16 @@ static void init_ps1audio_settings(SectionProp& section)
 
 	auto pstring = section.AddString("ps1audio_filter", WhenIdle, "on");
 	pstring->SetHelp(
-	        "Filter for the PS/1 Audio synth output:\n"
+	        "Filter for the PS/1 Audio synth output ('on' by default). Possible values:\n"
+	        "\n"
 	        "  on:        Filter the output (default).\n"
 	        "  off:       Don't filter the output.\n"
 	        "  <custom>:  Custom filter definition; see 'sb_filter' for details.");
 
 	pstring = section.AddString("ps1audio_dac_filter", WhenIdle, "on");
 	pstring->SetHelp(
-	        "Filter for the PS/1 Audio DAC output:\n"
+	        "Filter for the PS/1 Audio DAC output ('on' by default). Possible values:\n"
+	        "\n"
 	        "  on:        Filter the output (default).\n"
 	        "  off:       Don't filter the output.\n"
 	        "  <custom>:  Custom filter definition; see 'sb_filter' for details.");

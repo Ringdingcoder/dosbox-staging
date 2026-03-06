@@ -1,4 +1,5 @@
 libgui_sources = files(
+    'auto_image_adjustments.cpp',
     'clipboard.cpp',
     'mapper.cpp',
     'mapper.cpp',
@@ -6,6 +7,7 @@ libgui_sources = files(
     'shader_manager.cpp',
     'titlebar.cpp',
 
+    'render/deinterlacer.cpp',
     'render/opengl_renderer.cpp',
     'render/render.cpp',
     'render/scaler/scalers.cpp',
@@ -17,13 +19,11 @@ libgui = static_library(
     libgui_sources,
     include_directories: incdir,
     dependencies: [
-        ghc_dep,
         libglad_dep,
         libiir_dep,
         libloguru_dep,
         opengl_dep,
         sdl2_dep,
-        tracy_dep,
     ],
     cpp_args: warnings,
 )

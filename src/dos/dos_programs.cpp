@@ -1,16 +1,16 @@
-// SPDX-FileCopyrightText:  2020-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2020-2026 The DOSBox Staging Team
 // SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "dos/programs.h"
 
-#include "shell/autoexec.h"
 #include "programs/attrib.h"
 #include "programs/autotype.h"
 #include "programs/boot.h"
 #include "programs/choice.h"
 #include "programs/clip.h"
 #include "programs/help.h"
+#include "programs/makeimg.h"
 #include "programs/imgmount.h"
 #include "programs/intro.h"
 #include "programs/keyb.h"
@@ -25,12 +25,13 @@
 #include "programs/mouse.h"
 #include "programs/mousectl.h"
 #include "programs/move.h"
-#include "programs/placeholder.h"
 #include "programs/rescan.h"
 #include "programs/serial.h"
 #include "programs/setver.h"
+#include "programs/showpic.h"
 #include "programs/subst.h"
 #include "programs/tree.h"
+#include "shell/autoexec.h"
 
 #if C_DEBUGGER
 #include "programs/biostest.h"
@@ -47,7 +48,7 @@ void REELMAGIC_MaybeCreateFmpdrvExecutable();
 void VFILE_GetPathZDrive(std::string& path, const std::string& dirname);
 void VFILE_RegisterZDrive(const std_fs::path& z_drive_path);
 
-void Add_VFiles()
+void DOS_SetupPrograms()
 {
 	const std::string dirname = "drivez";
 
@@ -69,6 +70,7 @@ void Add_VFiles()
 	PROGRAMS_MakeFile("COMMAND.COM", SHELL_ProgramCreate);
 	PROGRAMS_MakeFile("CONFIG.COM", CONFIG_ProgramCreate);
 	PROGRAMS_MakeFile("HELP.COM", ProgramCreate<HELP>);
+	PROGRAMS_MakeFile("MAKEIMG.COM", ProgramCreate<MAKEIMG>);
 	PROGRAMS_MakeFile("IMGMOUNT.COM", ProgramCreate<IMGMOUNT>);
 	PROGRAMS_MakeFile("INTRO.COM", ProgramCreate<INTRO>);
 	PROGRAMS_MakeFile("KEYB.COM", ProgramCreate<KEYB>);
@@ -86,19 +88,11 @@ void Add_VFiles()
 	PROGRAMS_MakeFile("RESCAN.COM", ProgramCreate<RESCAN>);
 	PROGRAMS_MakeFile("SERIAL.COM", ProgramCreate<SERIAL>);
 	PROGRAMS_MakeFile("SETVER.EXE", ProgramCreate<SETVER>);
+	PROGRAMS_MakeFile("SHOWPIC.EXE", ProgramCreate<SHOWPIC>);
 	PROGRAMS_MakeFile("SUBST.EXE", ProgramCreate<SUBST>);
 	PROGRAMS_MakeFile("TREE.COM", ProgramCreate<TREE>);
 
 	REELMAGIC_MaybeCreateFmpdrvExecutable();
 
 	AUTOEXEC_RefreshFile();
-}
-
-void DOS_SetupPrograms(void)
-{
-	/*Add misc messages */
-	MSG_Add("WIKI_ADD_UTILITIES_ARTICLE", WIKI_ADD_UTILITIES_ARTICLE);
-	MSG_Add("WIKI_URL", WIKI_URL);
-
-	Add_VFiles();
 }

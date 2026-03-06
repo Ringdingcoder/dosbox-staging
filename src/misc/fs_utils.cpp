@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2022-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2022-2026 The DOSBox Staging Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "utils/fs_utils.h"
@@ -41,18 +41,10 @@ bool check_fseek(const char* module_name, const char* file_description,
 	return false;
 }
 
-bool is_directory(const std::string& candidate)
+bool is_dir(const std_fs::path& path)
 {
-	std::error_code ec;
-	const std_fs::path p(candidate);
-
-	// If it's a symlink then check what it points to ..
-	if (std_fs::is_symlink(p, ec)) {
-		const auto status = std_fs::symlink_status(p, ec);
-		return std_fs::is_directory(status);
-	}
-	// If it's not a symlink then we can check it directly ..
-	return std_fs::is_directory(p, ec);
+	std::error_code ec = {};
+	return std_fs::is_directory(path, ec);
 }
 
 bool is_hidden_by_host(const std_fs::path& pathname)
@@ -158,11 +150,14 @@ std::time_t to_time_t(const std_fs::file_time_type &fs_time)
 // Local drive file/directory attribute handling
 // ***************************************************************************
 
-uint16_t local_drive_create_dir(const std_fs::path& path)
+bool create_dir_if_not_exist(const std_fs::path& path)
 {
-	const auto result = create_dir(path.c_str(), 0775);
-
-	return (result == 0) ? DOSERR_NONE : DOSERR_ACCESS_DENIED;
+	std::error_code ec = {};
+	if (std_fs::is_directory(path, ec)) {
+		return true;
+	}
+	ec.clear();
+	return std_fs::create_directory(path, ec);
 }
 
 int64_t get_native_file_position(const NativeFileHandle handle)

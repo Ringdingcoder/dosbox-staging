@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2022-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2022-2026 The DOSBox Staging Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "more_output.h"
@@ -463,8 +463,10 @@ uint32_t MoreOutputBase::GetNumLinesFromUser(UserDecision& decision)
 	WriteOut(" ");
 
 	std::string number_str = {};
-	while (!DOSBOX_IsShutdownRequested()) {
-		CALLBACK_Idle();
+	while (true) {
+		if (CALLBACK_Idle()) {
+			break;
+		}
 
 		// Try to read the key
 		uint16_t count = 1;
@@ -509,14 +511,16 @@ MoreOutputBase::UserDecision MoreOutputBase::WaitForCancelContinue()
 MoreOutputBase::UserDecision MoreOutputBase::WaitForCancelContinueNext()
 {
 	auto decision = UserDecision::Cancel;
-	while (!DOSBOX_IsShutdownRequested()) {
-		CALLBACK_Idle();
+	while (true) {
+		if (CALLBACK_Idle()) {
+			break;
+		}
 
 		// Try to read the key
 		uint16_t count = 1;
 		uint8_t  tmp   = 0;
 		DOS_ReadFile(STDIN, &tmp, &count);
-		const char code = static_cast<char>(tmp);
+		const auto code = static_cast<char>(tmp);
 
 		if (DOSBOX_IsShutdownRequested() || count == 0 ||
 		    ciequals(code, 'q') || code == Ascii::CtrlC ||

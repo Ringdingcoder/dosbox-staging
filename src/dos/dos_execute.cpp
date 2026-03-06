@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2021-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2021-2026 The DOSBox Staging Team
 // SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
@@ -117,7 +117,7 @@ void DOS_Terminate(const uint16_t psp_seg, const bool is_terminate_and_stay_resi
 	erase_canonical_name(psp_seg);
 
 	dos.return_code = exit_code;
-	dos.return_mode = (is_terminate_and_stay_resident)
+	dos.return_mode = is_terminate_and_stay_resident
 	                        ? DosReturnMode::TerminateAndStayResident
 	                        : DosReturnMode::Exit;
 
@@ -255,11 +255,15 @@ bool DOS_ChildPSP(uint16_t segment, uint16_t size) {
 
 static void setup_psp(uint16_t pspseg, uint16_t memsize, uint16_t envseg)
 {
-	/* Fix the PSP for psp and environment MCB's */
-	DOS_MCB mcb((uint16_t)(pspseg-1));
-	mcb.SetPSPSeg(pspseg);
-	mcb.SetPt((uint16_t)(envseg-1));
-	mcb.SetPSPSeg(pspseg);
+	// Mark PSP's MCB as owned by this PSP
+	DOS_MCB psp_mcb(uint16_t(pspseg - 1));
+	psp_mcb.SetPSPSeg(pspseg);
+
+	// Mark environment's MCB (if any) as owned by this PSP
+	if (envseg != 0) {
+		DOS_MCB env_mcb(uint16_t(envseg - 1));
+		env_mcb.SetPSPSeg(pspseg);
+	}
 
 	DOS_PSP psp(pspseg);
 	psp.MakeNew(memsize);
@@ -320,7 +324,7 @@ bool DOS_Execute(char * name,PhysPt block_pt,uint8_t flags) {
 		iscom=true;
 	} else {
 		/* Convert the header to correct endian, i hope this works */
-		HostPt endian=(HostPt)&head;
+		auto endian=(HostPt)&head;
 		for (i=0;i<sizeof(EXE_Header)/2;i++) {
 			*((uint16_t *)endian)=host_readw(endian);
 			endian+=2;
@@ -335,7 +339,7 @@ bool DOS_Execute(char * name,PhysPt block_pt,uint8_t flags) {
 			if (imagesize+headersize<512) imagesize = 512-headersize;
 		}
 	}
-	uint8_t *loadbuf = new uint8_t[0x10000];
+	auto loadbuf = new uint8_t[0x10000];
 	if (flags!=OVERLAY) {
 		/* Create an environment block */
 		envseg=block.exec.envseg;
@@ -622,10 +626,10 @@ std::optional<uint16_t> DOS_CreateFakeTsrArea(const uint32_t bytes,
 
 	// Clear the TSR memory
 	const auto start_segment = tsr_psp_segment + PspSegments;
-	for (auto idx = start_segment; idx < blocks - PspSegments; idx++) {
-		// 16 bytes to clear, use two 8-byte writes
-		mem_writeq(PhysicalMake(idx, sizeof(uint64_t) * 0), 0);
-		mem_writeq(PhysicalMake(idx, sizeof(uint64_t) * 1), 0);
+	const auto end_segment   = tsr_psp_segment + blocks;
+	for (auto seg = start_segment; seg < end_segment; ++seg) {
+		mem_writeq(PhysicalMake(seg, sizeof(uint64_t) * 0), 0);
+		mem_writeq(PhysicalMake(seg, sizeof(uint64_t) * 1), 0);
 	}
 
 	// Clean up and return the free space start segment

@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 
-# SPDX-FileCopyrightText:  2020-2021 The DOSBox Staging Team
+# SPDX-FileCopyrightText:  2020-2026 The DOSBox Staging Team
 # SPDX-FileCopyrightText:  2020-2021 kcgen <kcgen@users.noreply.github.com>
 # SPDX-License-Identifier: GPL-2.0-or-later
 
@@ -35,7 +35,7 @@ def parse_issues(filename):
     with open(filename, encoding="utf-8") as csvfile:
         reader = csv.DictReader(csvfile)
         for row in reader:
-            sourcefile = row["FilePath"]
+            sourcefile = row["File"]
             # Skip non-file lines
             if not sourcefile.startswith("/"):
                 continue

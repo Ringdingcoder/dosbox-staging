@@ -34,6 +34,7 @@ target_sources(libdosboxcommon PRIVATE
   programs/choice.cpp
   programs/clip.cpp
   programs/help.cpp
+  programs/makeimg.cpp
   programs/imgmount.cpp
   programs/intro.cpp
   programs/keyb.cpp
@@ -50,12 +51,16 @@ target_sources(libdosboxcommon PRIVATE
   programs/mouse.cpp
   programs/mousectl.cpp
   programs/move.cpp
-  programs/placeholder.cpp
   programs/rescan.cpp
   programs/serial.cpp
   programs/setver.cpp
+  programs/showpic.cpp
   programs/subst.cpp
   programs/tree.cpp
 )
 
 target_sources(dosbox PRIVATE dos_files.cpp)
+
+target_link_libraries(libdosboxcommon PRIVATE
+  $<IF:$<TARGET_EXISTS:SDL2_image::SDL2_image>,SDL2_image::SDL2_image,SDL2_image::SDL2_image-static>
+)

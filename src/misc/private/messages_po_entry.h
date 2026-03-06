@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2025-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2025-2026 The DOSBox Staging Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "misc/std_filesystem.h"
@@ -43,7 +43,7 @@ public:
 	void AddHelpLine(const std::string& line);
 
 protected:
-	PoEntry() {}
+	PoEntry() = default;
 	virtual ~PoEntry() = default;
 
 	std::string location = {};
@@ -81,6 +81,8 @@ public:
 	}
 
 	bool ValidateGettextMetadata() const;
+
+	std::string GetLanguageFromMetadata() const;
 
 	void LogWarning(const std::string& error) const;
 

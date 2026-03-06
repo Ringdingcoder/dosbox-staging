@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2020-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2020-2026 The DOSBox Staging Team
 // SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
@@ -116,7 +116,7 @@ bool DOS_ExtDevice::Read(uint8_t *data, uint16_t *size)
 	PhysPt bufptr = (dos.dcp << 4) | 32;
 	for (uint16_t no = 0; no < *size; no++) {
 		// INPUT
-		if ((CallDeviceFunction(4, 26, bufptr, 1) & 0x8000)) {
+		if (CallDeviceFunction(4, 26, bufptr, 1) & 0x8000) {
 			return false;
 		} else {
 			if (real_readw(dos.dcp, 18) != 1) {
@@ -134,7 +134,7 @@ bool DOS_ExtDevice::Write(uint8_t *data, uint16_t *size)
 	for (uint16_t no = 0; no < *size; no++) {
 		mem_writeb(bufptr, *data);
 		// OUTPUT
-		if ((CallDeviceFunction(8, 26, bufptr, 1) & 0x8000)) {
+		if (CallDeviceFunction(8, 26, bufptr, 1) & 0x8000) {
 			return false;
 		} else {
 			if (real_readw(dos.dcp, 18) != 1) {
@@ -246,7 +246,7 @@ static void DOS_CheckOpenExtDevice(const char *name)
 	uint32_t addr;
 
 	if ((addr = DOS_CheckExtDevice(name, true)) != 0) {
-		DOS_ExtDevice *device = new DOS_ExtDevice(name, addr >> 16, addr & 0xffff);
+		auto device = new DOS_ExtDevice(name, addr >> 16, addr & 0xffff);
 		DOS_AddDevice(device);
 	}
 }
@@ -534,7 +534,7 @@ bool DOS_DeviceHasName(const RealPt rp, const std::string_view req_name)
 
 	std::string device_name = {};
 	for (size_t i = 0; i < DeviceDriverInfo::name_length; ++i) {
-		const char c = static_cast<char>(real_readb(segment, check_cast<uint16_t>(offset + i)));
+		const auto c = static_cast<char>(real_readb(segment, check_cast<uint16_t>(offset + i)));
 
 		// Device name should be padded with spaces if it is less than name length (8 characters)
 		// Also stop reading upon encountering a null termination or control codes to be safe

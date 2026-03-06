@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2020-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2020-2026 The DOSBox Staging Team
 // SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
@@ -26,7 +26,7 @@ class MidiDevice {
 public:
 	enum class Type { Internal, External };
 
-	virtual ~MidiDevice() {}
+	virtual ~MidiDevice() = default;
 
 	virtual std::string GetName() const = 0;
 	virtual Type GetType() const        = 0;

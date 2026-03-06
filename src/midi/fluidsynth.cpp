@@ -1,4 +1,4 @@
-//  SPDX-FileCopyrightText:  2020-2025 The DOSBox Staging Team
+//  SPDX-FileCopyrightText:  2020-2026 The DOSBox Staging Team
 //  SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "private/fluidsynth.h"
@@ -62,20 +62,23 @@ static void init_fluidsynth_config_settings(SectionProp& secprop)
 	// in the OS (usually "Fluid_R3").
 	auto str_prop = secprop.AddString("soundfont", WhenIdle, "default.sf2");
 	str_prop->SetHelp(
-	        "Name or path of SoundFont file to use ('default.sf2' by default).\n"
-	        "The SoundFont will be looked up in the following locations in order:\n"
+	        "Name or path of SoundFont file to use ('default.sf2' by default). The SoundFont\n"
+	        "will be looked up in the following locations in order:\n"
+	        "\n"
 	        "  - The user-defined SoundFont directory (see 'soundfont_dir').\n"
 	        "  - The 'soundfonts' directory in your DOSBox configuration directory.\n"
 	        "  - Other common system locations.\n"
+	        "\n"
 	        "The '.sf2' extension can be omitted. You can use paths relative to the above\n"
 	        "locations or absolute paths as well.\n"
+	        "\n"
 	        "Note: Run `MIXER /LISTMIDI` to see the list of available SoundFonts.");
 
 	str_prop = secprop.AddString("soundfont_dir", WhenIdle, "");
 	str_prop->SetHelp(
-	        "Extra user-defined SoundFont directory (unset by default).\n"
-	        "If this is set, SoundFonts are looked up in this directory first, then in the\n"
-	        "the standard system locations.");
+	        "Extra user-defined SoundFont directory (unset by default). If this is set,\n"
+	        "SoundFonts are looked up in this directory first, then in the the standard\n"
+	        "system locations.");
 
 	constexpr auto DefaultVolume = 100;
 	constexpr auto MinVolume     = 1;
@@ -84,19 +87,21 @@ static void init_fluidsynth_config_settings(SectionProp& secprop)
 	auto int_prop = secprop.AddInt("soundfont_volume", WhenIdle, DefaultVolume);
 	int_prop->SetMinMax(MinVolume, MaxVolume);
 	int_prop->SetHelp(
-	        format_str("Set the SoundFont's volume as a percentage (%d by default).\n"
-	                   "This is useful for normalising the volume of different SoundFonts.\n"
-	                   "The percentage value can range from %d to %d.",
+	        format_str("Set the SoundFont's volume as a percentage (%d by default). This is useful for\n"
+	                   "normalising the volume of different SoundFonts. The percentage value can range\n"
+	                   "from %d to %d.",
 	                   DefaultVolume,
 	                   MinVolume,
 	                   MaxVolume));
 
 	str_prop = secprop.AddString(ChorusSettingName, WhenIdle, DefaultChorusSetting);
 	str_prop->SetHelp(
-	        "Configure the FluidSynth chorus. Possible values:\n"
+	        "Configure the FluidSynth chorus ('auto' by default). Possible values:\n"
+	        "\n"
 	        "  auto:      Enable chorus, except for known problematic SoundFonts (default).\n"
 	        "  on:        Always enable chorus.\n"
 	        "  off:       Disable chorus.\n"
+	        "\n"
 	        "  <custom>:  Custom setting via five space-separated values:\n"
 	        "               - voice-count:      Integer from 0 to 99\n"
 	        "               - level:            Decimal from 0.0 to 10.0\n"
@@ -113,10 +118,12 @@ static void init_fluidsynth_config_settings(SectionProp& secprop)
 	str_prop = secprop.AddString(ReverbSettingName, WhenIdle, DefaultReverbSetting);
 	;
 	str_prop->SetHelp(
-	        "Configure the FluidSynth reverb. Possible values:\n"
+	        "Configure the FluidSynth reverb ('auto' by default). Possible values:\n"
+	        "\n"
 	        "  auto:      Enable reverb (default).\n"
 	        "  on:        Enable reverb.\n"
 	        "  off:       Disable reverb.\n"
+	        "\n"
 	        "  <custom>:  Custom setting via four space-separated values:\n"
 	        "               - room-size:  Decimal from 0.0 to 1.0\n"
 	        "               - damping:    Decimal from 0.0 to 1.0\n"
@@ -132,7 +139,8 @@ static void init_fluidsynth_config_settings(SectionProp& secprop)
 	str_prop = secprop.AddString("fsynth_filter", WhenIdle, "off");
 	assert(str_prop);
 	str_prop->SetHelp(
-	        "Filter for the FluidSynth audio output:\n"
+	        "Filter for the FluidSynth audio output ('off' by default). Possible values:\n"
+	        "\n"
 	        "  off:       Don't filter the output (default).\n"
 	        "  <custom>:  Custom filter definition; see 'sb_filter' for details.");
 }
@@ -325,7 +333,7 @@ std::optional<ChorusParameters> parse_custom_chorus_params(const std::string& ch
 	auto validate = [&](const char* param_name,
 	                    const std::string& value,
 	                    const double min_value,
-	                    const double max_value) -> std::optional<double> {
+	                    const double max_value) {
 		return validate_effect_parameter(ChorusSettingName,
 		                                 param_name,
 		                                 value,
@@ -372,25 +380,15 @@ void MidiDeviceFluidSynth::SetChorusParams(const ChorusParameters& params)
 	// Apply setting to all groups
 	constexpr int FxGroup = -1;
 
-	fluid_synth_set_chorus_group_nr(synth.get(),
-									FxGroup,
-									params.voice_count);
+	fluid_synth_set_chorus_group_nr(synth.get(), FxGroup, params.voice_count);
 
-	fluid_synth_set_chorus_group_level(synth.get(),
-									   FxGroup,
-									   params.level);
+	fluid_synth_set_chorus_group_level(synth.get(), FxGroup, params.level);
 
-	fluid_synth_set_chorus_group_speed(synth.get(),
-									   FxGroup,
-									   params.speed);
+	fluid_synth_set_chorus_group_speed(synth.get(), FxGroup, params.speed);
 
-	fluid_synth_set_chorus_group_depth(synth.get(),
-	                                   FxGroup,
-	                                   params.depth);
+	fluid_synth_set_chorus_group_depth(synth.get(), FxGroup, params.depth);
 
-	fluid_synth_set_chorus_group_type(synth.get(),
-	                                  FxGroup,
-	                                  params.mod_wave);
+	fluid_synth_set_chorus_group_type(synth.get(), FxGroup, params.mod_wave);
 
 	LOG_MSG("FSYNTH: Chorus enabled with %d voices at level %.2f, "
 	        "%.2f Hz speed, %.2f depth, and %s-wave modulation",
@@ -483,7 +481,7 @@ std::optional<ReverbParameters> parse_custom_reverb_params(const std::string& re
 	auto validate = [&](const char* param_name,
 	                    const std::string& value,
 	                    const double min_value,
-	                    const double max_value) -> std::optional<double> {
+	                    const double max_value) {
 		return validate_effect_parameter(ReverbSettingName,
 		                                 param_name,
 		                                 value,
@@ -511,21 +509,13 @@ void MidiDeviceFluidSynth::SetReverbParams(const ReverbParameters& params)
 	// Apply setting to all groups
 	constexpr int FxGroup = -1;
 
-	fluid_synth_set_reverb_group_roomsize(synth.get(),
-	                                      FxGroup,
-	                                      params.room_size);
+	fluid_synth_set_reverb_group_roomsize(synth.get(), FxGroup, params.room_size);
 
-	fluid_synth_set_reverb_group_damp(synth.get(),
-	                                  FxGroup,
-	                                  params.damping);
+	fluid_synth_set_reverb_group_damp(synth.get(), FxGroup, params.damping);
 
-	fluid_synth_set_reverb_group_width(synth.get(),
-	                                   FxGroup,
-	                                   params.width);
+	fluid_synth_set_reverb_group_width(synth.get(), FxGroup, params.width);
 
-	fluid_synth_set_reverb_group_level(synth.get(),
-	                                   FxGroup,
-	                                   params.level);
+	fluid_synth_set_reverb_group_level(synth.get(), FxGroup, params.level);
 
 	LOG_MSG("FSYNTH: Reverb enabled with a %.2f room size, "
 	        "%.2f damping, %.2f width, and level %.2f",
@@ -618,9 +608,7 @@ MidiDeviceFluidSynth::MidiDeviceFluidSynth()
 	const auto sample_rate_hz = MIXER_GetSampleRate();
 	ms_per_audio_frame        = MillisInSecond / sample_rate_hz;
 
-	fluid_settings_setnum(fluid_settings.get(),
-						  "synth.sample-rate",
-						  sample_rate_hz);
+	fluid_settings_setnum(fluid_settings.get(), "synth.sample-rate", sample_rate_hz);
 
 	FluidSynthPtr fluid_synth(new_fluid_synth(fluid_settings.get()),
 	                          delete_fluid_synth);
@@ -636,8 +624,8 @@ MidiDeviceFluidSynth::MidiDeviceFluidSynth()
 
 	constexpr auto ResetPresets = true;
 	if (fluid_synth_sfload(fluid_synth.get(),
-						   sf_path.string().c_str(),
-						   ResetPresets) == FLUID_FAILED) {
+	                       sf_path.string().c_str(),
+	                       ResetPresets) == FLUID_FAILED) {
 
 		const auto msg = format_str("FSYNTH: Error loading SoundFont '%s'",
 		                            sf_name.c_str());
@@ -670,9 +658,15 @@ MidiDeviceFluidSynth::MidiDeviceFluidSynth()
 
 	// Use a 7th-order (highest) polynomial to generate MIDI channel
 	// waveforms
-	fluid_synth_set_interp_method(fluid_synth.get(),
-								  FxGroup,
-								  FLUID_INTERP_HIGHEST);
+	fluid_synth_set_interp_method(fluid_synth.get(), FxGroup, FLUID_INTERP_HIGHEST);
+
+	// Always use XG/GS mode which emulates the concave curve specific to
+	// the Roland Sound Canvas family of sound modules. In this mode the
+	// portamento time is 7 bits wide, using only CC5, and the concave curve
+	// ranges from 0s to 480s. The curve was reverse engineered from a
+	// Roland SC-55 v1.21 hardware unit.
+	fluid_synth_set_portamento_time_mode(fluid_synth.get(),
+	                                     FLUID_PORTAMENTO_TIME_MODE_XG_GS);
 
 	SetChorus();
 	SetReverb();
@@ -767,7 +761,7 @@ void MidiDeviceFluidSynth::SetFilter()
 	        "fsynth_filter");
 
 	if (!mixer_channel->TryParseAndSetCustomFilter(filter_prefs)) {
-		if (filter_prefs != "off") {
+		if (!has_false(filter_prefs)) {
 			NOTIFY_DisplayWarning(Notification::Source::Console,
 			                      "FSYNTH",
 			                      "PROGRAM_CONFIG_INVALID_SETTING",
@@ -836,64 +830,18 @@ void MidiDeviceFluidSynth::SendSysExMessage(uint8_t* sysex, size_t len)
 void MidiDeviceFluidSynth::ApplyChannelMessage(const std::vector<uint8_t>& msg)
 {
 	const auto status_byte = msg[0];
+	const auto controller  = msg[1];
 	const auto status      = get_midi_status(status_byte);
 	const auto channel     = get_midi_channel(status_byte);
 
 	// clang-format off
 	switch (status) {
-	case MidiStatus::NoteOff:         fluid_synth_noteoff(     synth.get(), channel, msg[1]);         break;
-	case MidiStatus::NoteOn:          fluid_synth_noteon(      synth.get(), channel, msg[1], msg[2]); break;
-	case MidiStatus::PolyKeyPressure: fluid_synth_key_pressure(synth.get(), channel, msg[1], msg[2]); break;
-
-	case MidiStatus::ControlChange: {
-		const auto controller = msg[1];
-		const auto value = msg[2];
-
-		if (controller == MidiController::Portamento ||
-			controller == MidiController::PortamentoTime ||
-			controller == MidiController::PortamentoControl) {
-
-			// The Roland SC-55 and its clones (Yamaha MU80 or Roland's own
-			// later modules that emulate the SC-55) handle portamento (pitch
-			// glides between consecutive notes on the same channel) in a very
-			// specific and unique way, just like most synthesisers.
-			//
-			// The SC-55 accepts only 7-bit Portamento Time values via MIDI
-			// CC5, where the min value of 0 sets the fastest portamento time
-			// (effectively turns it off), and the max value of 127 the
-			// slowest (up to 8 minutes!). There is an exponential mapping
-			// between the CC values and the duration of the portamento (pitch
-			// slides/glides); this custom curve is apparently approximated by
-			// multiple linear segments. Moreover, the distance between the
-			// source and destination notes also affect the portamento time,
-			// making portamento dynamic and highly dependent on the notes
-			// being played.
-			//
-			// FluidSynth, on the other hand, implements a very different
-			// portamento model. Portament Time values are set via 14-bit CC
-			// messages (via MIDI CC5 (coarse) and CC37 (fine)), and there is
-			// a linear mapping between CC values and the portamento time as
-			// per the following formula:
-			//
-			//   (CC5 * 127 ms) + (CC37 ms)
-			//
-			// Because of these fundamental differences, emulating Roland
-			// SC-55 style portamento on FluidSynth is practically not
-			// possible. Music written for the SC-55 that use portamento
-			// sounds weirdly out of tune on FluidSynth (e.g. the Level 8
-			// music of Descent), and "mapping" SC-55 portamento behaviour to
-			// the FluidSynth range is not possible due to dynamic nature of
-			// the SC-55 portamento handling. All in all, it's for the best to
-			// ignore portamento altogether. This is not a great loss as it's
-			// used rarely and usually only to add some subtle flair to the
-			// start of the notes in synth-oriented soundtracks.
-		} else {
-			fluid_synth_cc(synth.get(), channel, controller, value);
-		}
-	} break;
-
-	case MidiStatus::ProgramChange:   fluid_synth_program_change(  synth.get(), channel, msg[1]);                 break;
-	case MidiStatus::ChannelPressure: fluid_synth_channel_pressure(synth.get(), channel, msg[1]);                 break;
+	case MidiStatus::NoteOff:         fluid_synth_noteoff(         synth.get(), channel, controller);             break;
+	case MidiStatus::NoteOn:          fluid_synth_noteon(          synth.get(), channel, controller, msg[2]);     break;
+	case MidiStatus::PolyKeyPressure: fluid_synth_key_pressure(    synth.get(), channel, controller, msg[2]);     break;
+	case MidiStatus::ControlChange:   fluid_synth_cc(              synth.get(), channel, controller, msg[2]);     break;
+	case MidiStatus::ProgramChange:   fluid_synth_program_change(  synth.get(), channel, controller);             break;
+	case MidiStatus::ChannelPressure: fluid_synth_channel_pressure(synth.get(), channel, controller);             break;
 	case MidiStatus::PitchBend:       fluid_synth_pitch_bend(      synth.get(), channel, msg[1] + (msg[2] << 7)); break;
 	default: log_unknown_midi_message(msg); break;
 	}
@@ -903,8 +851,8 @@ void MidiDeviceFluidSynth::ApplyChannelMessage(const std::vector<uint8_t>& msg)
 // Apply the sysex message to the service
 void MidiDeviceFluidSynth::ApplySysExMessage(const std::vector<uint8_t>& msg)
 {
-	const char* data = reinterpret_cast<const char*>(msg.data());
-	const auto n     = static_cast<int>(msg.size());
+	const auto data = reinterpret_cast<const char*>(msg.data());
+	const auto n    = static_cast<int>(msg.size());
 
 	fluid_synth_sysex(synth.get(), data, n, nullptr, nullptr, nullptr, false);
 }
@@ -955,13 +903,13 @@ void MidiDeviceFluidSynth::RenderAudioFramesToFifo(const int num_audio_frames)
 	}
 
 	fluid_synth_write_float(synth.get(),
-							num_audio_frames,
-							&audio_frames[0][0],
-							0,
-							2,
-							&audio_frames[0][0],
-							1,
-							2);
+	                        num_audio_frames,
+	                        &audio_frames[0][0],
+	                        0,
+	                        2,
+	                        &audio_frames[0][0],
+	                        1,
+	                        2);
 
 	audio_frame_fifo.BulkEnqueue(audio_frames, num_audio_frames);
 }

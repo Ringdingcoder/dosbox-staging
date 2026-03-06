@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2021-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2021-2026 The DOSBox Staging Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #ifndef DOSBOX_ETHERNET_H
@@ -38,7 +38,7 @@ public:
 	 * The destructor will close the connection and free any
 	 * per-connection resources.
 	 */
-	virtual ~EthernetConnection() {}
+	virtual ~EthernetConnection() = default;
 
 	/** Sends a packet through the connection.
 	 * This function makes no guarantees as to whether the packet actually

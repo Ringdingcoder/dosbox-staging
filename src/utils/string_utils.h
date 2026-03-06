@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2020-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2020-2026 The DOSBox Staging Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #ifndef DOSBOX_STRING_UTILS_H
@@ -191,6 +191,8 @@ char* rtrim(char* str);
 char* trim(char* str);
 char* upcase(char* str);
 char* lowcase(char* str);
+std::string upcase(const std::string_view sv);
+std::string lowcase(const std::string_view sv);
 
 inline bool is_empty(const char* str) noexcept
 {
@@ -217,6 +219,24 @@ constexpr bool iequals(T1&& a, T2&& b)
 	const str_t2 str_b = std::forward<T2>(b);
 
 	return std::equal(str_a.begin(), str_a.end(), str_b.begin(), str_b.end(), ciequals);
+}
+
+// same as above, but case-sensitive
+template <typename T1, typename T2>
+constexpr bool equals(T1&& a, T2&& b)
+{
+	using str_t1 = std::conditional_t<std::is_same_v<T1, const std::string&>,
+	                                  const std::string&,
+	                                  const std::string_view>;
+
+	using str_t2 = std::conditional_t<std::is_same_v<T2, const std::string&>,
+	                                  const std::string&,
+	                                  const std::string_view>;
+
+	const str_t1 str_a = std::forward<T1>(a);
+	const str_t2 str_b = std::forward<T2>(b);
+
+	return std::equal(str_a.begin(), str_a.end(), str_b.begin(), str_b.end());
 }
 
 // Performs a "natural" comparison between A and B, which is case-insensitive
@@ -349,6 +369,8 @@ std::string host_eol();
 
 // Replaces end-of-line markings (any encoding) with the supplied one
 std::string replace_eol(const std::string& str, const std::string& new_eol);
+
+std::string right_pad(const std::string& str, int length, char pad_char);
 
 // Compares two pieces of text, insensitive to end-of-line encoding differences
 bool is_text_equal(const std::string& str_1, const std::string& str_2);

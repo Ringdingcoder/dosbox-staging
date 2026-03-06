@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2022-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2022-2026 The DOSBox Staging Team
 // SPDX-FileCopyrightText:  2002-2022 The DOSBox Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
@@ -125,7 +125,7 @@ static void warn_resend()
 static void warn_unknown_command(const KbdCommand command)
 {
 	static bool already_warned[max_num_scancodes];
-	const uint8_t code = static_cast<uint8_t>(command);
+	const auto code = static_cast<uint8_t>(command);
 	if (!already_warned[code]) {
 		LOG_WARNING("KEYBOARD: Unknown command 0x%02x", code);
 		already_warned[code] = true;

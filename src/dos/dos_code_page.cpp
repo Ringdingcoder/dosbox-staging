@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2025-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2025-2026 The DOSBox Staging Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "dos_code_page.h"
@@ -897,7 +897,7 @@ void CpiParser::StoreFontType(const CodePageEntryHeader& header, ParserResult& r
 	                        header.device_name.c_str(),
 	                        header.code_page));
 	} else {
-		found.code_pages.insert({header.device_name, header.code_page});
+		found.code_pages.emplace(header.device_name, header.code_page);
 	}
 
 	if (is_screen) {

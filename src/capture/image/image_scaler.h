@@ -1,14 +1,14 @@
-// SPDX-FileCopyrightText:  2023-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2023-2026 The DOSBox Staging Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #ifndef DOSBOX_IMAGE_SCALER_H
 #define DOSBOX_IMAGE_SCALER_H
 
+#include <memory>
 #include <vector>
 
-#include "image_decoder.h"
-
-#include "gui/render/render.h"
+#include "misc/image_decoder.h"
+#include "misc/rendered_image.h"
 #include "utils/rgb888.h"
 
 enum class OutputPixelFormat { Indexed8, Rgb888 };
@@ -68,8 +68,8 @@ public:
 
 	std::vector<uint8_t>::const_iterator GetNextOutputRow();
 
-	uint16_t GetOutputWidth() const;
-	uint16_t GetOutputHeight() const;
+	int GetOutputWidth() const;
+	int GetOutputHeight() const;
 	OutputPixelFormat GetOutputPixelFormat() const;
 
 	// prevent copying
@@ -78,7 +78,7 @@ public:
 	ImageScaler& operator=(const ImageScaler&) = delete;
 
 private:
-	static constexpr uint8_t ComponentsPerRgbPixel = 3;
+	static constexpr auto ComponentsPerRgbPixel = 3;
 
 	void UpdateOutputParamsDoublingOnly();
 	void UpdateOutputParamsUpscale();
@@ -92,25 +92,28 @@ private:
 	void GenerateNextIntegerUpscaledOutputRow();
 	void GenerateNextSharpUpscaledOutputRow();
 
-	RenderedImage input        = {};
-	ImageDecoder input_decoder = {};
+	RenderedImage input                         = {};
+	std::unique_ptr<ImageDecoder> input_decoder = {};
+
+	std::vector<uint8_t> row_decode_buf_8   = {};
+	std::vector<uint32_t> row_decode_buf_32 = {};
 
 	std::vector<float> linear_row_buf = {};
 
 	struct {
-		uint16_t width  = 0;
-		uint16_t height = 0;
+		int width  = 0;
+		int height = 0;
 
 		float horiz_scale                 = 0;
 		float one_per_horiz_scale         = 0;
-		uint8_t vert_scale                = 0;
+		int vert_scale                    = 0;
 		PerAxisScaling horiz_scaling_mode = {};
 		PerAxisScaling vert_scaling_mode  = {};
 
 		OutputPixelFormat pixel_format = {};
 
-		uint16_t curr_row  = 0;
-		uint8_t row_repeat = 0;
+		int curr_row   = 0;
+		int row_repeat = 0;
 
 		std::vector<uint8_t> row_buf = {};
 	} output = {};

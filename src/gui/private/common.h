@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2025-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2025-2026 The DOSBox Staging Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #ifndef DOSBOX_GUI_PRIVATE_COMMON_H
@@ -16,9 +16,6 @@ constexpr uint8_t GFX_CAN_8      = 1 << 0;
 constexpr uint8_t GFX_CAN_15     = 1 << 1;
 constexpr uint8_t GFX_CAN_16     = 1 << 2;
 constexpr uint8_t GFX_CAN_32     = 1 << 3;
-constexpr uint8_t GFX_DBL_H      = 1 << 4; // double-width  flag
-constexpr uint8_t GFX_DBL_W      = 1 << 5; // double-height flag
-constexpr uint8_t GFX_CAN_RANDOM = 1 << 6; // interface can also do random acces
 
 typedef enum {
 	GFX_CallbackReset,
@@ -79,15 +76,17 @@ RenderBackend* GFX_GetRenderer();
 
 enum class TextureFilterMode { NearestNeighbour, Bilinear };
 
+// Might return nullptr if the window doesn't exist yet
 SDL_Window* GFX_GetWindow();
 
 uint32_t GFX_MakePixel(const uint8_t red, const uint8_t green, const uint8_t blue);
 
 TextureFilterMode GFX_GetTextureFilterMode();
 
-uint8_t GFX_SetSize(const int render_width_px, const int render_height_px,
-                    const Fraction& render_pixel_aspect_ratio, const uint8_t flags,
-                    const VideoMode& video_mode, GFX_Callback_t callback);
+void GFX_SetSize(const int render_width_px, const int render_height_px,
+                 const Fraction& render_pixel_aspect_ratio,
+                 const bool double_width, const bool double_height,
+                 const VideoMode& video_mode, GFX_Callback_t callback);
 
 void GFX_ResetScreen();
 
@@ -96,7 +95,7 @@ void GFX_Stop();
 
 // Called at the start of every unique frame (when there have been changes to
 // the framebuffer).
-bool GFX_StartUpdate(uint8_t*& pixels, int& pitch);
+bool GFX_StartUpdate(uint32_t*& pixels, int& pitch);
 
 // Called at the end of every frame, regardless of whether there have been
 // changes to the framebuffer or not.

@@ -169,7 +169,7 @@ template <typename T>
 std::function<T()> create_randomizer(const T min_value, const T max_value);
 
 // Include a message in assert, similar to static_assert:
-#define assertm(exp, msg) assert(((void)msg, exp))
+#define assertm(exp, msg) assert(((void)(msg), exp))
 // Use (void) to silent unused warnings.
 // https://en.cppreference.com/w/cpp/error/assert
 
@@ -253,9 +253,15 @@ int64_t stdio_size_kb(FILE* f);
 int64_t stdio_num_sectors(FILE* f);
 
 const std_fs::path& get_executable_path();
+
+// TODO should return optional
 std_fs::path get_resource_path(const std_fs::path& name);
+
+// TODO should return optional
 std_fs::path get_resource_path(const std_fs::path& subdir, const std_fs::path& name);
+
 const std::vector<std_fs::path>& get_resource_parent_paths();
+
 std::vector<std_fs::path> get_plugin_paths();
 
 std::vector<std_fs::path> get_directory_entries(

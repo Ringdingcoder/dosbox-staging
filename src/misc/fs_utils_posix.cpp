@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2020-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2020-2026 The DOSBox Staging Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "utils/fs_utils.h"
@@ -20,12 +20,8 @@
 
 #include "dos/dos.h"
 #include "misc/logging.h"
+#include "utils/env_utils.h"
 #include "utils/string_utils.h"
-
-bool path_exists(const char *path) noexcept
-{
-	return (access(path, F_OK) == 0);
-}
 
 static std::string translate_to_glob_pattern(const std::string &path) noexcept
 {
@@ -53,12 +49,12 @@ static std::string translate_to_glob_pattern(const std::string &path) noexcept
 
 std::string to_native_path(const std::string &path) noexcept
 {
-	if (path_exists(path))
+	if (local_drive_path_exists(path.c_str()))
 		return path;
 
 	// Perhaps path is ok, just using Windows-style delimiters:
 	const std::string posix_path = replace(path, '\\', '/');
-	if (path_exists(posix_path))
+	if (local_drive_path_exists(posix_path.c_str()))
 		return posix_path;
 
 	// Convert case-insensitive path to case-sensitive path.
@@ -91,38 +87,36 @@ std::string to_native_path(const std::string &path) noexcept
 	return ret;
 }
 
-int create_dir(const std_fs::path& path, uint32_t mode, uint32_t flags) noexcept
+uint16_t local_drive_create_dir(const char* path)
 {
 	static_assert(sizeof(uint32_t) >= sizeof(mode_t), "");
-	const int err = mkdir(path.c_str(), mode);
-	if ((errno == EEXIST) && (flags & OK_IF_EXISTS)) {
-		struct stat pstat;
-		if ((stat(path.c_str(), &pstat) == 0) && S_ISDIR(pstat.st_mode))
-			return 0;
+	const int err = mkdir(path, 0775);
+	if (err == 0) {
+		return DOSERR_NONE;
 	}
-	return err;
+	return DOSERR_ACCESS_DENIED;
 }
 
 #if !defined(MACOSX)
 
 std_fs::path get_xdg_config_home() noexcept
 {
-	const char* var       = getenv("XDG_CONFIG_HOME");
-	const char* conf_home = ((var && var[0]) ? var : "~/.config");
+	const auto var       = get_env_var("XDG_CONFIG_HOME");
+	const auto conf_home = ((var.size() > 0) ? var : "~/.config");
 	return resolve_home(conf_home);
 }
 
 std_fs::path get_xdg_data_home() noexcept
 {
-	const char* var       = getenv("XDG_DATA_HOME");
-	const char* data_home = ((var && var[0]) ? var : "~/.local/share");
+	const auto var       = get_env_var("XDG_DATA_HOME");
+	const auto data_home = ((var.size() > 0) ? var : "~/.local/share");
 	return resolve_home(data_home);
 }
 
 std::deque<std_fs::path> get_xdg_data_dirs() noexcept
 {
-	const char* var       = getenv("XDG_DATA_DIRS");
-	const char* data_dirs = ((var && var[0]) ? var : "/usr/local/share:/usr/share");
+	const auto var       = get_env_var("XDG_DATA_DIRS");
+	const auto data_dirs = ((var.size() > 0) ? var : "/usr/local/share:/usr/share");
 
 	std::deque<std_fs::path> paths{};
 	for (auto& dir : split_with_empties(data_dirs, ':')) {
@@ -184,7 +178,7 @@ static std::optional<FatAttributeFlags> xattr_to_fat_attribs(const std::string& 
 	return {};
 }
 
-static std::optional<FatAttributeFlags> get_xattr(const std_fs::path& path)
+static std::optional<FatAttributeFlags> get_xattr(const char* path)
 {
 	char xattr[XattrMaxLength + 1];
 
@@ -192,14 +186,14 @@ static std::optional<FatAttributeFlags> get_xattr(const std_fs::path& path)
 	constexpr int offset  = 0;
 	constexpr int options = 0;
 
-	const auto length = getxattr(path.c_str(),
+	const auto length = getxattr(path,
 	                             XattrName.c_str(),
 	                             xattr,
 	                             XattrMaxLength,
 	                             offset,
 	                             options);
 #elif defined(HAVE_SYS_XATTR_H)
-	const auto length = getxattr(path.c_str(),
+	const auto length = getxattr(path,
 	                             XattrName.c_str(),
 	                             xattr,
 	                             XattrMaxLength);
@@ -215,7 +209,7 @@ static std::optional<FatAttributeFlags> get_xattr(const std_fs::path& path)
 
 	if (static_cast<size_t>(length) > XattrMaxLength) {
 		LOG_MSG("DOS: Incorrect '%s' extended attribute in '%s'",
-		        XattrName.c_str(), path.c_str());
+		        XattrName.c_str(), path);
 		return {};
 	}
 
@@ -223,7 +217,7 @@ static std::optional<FatAttributeFlags> get_xattr(const std_fs::path& path)
 	return xattr_to_fat_attribs(std::string(xattr));
 }
 
-static bool set_xattr([[maybe_unused]] const std_fs::path& path,
+static bool set_xattr([[maybe_unused]] const char* path,
                       const FatAttributeFlags attributes)
 {
 	const auto xattr = fat_attribs_to_xattr(attributes);
@@ -232,7 +226,7 @@ static bool set_xattr([[maybe_unused]] const std_fs::path& path,
 	constexpr int offset  = 0;
 	constexpr int options = 0;
 
-	const auto result = setxattr(path.c_str(),
+	const auto result = setxattr(path,
 	                             XattrName.c_str(),
 	                             xattr.c_str(),
 	                             xattr.size(),
@@ -241,7 +235,7 @@ static bool set_xattr([[maybe_unused]] const std_fs::path& path,
 #elif defined(HAVE_SYS_XATTR_H)
 	constexpr int flags = 0;
 
-	const auto result = setxattr(path.c_str(),
+	const auto result = setxattr(path,
                                      XattrName.c_str(),
                                      xattr.c_str(),
                                      xattr.size(),
@@ -285,11 +279,11 @@ static bool set_xattr([[maybe_unused]] const int file_descriptor,
 	return (result == 0);
 }
 
-uint16_t local_drive_get_attributes(const std_fs::path& path,
+uint16_t local_drive_get_attributes(const char* path,
                                     FatAttributeFlags& attributes)
 {
 	struct stat status;
-	if (stat(path.c_str(), &status) != 0) {
+	if (stat(path, &status) != 0) {
 		attributes = 0;
 		return DOSERR_FILE_NOT_FOUND;
 	}
@@ -316,10 +310,10 @@ uint16_t local_drive_get_attributes(const std_fs::path& path,
 	return DOSERR_NONE;
 }
 
-uint16_t local_drive_set_attributes(const std_fs::path& path,
+uint16_t local_drive_set_attributes(const char* path,
                                     const FatAttributeFlags attributes)
 {
-	if (!path_exists(path)) {
+	if (!local_drive_path_exists(path)) {
 		return DOSERR_FILE_NOT_FOUND;
 	}
 
@@ -327,7 +321,7 @@ uint16_t local_drive_set_attributes(const std_fs::path& path,
 	if (status) {
 		struct stat file_info;
 		bool is_directory = true;
-		if (stat(path.c_str(), &file_info) == 0) {
+		if (stat(path, &file_info) == 0) {
 			is_directory = file_info.st_mode & S_IFDIR;
 		}
 		status = set_xattr(path, attributes);
@@ -342,15 +336,15 @@ uint16_t local_drive_set_attributes(const std_fs::path& path,
 	return status ? DOSERR_NONE : DOSERR_ACCESS_DENIED;
 }
 
-NativeFileHandle open_native_file(const std_fs::path& path, const bool write_access)
+NativeFileHandle open_native_file(const char* path, const bool write_access)
 {
-	return open(path.c_str(), write_access ? O_RDWR : O_RDONLY);
+	return open(path, write_access ? O_RDWR : O_RDONLY);
 }
 
-NativeFileHandle create_native_file(const std_fs::path& path,
+NativeFileHandle create_native_file(const char* path,
                                     const std::optional<FatAttributeFlags> attributes)
 {
-	const auto file_descriptor = open(path.c_str(),
+	const auto file_descriptor = open(path,
 	                                  O_CREAT | O_RDWR | O_TRUNC,
 	                                  PermissionsRW);
 	if (attributes && file_descriptor != InvalidNativeFileHandle) {
@@ -486,24 +480,24 @@ void set_dos_file_time(const NativeFileHandle handle, const uint16_t date, const
 	futimens(handle, unix_times);
 }
 
-bool delete_native_file(const std_fs::path& path)
+bool delete_native_file(const char* path)
 {
-	return unlink(path.c_str()) == 0;
+	return unlink(path) == 0;
 }
 
-bool local_drive_remove_dir(const std_fs::path& path)
+bool local_drive_remove_dir(const char* path)
 {
-	return rmdir(path.c_str()) == 0;
+	return rmdir(path) == 0;
 }
 
-bool delete_file(const std_fs::path& path)
+bool local_drive_path_exists(const char* path)
 {
-	return delete_native_file(path);
+	return access(path, F_OK) == 0;
 }
 
-bool remove_dir(const std_fs::path& path)
+bool local_drive_rename_file_or_directory(const char* old_path, const char* new_path)
 {
-	return local_drive_remove_dir(path);
+	return rename(old_path, new_path) == 0;
 }
 
 #endif

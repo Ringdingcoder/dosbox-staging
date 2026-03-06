@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2023-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2023-2026 The DOSBox Staging Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #ifndef DOSBOX_RGB666_H
@@ -33,11 +33,6 @@ public:
 	constexpr bool operator==(const Rgb666& that) const
 	{
 		return (red == that.red && green == that.green && blue == that.blue);
-	}
-
-	constexpr bool operator!=(const Rgb666& that) const
-	{
-		return !operator==(that);
 	}
 
 	// Scoped conversion helpers

@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2020-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2020-2026 The DOSBox Staging Team
 // SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
@@ -722,7 +722,7 @@ static void set_text_lines()
 
 void INT10_SetCurMode(void)
 {
-	uint16_t bios_mode = (uint16_t)real_readb(BIOSMEM_SEG, BIOSMEM_CURRENT_MODE);
+	auto bios_mode = (uint16_t)real_readb(BIOSMEM_SEG, BIOSMEM_CURRENT_MODE);
 
 	if (CurMode->mode != bios_mode) {
 		bool mode_changed = false;
@@ -823,7 +823,8 @@ static void finish_set_mode(bool clearmem) {
 				}
 				break;
 			}
-			// fall-through
+			[[fallthrough]];
+
 		case M_CGA2:
 			for (uint16_t ct=0;ct<16*1024;ct++) {
 				real_writew( 0xb800,ct*2,0x0000);
@@ -915,6 +916,7 @@ static bool INT10_SetVideoMode_OTHER(uint16_t mode, bool clearmem)
 		if (mode > 6)
 			return false;
 		[[fallthrough]];
+
 	case MachineType::Pcjr:
 	case MachineType::Tandy:
 		if (mode>0xa) return false;
@@ -960,11 +962,11 @@ static bool INT10_SetVideoMode_OTHER(uint16_t mode, bool clearmem)
 	//Horizontal sync position
 	IO_WriteW(crtc_base,0x02 | (CurMode->hdispend+1) << 8);
 	//Horizontal sync width, seems to be fixed to 0xa, for cga at least, hercules has 0xf
-	IO_WriteW(crtc_base,0x03 | (0xa) << 8);
+	IO_WriteW(crtc_base,0x03 | 0xa << 8);
 	////Vertical total
 	IO_WriteW(crtc_base,0x04 | (CurMode->vtotal) << 8);
 	//Vertical total adjust, 6 for cga,hercules,tandy
-	IO_WriteW(crtc_base,0x05 | (6) << 8);
+	IO_WriteW(crtc_base,0x05 | 6 << 8);
 	//Vertical displayed
 	IO_WriteW(crtc_base,0x06 | (CurMode->vdispend) << 8);
 	//Vertical sync position
@@ -1264,50 +1266,45 @@ bool INT10_SetVideoMode(uint16_t mode)
 	uint8_t seq_data[NumVgaSequencerRegisters];
 	memset(seq_data, 0, NumVgaSequencerRegisters);
 
-	// 8 dot fonts by default
+	// 8-dot fonts by default
 	seq_data[1] |= 0x01;
 
-	if (CurMode->special & EGA_HALF_CLOCK)
-		seq_data[1] |= 0x08; // Check for half clock
-	if (is_machine_ega() && (CurMode->special & EGA_HALF_CLOCK))
-		seq_data[1] |= 0x02;
+	if (CurMode->special & EGA_HALF_CLOCK) {
+		seq_data[1] |= 0x08; // Double width
+		if (is_machine_ega()) {
+			seq_data[1] |= 0x02;
+		}
+	}
+
 	seq_data[4] |= 0x02; // More than 64kb
 	switch (CurMode->type) {
 	case M_TEXT:
-		if (CurMode->cwidth==9) seq_data[1] &= ~1;
-		seq_data[2]|=0x3;				//Enable plane 0 and 1
-		seq_data[4]|=0x01;				//Alpanumeric
-		if (is_machine_vga_or_better()) {
-			seq_data[4] |= 0x04; // odd/even enabled
+		if (CurMode->cwidth == 9) {
+			seq_data[1] &= ~1;
 		}
+		seq_data[2] |= 0x3;  // Enable plane 0 and 1
+		seq_data[4] |= 0x01; // Alphanumeric
 		break;
 	case M_CGA2:
-		// Enable plane 0 (this was 0xf, which is all planes)
-		seq_data[2] |= 0x01;
-		if (is_machine_ega()) {
-			seq_data[4] |= 0x04; // odd/even enabled
-		}
+		seq_data[2] |= 0x01; // Enable plane 0
+		seq_data[4] |= 0x04; // odd/even disabled
 		break;
 	case M_CGA4:
-		if (is_machine_ega()) {
-			seq_data[2] |= 0x03; //Enable plane 0 and 1
-		}
+		seq_data[2] |= 0x03; // Enable plane 0 and 1
 		break;
 	case M_LIN4:
 	case M_EGA:
-		seq_data[2]|=0xf;				//Enable all planes for writing
-		if (is_machine_ega()) {
-			seq_data[4] |= 0x04; // odd/even enabled
-		}
+		seq_data[2] |= 0xf;  // Enable all planes for writing
+		seq_data[4] |= 0x04; // odd/even disabled
 		break;
-	case M_LIN8:						//Seems to have the same reg layout from testing
+	case M_LIN8: // Seems to have the same reg layout from testing
 	case M_LIN15:
 	case M_LIN16:
 	case M_LIN24:
 	case M_LIN32:
 	case M_VGA:
-		seq_data[2]|=0xf;				//Enable all planes for writing
-		seq_data[4]|=0xc;				//Graphics - odd/even - Chained
+		seq_data[2] |= 0xf; // Enable all planes for writing
+		seq_data[4] |= 0xc; // Graphics - odd/even disabled - Chained
 		break;
 	case M_CGA16:
 	case M_CGA2_COMPOSITE:
@@ -1966,6 +1963,7 @@ bool INT10_SetVideoMode(uint16_t mode)
 				break;
 			}
 			[[fallthrough]];
+
 		case M_LIN4: write_palette_dac_data(palette.ega); break;
 
 		case M_VGA:
@@ -2292,10 +2290,11 @@ static cga_colors_t handle_cga_colors_prefs_tandy(const std::string& cga_colors_
 	if (tokens.size() > 1) {
 		auto brown_level_pref = tokens[1];
 
-		if (float p; sscanf(brown_level_pref.c_str(), "%f", &p)) {
+		const auto value = parse_float(brown_level_pref);
+		if (value) {
 			auto cga_colors = cga_colors_default;
 
-			brown_level = clamp(p / 100, 0.0f, 1.0f);
+			brown_level = clamp(*value / 100, 0.0f, 1.0f);
 
 			constexpr float max_green = 0x2a;
 			cga_colors[6].green = static_cast<uint8_t>(max_green *
@@ -2322,8 +2321,9 @@ static cga_colors_t handle_cga_colors_prefs_ibm5153(const std::string& cga_color
 	if (tokens.size() > 1) {
 		auto contrast_pref = tokens[1];
 
-		if (float p; sscanf(contrast_pref.c_str(), "%f", &p)) {
-			contrast = clamp(p / 100, 0.0f, 1.0f);
+		const auto value = parse_float(contrast_pref);
+		if (value) {
+			contrast = clamp(*value / 100, 0.0f, 1.0f);
 
 			auto cga_colors = cga_colors_ibm5153;
 			for (size_t i = 0; i < cga_colors.size() / 2; ++i) {
@@ -2445,13 +2445,14 @@ std::optional<Rgb888> parse_color_token(const std::string& token,
 		}
 		// Need to do this check because sscanf is way too lenient and
 		// would parse something like "xyz" as 0
-		if (!is_hex_digits(token.substr(1))) {
+		if (!is_hex_digits(std::string_view(token).substr(1))) {
 			log_warning("hex colors must contain only digits and the letters A to F");
 			return {};
 		}
 
-		uint32_t value;
-		if (!sscanf(token.c_str(), "#%x", &value)) {
+		unsigned int value = {};
+		const auto parse_result = sscanf(token.c_str(), "#%x", &value);
+		if (parse_result == 0 || parse_result == EOF) {
 			log_warning("could not parse hex color");
 			return {};
 		}
@@ -2494,16 +2495,16 @@ std::optional<Rgb888> parse_color_token(const std::string& token,
 				return {};
 			}
 
-			int32_t value;
-			if (!sscanf(c.c_str(), "%d", &value)) {
+			const auto value = parse_int(c);
+			if (!value) {
 				log_warning("could not parse RGB-triplet value");
 				return {};
 			}
-			if (value < 0 || value > 255) {
+			if (*value < 0 || *value > 255) {
 				log_warning("RGB-triplet values must be between 0 and 255");
 				return {};
 			}
-			return value;
+			return *value;
 		};
 
 		const auto red8   = parse_component(r_string);
@@ -2627,4 +2628,3 @@ void INT10_SetupPalette()
 	auto cga_colors = configure_cga_colors();
 	init_all_palettes(cga_colors);
 }
-

@@ -1,15 +1,16 @@
 resources = [
+    'disk-noises',
     'drives',
-    'disknoises',
     'freedos-cpi',
     'freedos-keyboard',
-    'glshaders',
+    'mapperfiles',
     'mapping',
     'mapping-freedos.org',
     'mapping-unicode.org',
     'mapping-wikipedia.org',
+    'shader-presets',
+    'shaders',
     'translations',
-    'mapperfiles',
     # insert new resource subdirectory names here
 ]
 
@@ -45,7 +46,7 @@ resources = [
 #         - https://github.com/mesonbuild/meson/issues/7067
 #
 relative_resources = (
-    target_machine.system() == 'darwin' ? '../../Resources' : '../resources'
+    target_machine.system() == 'darwin' ? '../../../Resources' : '../resources'
 )
 
 # Top-level resources directory for the build and installation area

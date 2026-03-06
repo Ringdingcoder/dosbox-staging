@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2020-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2020-2026 The DOSBox Staging Team
 // SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
@@ -707,7 +707,9 @@ void XGA_DrawWait(uint32_t val, io_width_t width)
 						DrawWaitSub(mixmode, srcval);
 					}
 					break;
-				}               // fall-through
+				}
+				[[fallthrough]];
+
 			case 0x40 | XGA_32_BIT: // 32 bit
 				DrawWaitSub(mixmode, val);
 				break;

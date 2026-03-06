@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2023-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2023-2026 The DOSBox Staging Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "shell/command_line.h"
@@ -11,6 +11,18 @@ bool CommandLine::FindExist(const std::string& name, bool remove)
 {
 	cmd_it it;
 	if (!(FindEntry(name, it, false))) {
+		return false;
+	}
+	if (remove) {
+		cmds.erase(it);
+	}
+	return true;
+}
+
+bool CommandLine::FindExistCaseSensitive(const std::string& name, bool remove)
+{
+	cmd_it it;
+	if (!(FindEntry(name, it, false, true))) {
 		return false;
 	}
 	if (remove) {
@@ -113,7 +125,7 @@ bool CommandLine::FindCommand(unsigned int which, std::string& value) const
 // Was a directory provided on the command line?
 bool CommandLine::HasDirectory() const
 {
-	return std::any_of(cmds.begin(), cmds.end(), is_directory);
+	return std::any_of(cmds.begin(), cmds.end(), is_dir);
 }
 
 // Was an executable filename provided on the command line?
@@ -127,10 +139,13 @@ bool CommandLine::HasExecutableName() const
 	return false;
 }
 
-bool CommandLine::FindEntry(const std::string& name, cmd_it& it, bool neednext)
+bool CommandLine::FindEntry(const std::string& name, cmd_it& it, bool neednext, const bool case_sensitive)
 {
 	for (it = cmds.begin(); it != cmds.end(); ++it) {
-		if (iequals((*it).c_str(), name)) {
+		bool match = case_sensitive
+		           ? equals((*it).c_str(), name)
+		           : iequals((*it).c_str(), name);
+		if (match) {
 			cmd_it itnext = it;
 			++itnext;
 			if (neednext && (itnext == cmds.end())) {
@@ -142,8 +157,9 @@ bool CommandLine::FindEntry(const std::string& name, cmd_it& it, bool neednext)
 	return false;
 }
 
-bool CommandLine::FindStringBegin(const std::string& begin, std::string& value,
-                                  bool remove)
+bool CommandLine::FindStringBeginCaseSensitive(const std::string& begin,
+                                               std::string& value,
+                                               bool remove)
 {
 	const auto len = begin.length();
 	for (auto it = cmds.begin(); it != cmds.end(); ++it) {
@@ -158,9 +174,9 @@ bool CommandLine::FindStringBegin(const std::string& begin, std::string& value,
 	return false;
 }
 
-bool CommandLine::FindStringCaseInsensitiveBegin(const std::string& begin,
-                                                 std::string& value,
-                                                 bool remove)
+bool CommandLine::FindStringBegin(const std::string& begin,
+                                  std::string& value,
+                                  bool remove)
 {
 	const auto len = begin.length();
 	for (auto it = cmds.begin(); it != cmds.end(); ++it) {
@@ -276,12 +292,12 @@ std::vector<std::string> CommandLine::GetArguments()
 int CommandLine::GetParameterFromList(const char* const params[],
                                       std::vector<std::string>& output)
 {
-	// Return values: 0 = P_NOMATCH, 1 = P_NOPARAMS
+	// Return values: 0 = NoMatch, 1 = NoParams
 	// TODO return nomoreparams
 	int retval = 1;
 	output.clear();
 
-	enum { P_START, P_FIRSTNOMATCH, P_FIRSTMATCH } parsestate = P_START;
+	enum { Start, FirstNoMatch, FirstMatch } parsestate = Start;
 
 	auto it = cmds.begin();
 
@@ -293,26 +309,26 @@ int CommandLine::GetParameterFromList(const char* const params[],
 				// Found a parameter
 				found = true;
 				switch (parsestate) {
-				case P_START:
+				case Start:
 					retval     = i + 2;
-					parsestate = P_FIRSTMATCH;
+					parsestate = FirstMatch;
 					break;
-				case P_FIRSTMATCH:
-				case P_FIRSTNOMATCH: return retval;
+				case FirstMatch:
+				case FirstNoMatch: return retval;
 				}
 			}
 		}
 
 		if (!found) {
 			switch (parsestate) {
-			case P_START:
+			case Start:
 				// No match
 				retval     = 0;
-				parsestate = P_FIRSTNOMATCH;
+				parsestate = FirstNoMatch;
 				output.push_back(*it);
 				break;
-			case P_FIRSTMATCH:
-			case P_FIRSTNOMATCH: output.push_back(*it); break;
+			case FirstMatch:
+			case FirstNoMatch: output.push_back(*it); break;
 			}
 		}
 
@@ -334,7 +350,7 @@ CommandLine::CommandLine(int argc, const char* const argv[])
 	int i = 1;
 
 	while (i < argc) {
-		cmds.push_back(argv[i]);
+		cmds.emplace_back(argv[i]);
 		i++;
 	}
 }
@@ -396,7 +412,7 @@ bool CommandLine::FindBoolArgument(const std::string& name, bool remove,
 	short_name[1]                 = short_letter;
 	return FindExist(double_dash, remove) ||
 	       FindExist(dash, remove) ||
-	       (short_letter && FindExist(short_name, remove));
+	       (short_letter && FindExistCaseSensitive(short_name, remove));
 }
 
 bool CommandLine::FindRemoveBoolArgument(const std::string& name, char short_letter)

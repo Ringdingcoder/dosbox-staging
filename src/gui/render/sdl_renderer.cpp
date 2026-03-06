@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2025-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2025-2026 The DOSBox Staging Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "sdl_renderer.h"
@@ -13,6 +13,8 @@
 
 CHECK_NARROWING();
 
+static constexpr uint32_t SdlPixelFormat = SDL_PIXELFORMAT_ARGB8888;
+
 SdlRenderer::SdlRenderer(const int x, const int y, const int width,
                          const int height, const uint32_t sdl_window_flags,
                          const std::string& render_driver,
@@ -20,6 +22,10 @@ SdlRenderer::SdlRenderer(const int x, const int y, const int width,
         : texture_filter_mode(texture_filter_mode)
 {
 	auto flags = sdl_window_flags | OpenGlDriverCrashWorkaround(render_driver);
+
+#ifdef MACOSX
+	SDL_SetHint(SDL_HINT_MAC_COLOR_SPACE, "srgb");
+#endif
 
 	window = SDL_CreateWindow(DOSBOX_NAME, x, y, width, height, flags);
 
@@ -87,16 +93,8 @@ uint32_t SdlRenderer::OpenGlDriverCrashWorkaround(const std::string_view render_
 
 bool SdlRenderer::InitRenderer(const std::string& render_driver)
 {
-	if (render_driver != "auto" &&
-	    (SDL_SetHint(SDL_HINT_RENDER_DRIVER, render_driver.c_str()) == SDL_FALSE)) {
-
-		// TODO convert to notification?
-		LOG_WARNING(
-		        "SDL: Error setting '%s' SDL render driver; "
-		        "falling back to automatic selection",
-		        render_driver.c_str());
-
-		set_section_property_value("sdl", "texture_renderer", "auto");
+	if (render_driver != "auto") {
+		SDL_SetHint(SDL_HINT_RENDER_DRIVER, render_driver.c_str());
 	}
 
 	constexpr uint32_t Flags = 0;
@@ -118,25 +116,6 @@ bool SdlRenderer::InitRenderer(const std::string& render_driver)
 	}
 	LOG_MSG("SDL: Using '%s' SDL render driver", info.name);
 
-	pixel_format = SDL_AllocFormat(info.texture_formats[0]);
-	if (!pixel_format) {
-		LOG_ERR("SDL: Error allocating pixel format: %s", SDL_GetError());
-		SDL_DestroyRenderer(renderer);
-		return false;
-	}
-
-	switch (SDL_BITSPERPIXEL(info.texture_formats[0])) {
-	case 8: gfx_flags = GFX_CAN_8; break;
-	case 15: gfx_flags = GFX_CAN_15; break;
-	case 16: gfx_flags = GFX_CAN_16; break;
-	case 24: // SDL_BYTESPERPIXEL is probably 4, though
-	case 32: gfx_flags = GFX_CAN_32; break;
-	}
-
-	if (!(info.flags & SDL_RENDERER_ACCELERATED)) {
-		gfx_flags |= GFX_CAN_RANDOM;
-	}
-
 	if (SDL_SetRenderDrawColor(renderer, 0, 0, 0, SDL_ALPHA_OPAQUE) < 0) {
 		LOG_ERR("SDL: Error setting render clear color: %s", SDL_GetError());
 	}
@@ -146,10 +125,6 @@ bool SdlRenderer::InitRenderer(const std::string& render_driver)
 
 SdlRenderer::~SdlRenderer()
 {
-	if (pixel_format) {
-		SDL_FreeFormat(pixel_format);
-		pixel_format = {};
-	}
 	if (renderer) {
 		// Frees associated textures automatically.
 		SDL_DestroyRenderer(renderer);
@@ -175,11 +150,6 @@ SDL_Window* SdlRenderer::GetWindow()
 	return window;
 }
 
-uint8_t SdlRenderer::GetGfxFlags()
-{
-	return gfx_flags;
-}
-
 DosBox::Rect SdlRenderer::GetCanvasSizeInPixels()
 {
 	SDL_Rect canvas_size_px = {};
@@ -199,7 +169,7 @@ DosBox::Rect SdlRenderer::GetCanvasSizeInPixels()
 	return r;
 }
 
-void SdlRenderer::UpdateViewport(const DosBox::Rect draw_rect_px)
+void SdlRenderer::NotifyViewportSizeChanged(const DosBox::Rect draw_rect_px)
 {
 	const auto sdl_draw_rect_px = to_sdl_rect(draw_rect_px);
 
@@ -208,28 +178,21 @@ void SdlRenderer::UpdateViewport(const DosBox::Rect draw_rect_px)
 	}
 }
 
-bool SdlRenderer::UpdateRenderSize(const int render_width_px, const int render_height_px)
+void SdlRenderer::NotifyRenderSizeChanged(const int render_width_px,
+                                          const int render_height_px)
 {
-	// Retrieve available texture formats.
-	SDL_RendererInfo renderer_info;
-	if (SDL_GetRendererInfo(renderer, &renderer_info) < 0) {
-		LOG_ERR("SDL: Error retrieving SDL renderer info: %s",
-		        SDL_GetError());
-		return false;
-	}
-
 	if (texture) {
 		SDL_DestroyTexture(texture);
 	}
 
 	texture = SDL_CreateTexture(renderer,
-	                            renderer_info.texture_formats[0],
+	                            SdlPixelFormat,
 	                            SDL_TEXTUREACCESS_STREAMING,
 	                            render_width_px,
 	                            render_height_px);
 	if (!texture) {
 		LOG_ERR("SDL: Error creating SDL texture: %s", SDL_GetError());
-		return false;
+		return;
 	}
 
 	switch (texture_filter_mode) {
@@ -249,7 +212,7 @@ bool SdlRenderer::UpdateRenderSize(const int render_width_px, const int render_h
 		}
 		break;
 
-	default: assertm(false, "Invalid TextureFilterMode"); return 0;
+	default: assertm(false, "Invalid TextureFilterMode"); return;
 	}
 
 	// unused; must be 0
@@ -267,52 +230,61 @@ bool SdlRenderer::UpdateRenderSize(const int render_width_px, const int render_h
 	                                               render_width_px,
 	                                               render_height_px,
 	                                               BitDepth,
-	                                               renderer_info.texture_formats[0]);
+	                                               SdlPixelFormat);
 
 	last_framebuf = SDL_CreateRGBSurfaceWithFormat(Flags,
 	                                               render_width_px,
 	                                               render_height_px,
 	                                               BitDepth,
-	                                               renderer_info.texture_formats[0]);
+	                                               SdlPixelFormat);
 
 	if (!curr_framebuf || !last_framebuf) {
 		SDL_DestroyTexture(texture);
 		LOG_ERR("SDL: Error creating input surface: %s", SDL_GetError());
-		return false;
+		return;
 	}
-
-	return true;
 }
 
-bool SdlRenderer::SetShader([[maybe_unused]] const std::string& shader_name)
+SdlRenderer::SetShaderResult SdlRenderer::SetShader(
+        [[maybe_unused]] const std::string& symbolic_shader_descriptor)
 {
-	// no shader support; always report success
+	// no-op; always report success (no shader support)
 	//
 	// If we didn't, the rendering backend agnostic fallback mechanism would
 	// fail and we'd hard exit.
-	return true;
+	return SetShaderResult::Ok;
 }
 
-bool SdlRenderer::MaybeAutoSwitchShader([[maybe_unused]] const DosBox::Rect canvas_size_px,
-                                        [[maybe_unused]] const VideoMode& video_mode)
+void SdlRenderer::NotifyVideoModeChanged([[maybe_unused]] const VideoMode& video_mode)
 {
-	// no shader support; always report no change
-	return false;
+	// no-op (no shader support)
+	return;
 }
 
-bool SdlRenderer::ForceReloadCurrentShader()
+void SdlRenderer::ForceReloadCurrentShader()
 {
-	// no shader support; always report success
-	return true;
+	// no-op
 }
 
 ShaderInfo SdlRenderer::GetCurrentShaderInfo()
 {
-	// no shader support
+	// no-op (no shader support)
 	return {};
 }
 
-void SdlRenderer::StartFrame(uint8_t*& pixels_out, int& pitch_out)
+ShaderPreset SdlRenderer::GetCurrentShaderPreset()
+{
+	// no-op (no shader support)
+	return {};
+}
+
+std::string SdlRenderer::GetCurrentSymbolicShaderDescriptor()
+{
+	// no-op (no shader support)
+	return {};
+}
+
+void SdlRenderer::StartFrame(uint32_t*& pixels_out, int& pitch_out)
 {
 	assert(curr_framebuf);
 
@@ -321,7 +293,7 @@ void SdlRenderer::StartFrame(uint8_t*& pixels_out, int& pitch_out)
 		SDL_LockSurface(curr_framebuf);
 	}
 
-	pixels_out = static_cast<uint8_t*>(curr_framebuf->pixels);
+	pixels_out = reinterpret_cast<uint32_t*>(curr_framebuf->pixels);
 	pitch_out  = curr_framebuf->pitch;
 }
 
@@ -338,9 +310,8 @@ void SdlRenderer::EndFrame()
 	// emulation only writes the changed pixels to the framebuffer in each
 	// frame.
 
-	// TODO Couldn't get SDL_BlitSurface to work... If you
-	// can, feel free to use that here, but this works
-	// perfectly fine.
+	// TODO Couldn't get SDL_BlitSurface to work... If you can, feel free to
+	// use that here, but this works perfectly fine.
 	std::memcpy(last_framebuf->pixels,
 	            curr_framebuf->pixels,
 	            (curr_framebuf->h * curr_framebuf->pitch));
@@ -395,6 +366,22 @@ void SdlRenderer::SetVsync(const bool is_enabled)
 	}
 }
 
+void SdlRenderer::SetColorSpace([[maybe_unused]] const ColorSpace color_space)
+{
+	// no-op (no colour space support)
+}
+
+void SdlRenderer::SetImageAdjustmentSettings(
+        [[maybe_unused]] const ImageAdjustmentSettings& settings)
+{
+	// no-op (no image adjustment support)
+}
+
+void SdlRenderer::EnableImageAdjustments([[maybe_unused]] const bool enable)
+{
+	// no-op (no image adjustment support)
+}
+
 RenderedImage SdlRenderer::ReadPixelsPostShader(const DosBox::Rect output_rect_px)
 {
 	// Create new image
@@ -413,8 +400,7 @@ RenderedImage SdlRenderer::ReadPixelsPostShader(const DosBox::Rect output_rect_p
 	const auto image_size_bytes = check_cast<uint32_t>(image.params.height *
 	                                                   image.pitch);
 
-	image.image_data   = new uint8_t[image_size_bytes];
-	image.palette_data = nullptr;
+	image.image_data = new uint8_t[image_size_bytes];
 
 	image.is_flipped_vertically = false;
 
@@ -451,7 +437,6 @@ RenderedImage SdlRenderer::ReadPixelsPostShader(const DosBox::Rect output_rect_p
 uint32_t SdlRenderer::MakePixel(const uint8_t red, const uint8_t green,
                                 const uint8_t blue)
 {
-	assert(pixel_format);
-
-	return SDL_MapRGB(pixel_format, red, green, blue);
+	static_assert(SdlPixelFormat == SDL_PIXELFORMAT_ARGB8888);
+	return ((blue << 0) | (green << 8) | (red << 16)) | (255 << 24);
 }

@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2021-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2021-2026 The DOSBox Staging Team
 // SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
@@ -29,7 +29,7 @@ unsigned int vfile_pos = 1;
 uint16_t fztime = 0;
 uint16_t fzdate = 0;
 char sfn[DOS_NAMELENGTH_ASCII];
-void Add_VFiles();
+
 extern DOS_Shell *first_shell;
 
 class VFILE_Block;
@@ -258,7 +258,7 @@ void VFILE_RegisterZDrive(const std_fs::path &z_drive_path)
 	constexpr auto dir_indicator = "/";
 
 	// Check if the provided path is invalid
-	if (z_drive_path.empty() || !std_fs::is_directory(z_drive_path))
+	if (z_drive_path.empty() || !is_dir(z_drive_path))
 		return;
 
 	std::error_code ec = {};
@@ -607,7 +607,7 @@ bool Virtual_Drive::AllocationInfo(uint16_t * _bytes_sector,uint8_t * _sectors_c
 }
 
 uint8_t Virtual_Drive::GetMediaByte() {
-	return 0xF8;
+	return MediaId::HardDisk;
 }
 
 bool Virtual_Drive::IsRemote() {
@@ -662,5 +662,5 @@ void Virtual_Drive::EmptyCache()
 	vfile_pos = 1;
 	PROGRAMS_Destroy();
 	vfilenames = {Filename{"", ""}};
-	Add_VFiles();
+	DOS_SetupPrograms();
 }

@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cassert>
 #include <iterator>
+#include <numeric>
 #include <vector>
 
 #include "dos.h"
@@ -429,11 +430,11 @@ unsigned DOS_Drive_Cache::CreateShortNameID(CFileInfo *curDir, const char *name)
 		return 1; // short name IDs start with 1
 
 	unsigned found_nr = 0;
-	Bits low = 0;
-	Bits high = (Bits)(filelist_size - 1);
+	Bits low  = 0;
+	auto high = (Bits)(filelist_size - 1);
 
 	while (low <= high) {
-		auto mid = (low + high) / 2;
+		auto mid = std::midpoint(low, high);
 		const char *other_shortname = curDir->longNameList[mid]->shortname;
 		const int res = CompareShortname(name, other_shortname);
 		
@@ -463,86 +464,6 @@ bool DOS_Drive_Cache::RemoveTrailingDot(char* shortname) {
 	return false;
 }
 
-#define WINE_DRIVE_SUPPORT 1
-#if WINE_DRIVE_SUPPORT
-//Changes to interact with WINE by supporting their namemangling.
-//The code is rather slow, because orglist is unordered, so it needs to be avoided if possible.
-//Hence the tests in GetLongFileName
-
-
-// From the Wine project
-static Bits wine_hash_short_file_name( char* name, char* buffer )
-{
-	constexpr char hash_chars[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ012345";
-
-	// returns '_' if invalid or upper case if valid.
-	auto replace_invalid = [](char c) -> char {
-		constexpr char invalid_chars[] = {'*',
-		                                  '?',
-		                                  '<',
-		                                  '>',
-		                                  '|',
-		                                  '"',
-		                                  '+',
-		                                  '=',
-		                                  ',',
-		                                  ';',
-		                                  '[',
-		                                  ']',
-		                                  ' ',
-		                                  '\345',
-		                                  '~',
-		                                  '.',
-		                                  '\0'};
-		const auto is_invalid = char_is_negative(c) ||
-		                        strchr(invalid_chars, c);
-		return is_invalid ? '_' : toupper(c);
-	};
-
-	char *p = nullptr;
-	char *ext = nullptr;
-	char *end = name + strlen(name);
-	char *dst = nullptr;
-	uint16_t hash = 0;
-	int i = 0;
-
-	// Compute the hash code of the file name
-	for (p = name, hash = 0xbeef; p < end - 1; p++)
-		hash = (hash<<3) ^ (hash>>5) ^ tolower(*p) ^ (tolower(p[1]) << 8);
-	hash = (hash<<3) ^ (hash>>5) ^ tolower(*p); // Last character
-
-	// Find last dot for start of the extension
-	for (p = name + 1, ext = nullptr; p < end - 1; p++) if (*p == '.') ext = p;
-
-	// Copy first 4 chars, replacing invalid chars with '_'
-	for (i = 4, p = name, dst = buffer; i > 0; i--, p++)
-	{
-		if (p == end || p == ext) {
-			break;
-		}
-		*dst++ = replace_invalid(*p);
-	}
-	// Pad to 5 chars with '~'
-	while (i-- >= 0)
-		*dst++ = '~';
-
-	// Insert hash code converted to 3 ASCII chars
-	*dst++ = hash_chars[(hash >> 10) & 0x1f];
-	*dst++ = hash_chars[(hash >> 5) & 0x1f];
-	*dst++ = hash_chars[hash & 0x1f];
-
-	// Copy the first 3 chars of the extension (if any)
-	if (ext) {
-		*dst++ = '.';
-		for (i = 3, ext++; (i > 0) && ext < end; i--, ext++) {
-			*dst++ = replace_invalid(*ext);
-		}
-	}
-
-	return dst - buffer;
-}
-#endif
-
 Bits DOS_Drive_Cache::GetLongName(CFileInfo* curDir, char* shortName, const size_t shortName_len) {
 	std::vector<CFileInfo*>::size_type filelist_size = curDir->fileList.size();
 	if (filelist_size <= 0) {
@@ -553,10 +474,10 @@ Bits DOS_Drive_Cache::GetLongName(CFileInfo* curDir, char* shortName, const size
 	RemoveTrailingDot(shortName);
 	// Search long name and return array number of element
 	Bits low	= 0;
-	Bits high	= (Bits)(filelist_size-1);
+	auto high	= (Bits)(filelist_size-1);
 	Bits mid,res;
 	while (low<=high) {
-		mid = (low+high)/2;
+		mid = std::midpoint(low, high);
 		res = strcmp(shortName,curDir->fileList[mid]->shortname);
 		if (res>0)	low  = mid+1; else
 		if (res<0)	high = mid-1; else
@@ -565,21 +486,6 @@ Bits DOS_Drive_Cache::GetLongName(CFileInfo* curDir, char* shortName, const size
 			return mid;
 		};
 	}
-#ifdef WINE_DRIVE_SUPPORT
-	if (strlen(shortName) < 8 || shortName[4] != '~' || shortName[5] == '.' || shortName[6] == '.' || shortName[7] == '.') return -1; // not available
-	// else it's most likely a Wine style short name ABCD~###, # = not dot  (length at least 8) 
-	// The above test is rather strict as the following loop can be really slow if filelist_size is large.
-	char buff[CROSS_LEN];
-	for (Bitu i = 0; i < filelist_size; i++) {
-		res = wine_hash_short_file_name(curDir->fileList[i]->orgname,buff);
-		buff[res] = 0;
-		if (!strcmp(shortName,buff)) {	
-			// Found
-			safe_strncpy(shortName, curDir->fileList[i]->orgname, shortName_len);
-			return (Bits)i;
-		}
-	}
-#endif
 	// not available
 	return -1;
 }
@@ -831,7 +737,7 @@ bool DOS_Drive_Cache::OpenDir(CFileInfo* dir, const char* expand, uint16_t& id) 
 }
 
 void DOS_Drive_Cache::CreateEntry(CFileInfo* dir, const char* name, bool is_directory) {
-	CFileInfo* info = new CFileInfo;
+	auto info = new CFileInfo;
 	safe_strcpy(info->orgname, name);
 	info->shortNr = 0;
 	info->isDir = is_directory;
@@ -866,7 +772,7 @@ void DOS_Drive_Cache::CreateEntry(CFileInfo* dir, const char* name, bool is_dire
 }
 
 void DOS_Drive_Cache::CopyEntry(CFileInfo* dir, CFileInfo* from) {
-	CFileInfo* info = new CFileInfo;
+	auto info = new CFileInfo;
 	// just copy things into new fileinfo
 	safe_strcpy(info->orgname, from->orgname);
 	safe_strcpy(info->shortname, from->shortname);

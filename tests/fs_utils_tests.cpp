@@ -1,6 +1,7 @@
-// SPDX-FileCopyrightText:  2020-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2020-2026 The DOSBox Staging Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "misc/support.h"
 #include "utils/fs_utils.h"
 
 #include <gtest/gtest.h>
@@ -63,9 +64,11 @@ TEST(PathConversion, MissingFile)
 constexpr char TEST_DIR[] = "tests/files/no_path";
 
 struct CreateDirTest : public testing::Test {
-	~CreateDirTest() {
-		if (path_exists(TEST_DIR))
-			remove_dir(TEST_DIR);
+	~CreateDirTest() override {
+		if (path_exists(TEST_DIR)) {
+			std::error_code ec = {};
+			std_fs::remove(TEST_DIR, ec);
+		}
 	}
 };
 
@@ -90,37 +93,19 @@ TEST(SimplifyPath, CanBeSimplifiedComplex)
 	EXPECT_EQ(simplify_path(original), expected);
 }
 
-TEST_F(CreateDirTest, CreateDir)
-{
-	ASSERT_FALSE(path_exists(TEST_DIR));
-	EXPECT_EQ(create_dir(TEST_DIR, 0700), 0);
-	EXPECT_TRUE(path_exists(TEST_DIR));
-	EXPECT_EQ(create_dir(TEST_DIR, 0700), -1);
-	EXPECT_EQ(errno, EEXIST);
-}
-
 TEST_F(CreateDirTest, CreateDirWithoutFail)
 {
 	ASSERT_FALSE(path_exists(TEST_DIR));
-	EXPECT_EQ(create_dir(TEST_DIR, 0700, OK_IF_EXISTS), 0);
+	EXPECT_EQ(create_dir_if_not_exist(TEST_DIR), true);
 	EXPECT_TRUE(path_exists(TEST_DIR));
-	EXPECT_EQ(create_dir(TEST_DIR, 0700, OK_IF_EXISTS), 0);
+	EXPECT_EQ(create_dir_if_not_exist(TEST_DIR), true);
 }
 
 TEST_F(CreateDirTest, FailDueToFileExisting)
 {
 	constexpr char path[] = "tests/files/paths/empty.txt";
 	ASSERT_TRUE(path_exists(path));
-	EXPECT_EQ(create_dir(path, 0700), -1);
-	EXPECT_EQ(errno, EEXIST);
-}
-
-TEST_F(CreateDirTest, FailDueToFileExisting2)
-{
-	constexpr char path[] = "tests/files/paths/empty.txt";
-	ASSERT_TRUE(path_exists(path));
-	EXPECT_EQ(create_dir(path, 0700, OK_IF_EXISTS), -1);
-	EXPECT_EQ(errno, EEXIST);
+	EXPECT_EQ(create_dir_if_not_exist(path), false);
 }
 
 } // namespace

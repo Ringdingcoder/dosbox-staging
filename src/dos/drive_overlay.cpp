@@ -74,7 +74,7 @@ bool Overlay_Drive::RemoveDir(const char * dir) {
 		safe_strcpy(odir, overlaydir);
 		safe_strcat(odir, dir);
 		CROSS_FILENAME(odir);
-		const auto result_ok = remove_dir(odir);
+		const auto result_ok = local_drive_remove_dir(odir);
 		if (result_ok) {
 			remove_DOSdir_from_cache(dir);
 			char newdir[CROSS_LEN];
@@ -150,8 +150,8 @@ bool Overlay_Drive::MakeDir(const char * dir) {
 	safe_strcpy(newdir, overlaydir);
 	safe_strcat(newdir, dir);
 	CROSS_FILENAME(newdir);
-	const int temp = create_dir(newdir, 0775);
-	if (temp==0) {
+	const int result = local_drive_create_dir(newdir);
+	if (result == DOSERR_NONE) {
 		char fakename[CROSS_LEN];
 		safe_strcpy(fakename, basedir);
 		safe_strcat(fakename, dir);
@@ -160,7 +160,7 @@ bool Overlay_Drive::MakeDir(const char * dir) {
 		add_DOSdir_to_cache(dir);
 	}
 
-	return (temp == 0);// || ((temp!=0) && (errno==EEXIST));
+	return (result == DOSERR_NONE);
 }
 
 bool Overlay_Drive::TestDir(const char * dir) {
@@ -188,7 +188,7 @@ bool Overlay_Drive::TestDir(const char * dir) {
 
 class OverlayFile final : public localFile {
 public:
-	OverlayFile(const char* name, const std_fs::path& path,
+	OverlayFile(const char* name, const char* path,
 	            NativeFileHandle handle, const char* basedir,
 	            const bool _read_only_medium,
 	            const std::weak_ptr<localDrive> drive,
@@ -202,7 +202,7 @@ public:
 	}
 
 	OverlayFile(localFile* file)
-	        : localFile(file->GetName(), file->GetPath(), file->file_handle,
+	        : localFile(file->GetName(), file->GetPath().c_str(), file->file_handle,
 	                    file->GetBaseDir(), file->IsOnReadOnlyMedium(),
 	                    file->local_drive,
 	                    {.date = file->date, .time = file->time}, file->flags),
@@ -243,7 +243,7 @@ public:
 //Create leading directories of a file being overlayed if they exist in the original (localDrive).
 //This function is used to create copies of existing files, so all leading directories exist in the original.
 
-std::pair<NativeFileHandle, std_fs::path> Overlay_Drive::create_file_in_overlay(
+std::pair<NativeFileHandle, std::string> Overlay_Drive::create_file_in_overlay(
         const char* dos_filename, const FatAttributeFlags attributes)
 {
 	if (logoverlay) {
@@ -317,8 +317,8 @@ bool OverlayFile::create_copy()
 		        Drives[drive_set]);
 		if (od) {
 			FatAttributeFlags attributes = {};
-			local_drive_get_attributes(GetPath(), attributes);
-			std_fs::path newpath = {};
+			local_drive_get_attributes(GetPath().c_str(), attributes);
+			std::string newpath = {};
 			std::tie(newhandle,
 			         newpath) = od->create_file_in_overlay(GetName(),
 			                                               attributes);
@@ -383,11 +383,31 @@ Overlay_Drive::Overlay_Drive(const char *startdir,
 
 	error = 0;
 
+	// Avoid std_fs::path constructor throwing an exception on Windows
+	// by explicitly converting to UTF-16 first.
+	#if defined(WIN32)
+	wchar_t utf16_path[MAX_PATH] = {};
+	if (!codepage437_to_utf16(startdir, utf16_path)) {
+		error = -1;
+		return;
+	}
+	const bool is_absolute = std_fs::path(utf16_path).is_absolute();
+	memset(utf16_path, 0, sizeof(utf16_path));
+	if (!codepage437_to_utf16(overlay, utf16_path)) {
+		error = -1;
+		return;
+	}
+	if (std_fs::path(utf16_path).is_absolute() != is_absolute) {
+		error = -1;
+		return;
+	}
+	#else
 	if (std_fs::path(startdir).is_absolute() !=
 	    std_fs::path(overlay).is_absolute()) {
 		error = 1;
 		return;
 	}
+	#endif
 
 	safe_strcpy(overlaydir, overlay);
 	char dirname[CROSS_LEN] = { 0 };
@@ -554,10 +574,10 @@ std::unique_ptr<DOS_File> Overlay_Drive::FileCreate(const char* name,
 		.time = DOS_GetBiosTimePacked()
 	};
 
-	timestamp_cache[path.string()] = dos_time;
+	timestamp_cache[path] = dos_time;
 
 	auto file = std::make_unique<OverlayFile>(name,
-	                                          path,
+	                                          path.c_str(),
 	                                          file_handle,
 	                                          overlaydir,
 	                                          IsReadOnly(),
@@ -578,15 +598,17 @@ std::unique_ptr<DOS_File> Overlay_Drive::FileCreate(const char* name,
 	return file;
 }
 
-void Overlay_Drive::add_DOSname_to_cache(const char* name) {
-	for (std::vector<std::string>::const_iterator itc = DOSnames_cache.begin(); itc != DOSnames_cache.end(); ++itc){
-		if (name == (*itc)) return;
+void Overlay_Drive::add_DOSname_to_cache(const char* name)
+{
+	for (const auto& entry : DOSnames_cache) {
+		if (name == entry) return;
 	}
-	DOSnames_cache.push_back(name);
+	DOSnames_cache.emplace_back(name);
 }
 
-void Overlay_Drive::remove_DOSname_from_cache(const char* name) {
-	for (std::vector<std::string>::iterator it = DOSnames_cache.begin(); it != DOSnames_cache.end(); ++it) {
+void Overlay_Drive::remove_DOSname_from_cache(const char* name)
+{
+	for (auto it = DOSnames_cache.begin(); it != DOSnames_cache.end(); ++it) {
 		if (name == (*it)) { DOSnames_cache.erase(it); return;}
 	}
 
@@ -630,7 +652,7 @@ bool Overlay_Drive::Sync_leading_dirs(const char* dos_filename){
 			} else {
 				//folder does not exist, make it
 				if (logoverlay) LOG_MSG("creating %s",dirnameoverlay);
-				if (create_dir(dirnameoverlay, 0700) != 0)
+				if (local_drive_create_dir(dirnameoverlay) != DOSERR_NONE)
 					return false;
 			}
 		}
@@ -682,13 +704,23 @@ void Overlay_Drive::update_cache(bool read_directory_contents) {
 		char dir_name[CROSS_LEN];
 		bool is_directory;
 		if (read_directory_first(dirp, dir_name, is_directory)) {
-			if ((safe_strlen(dir_name) > prefix_lengh+5) && strncmp(dir_name,special_prefix.c_str(),prefix_lengh) == 0) specials.push_back(dir_name);
-			else if (is_directory) dirnames.push_back(dir_name);
-			else filenames.push_back(dir_name);
+			if ((safe_strlen(dir_name) > prefix_lengh+5) &&
+			    strncmp(dir_name, special_prefix.c_str(), prefix_lengh) == 0) {
+				specials.emplace_back(dir_name);
+			} else if (is_directory) {
+				dirnames.emplace_back(dir_name);
+			} else {
+				filenames.emplace_back(dir_name);
+			}
 			while (read_directory_next(dirp, dir_name, is_directory)) {
-				if ((safe_strlen(dir_name) > prefix_lengh+5) && strncmp(dir_name,special_prefix.c_str(),prefix_lengh) == 0) specials.push_back(dir_name);
-				else if (is_directory) dirnames.push_back(dir_name);
-				else filenames.push_back(dir_name);
+				if ((safe_strlen(dir_name) > prefix_lengh+5) &&
+				    strncmp(dir_name,special_prefix.c_str(),prefix_lengh) == 0) {
+					specials.emplace_back(dir_name);
+				} else if (is_directory) {
+					dirnames.emplace_back(dir_name);
+				} else {
+					filenames.emplace_back(dir_name);
+				}
 			}
 		}
 		close_directory(dirp);
@@ -772,7 +804,7 @@ void Overlay_Drive::update_cache(bool read_directory_contents) {
 			upcase(dosname);  //Should not be really needed, as uppercase in the overlay is a requirement...
 			CROSS_DOSFILENAME(dosname);
 			if (logoverlay) LOG_MSG("update cache add dosname %s",dosname);
-			DOSnames_cache.push_back(dosname);
+			DOSnames_cache.emplace_back(dosname);
 		}
 	}
 
@@ -967,7 +999,7 @@ bool Overlay_Drive::FileUnlink(const char * name) {
 	safe_strcat(overlayname, name);
 	CROSS_FILENAME(overlayname);
 	//	char *fullname = dirCache.GetExpandNameAndNormaliseCase(newname);
-	if (!delete_file(overlayname)) {
+	if (!delete_native_file(overlayname)) {
 		//Unlink failed for some reason try finding it.
 		struct stat buffer;
 		if(stat(overlayname,&buffer)) {
@@ -1061,7 +1093,7 @@ bool Overlay_Drive::SetFileAttr(const char* name, FatAttributeFlags attr)
 void Overlay_Drive::add_deleted_file(const char* name,bool create_on_disk) {
 	if (logoverlay) LOG_MSG("add del file %s",name);
 	if (!is_deleted_file(name)) {
-		deleted_files_in_base.push_back(name);
+		deleted_files_in_base.emplace_back(name);
 		if (create_on_disk) add_special_file_to_disk(name, "DEL");
 
 	}
@@ -1092,7 +1124,7 @@ void Overlay_Drive::remove_special_file_from_disk(const char* dosname, const cha
 	safe_strcpy(overlayname, overlaydir);
 	safe_strcat(overlayname, name.c_str());
 	CROSS_FILENAME(overlayname);
-	if (!delete_file(overlayname)) {
+	if (!delete_native_file(overlayname)) {
 		LOG_ERR("DOS: Failed to remove overlay file '%s'", overlayname);
 	}
 }
@@ -1110,8 +1142,8 @@ std::string Overlay_Drive::create_filename_of_special_operation(const char* dosn
 bool Overlay_Drive::is_dir_only_in_overlay(const char* name) {
 	if (!name || !*name) return false;
 	if (DOSdirs_cache.empty()) return false;
-	for(std::vector<std::string>::iterator it = DOSdirs_cache.begin(); it != DOSdirs_cache.end(); ++it) {
-		if (*it == name) return true;
+	for(const auto& entry : DOSdirs_cache) {
+		if (entry == name) return true;
 	}
 	return false;
 }
@@ -1119,8 +1151,8 @@ bool Overlay_Drive::is_dir_only_in_overlay(const char* name) {
 bool Overlay_Drive::is_deleted_file(const char* name) {
 	if (!name || !*name) return false;
 	if (deleted_files_in_base.empty()) return false;
-	for(std::vector<std::string>::iterator it = deleted_files_in_base.begin(); it != deleted_files_in_base.end(); ++it) {
-		if (*it == name) return true;
+	for(const auto& entry : deleted_files_in_base) {
+		if (entry == name) return true;
 	}
 	return false;
 }
@@ -1129,13 +1161,14 @@ void Overlay_Drive::add_DOSdir_to_cache(const char* name) {
 	if (!name || !*name ) return; //Skip empty file.
 	LOG_MSG("Adding name to overlay_only_dir_cache %s",name);
 	if (!is_dir_only_in_overlay(name)) {
-		DOSdirs_cache.push_back(name); 
+		DOSdirs_cache.emplace_back(name); 
 	}
 }
 
-void Overlay_Drive::remove_DOSdir_from_cache(const char* name) {
-	for(std::vector<std::string>::iterator it = DOSdirs_cache.begin(); it != DOSdirs_cache.end(); ++it) {
-		if ( *it == name) {
+void Overlay_Drive::remove_DOSdir_from_cache(const char* name)
+{
+	for(auto it = DOSdirs_cache.begin(); it != DOSdirs_cache.end(); ++it) {
+		if (*it == name) {
 			DOSdirs_cache.erase(it);
 			return;
 		}
@@ -1143,7 +1176,7 @@ void Overlay_Drive::remove_DOSdir_from_cache(const char* name) {
 }
 
 void Overlay_Drive::remove_deleted_file(const char* name,bool create_on_disk) {
-	for(std::vector<std::string>::iterator it = deleted_files_in_base.begin(); it != deleted_files_in_base.end(); ++it) {
+	for(auto it = deleted_files_in_base.begin(); it != deleted_files_in_base.end(); ++it) {
 		if (*it == name) {
 			deleted_files_in_base.erase(it);
 			if (create_on_disk) remove_special_file_from_disk(name, "DEL");
@@ -1155,7 +1188,7 @@ void Overlay_Drive::add_deleted_path(const char* name, bool create_on_disk) {
 	if (!name || !*name ) return; //Skip empty file.
 	if (logoverlay) LOG_MSG("add del path %s",name);
 	if (!is_deleted_path(name)) {
-		deleted_paths_in_base.push_back(name);
+		deleted_paths_in_base.emplace_back(name);
 		//Add it to deleted files as well, so it gets skipped in FindNext. 
 		//Maybe revise that.
 		if (create_on_disk) add_special_file_to_disk(name,"RMD");
@@ -1166,19 +1199,19 @@ bool Overlay_Drive::is_deleted_path(const char* name) {
 	if (!name || !*name) return false;
 	if (deleted_paths_in_base.empty()) return false;
 	std::string sname(name);
-	std::string::size_type namelen = sname.length();;
-	for(std::vector<std::string>::iterator it = deleted_paths_in_base.begin(); it != deleted_paths_in_base.end(); ++it) {
-		std::string::size_type blockedlen = (*it).length();
+	std::string::size_type namelen = sname.length();
+	for(const auto& entry : deleted_paths_in_base) {
+		std::string::size_type blockedlen = entry.length();
 		if (namelen < blockedlen) continue;
 		//See if input starts with name. 
-		std::string::size_type n = sname.find(*it);
+		std::string::size_type n = sname.find(entry);
 		if (n == 0 && ((namelen == blockedlen) || *(name + blockedlen) == '\\' )) return true;
 	}
 	return false;
 }
 
 void Overlay_Drive::remove_deleted_path(const char* name, bool create_on_disk) {
-	for(std::vector<std::string>::iterator it = deleted_paths_in_base.begin(); it != deleted_paths_in_base.end(); ++it) {
+	for(auto it = deleted_paths_in_base.begin(); it != deleted_paths_in_base.end(); ++it) {
 		if (*it == name) {
 			deleted_paths_in_base.erase(it);
 			remove_deleted_file(name,false); //Rethink maybe.
@@ -1254,11 +1287,8 @@ bool Overlay_Drive::Rename(const char * oldname, const char * newname) {
 	bool success = false;
 
 	// check if overlaynameold exists and if so rename it to overlaynamenew
-	std::error_code ec = {};
-	if (std_fs::exists(overlaynameold, ec)) {
-		std_fs::rename(overlaynameold, overlaynamenew, ec);
-
-		success = !ec; // success if no error-code
+	if (local_drive_path_exists(overlaynameold)) {
+		success = local_drive_rename_file_or_directory(overlaynameold, overlaynamenew);
 
 		if (success) {
 			timestamp_cache.erase(overlaynameold);

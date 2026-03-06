@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2025-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2025-2026 The DOSBox Staging Team
 // SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
@@ -72,7 +72,7 @@ bool device_CON::Read(uint8_t* data, uint16_t* size)
 	uint16_t oldax = reg_ax;
 	uint16_t count = 0;
 	INT10_SetCurMode();
-	if ((readcache) && (*size)) {
+	if (readcache && *size) {
 		data[count++] = readcache;
 		if (dos.echo) {
 			INT10_TeletypeOutputViaInterrupt(readcache, 7);
@@ -89,7 +89,7 @@ bool device_CON::Read(uint8_t* data, uint16_t* size)
 			while (true) {
 				reg_ah = is_machine_ega_or_better() ? 0x11 : 0x1;
 				CALLBACK_RunRealInt(0x16);
-				if (reg_ax != 0) {
+				if (!(cpu_regs.flags & FLAG_ZF)) {
 					break;
 				}
 				WINDOWS_ReleaseTimeSlice();

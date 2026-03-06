@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2020-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2020-2026 The DOSBox Staging Team
 // SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
@@ -141,19 +141,8 @@ class DOS_Device : public DOS_File {
 public:
 	DOS_Device() : DOS_File(), devnum(0) {}
 
-	DOS_Device(const DOS_Device& orig)
-		: DOS_File(orig),
-		  devnum(orig.devnum)
-	{
-
-	}
-
-	DOS_Device &operator=(const DOS_Device &orig)
-	{
-		DOS_File::operator=(orig);
-		devnum = orig.devnum;
-		return *this;
-	}
+	DOS_Device(const DOS_Device& orig) = default;
+	DOS_Device &operator=(const DOS_Device &orig) = default;
 
 	bool Read(uint8_t* data, uint16_t* size) override;
 	bool Write(uint8_t* data, uint16_t* size) override;
@@ -181,7 +170,7 @@ private:
 #define MAX_OPENDIRS 2048
 //Can be high as it's only storage (16 bit variable)
 
-class DOS_Drive_Cache {
+class DOS_Drive_Cache final {
 public:
 	enum TDirSort { NOSORT, ALPHABETICAL, DIRALPHABETICAL, ALPHABETICALREV, DIRALPHABETICALREV };
 	DOS_Drive_Cache            (void);
@@ -213,7 +202,7 @@ public:
 	void SetLabel(const char *name, bool cdrom, bool allowupdate);
 	const char *GetLabel() const { return label; }
 
-	class CFileInfo {
+	class CFileInfo final {
 	public:
 		CFileInfo(void)
 		        : orgname{0},
@@ -227,7 +216,7 @@ public:
 		          longNameList(0)
 		{}
 
-		virtual ~CFileInfo()
+		~CFileInfo()
 		{
 			for (auto p : fileList) {
 				delete p;

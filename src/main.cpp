@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2020-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2020-2026 The DOSBox Staging Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "dosbox.h"
@@ -29,6 +29,7 @@
 #include "shell/command_line.h"
 #include "shell/shell.h"
 #include "utils/checks.h"
+#include "utils/env_utils.h"
 
 CHECK_NARROWING();
 
@@ -138,8 +139,8 @@ static void register_command_line_help_message()
 	        "\n"
 	        "  --list-code-pages        List all bundled code pages (screen fonts).\n"
 	        "\n"
-	        "  --list-glshaders         List all available OpenGL shaders and their paths.\n"
-	        "                           Shaders are to be used in the 'glshader' config setting.\n"
+	        "  --list-shaders           List all available shaders and their paths.\n"
+	        "                           Shaders are to be used in the 'shader' config setting.\n"
 	        "\n"
 	        "  --fullscreen             Start in fullscreen mode.\n"
 	        "\n"
@@ -200,8 +201,8 @@ static int edit_primary_config()
 		}
 	}
 
-	const char* env_editor = getenv("EDITOR");
-	if (env_editor) {
+	std::string env_editor = get_env_var("EDITOR");
+	if (!env_editor.empty()) {
 		replace_with_process(env_editor);
 	}
 
@@ -217,7 +218,7 @@ static int edit_primary_config()
 	return 1;
 }
 
-static void list_glshaders()
+static void list_shaders()
 {
 #if C_OPENGL
 	for (const auto& line : RENDER_GenerateShaderInventoryMessage()) {
@@ -272,7 +273,8 @@ static int erase_primary_config_file()
 		return 1;
 	}
 
-	if (!delete_file(path)) {
+	std::error_code ec = {};
+	if (!std_fs::remove(path, ec)) {
 		fprintf(stderr,
 		        "Cannot delete primary config '%s'",
 		        path.string().c_str());
@@ -299,7 +301,8 @@ static int erase_mapper_file()
 		       "a custom mapper file.\n");
 	}
 
-	if (!delete_file(path)) {
+	std::error_code ec = {};
+	if (!std_fs::remove(path, ec)) {
 		fprintf(stderr,
 		        "Cannot delete mapper file '%s'",
 		        path.string().c_str());
@@ -322,7 +325,7 @@ static void init_logger(const CommandLineArguments& args, int argc, char* argv[]
 
 	if (args.version || args.help || args.printconf || args.editconf ||
 	    args.eraseconf || args.list_countries || args.list_layouts ||
-	    args.list_code_pages || args.list_glshaders || args.erasemapper) {
+	    args.list_code_pages || args.list_shaders || args.erasemapper) {
 
 		loguru::g_stderr_verbosity = loguru::Verbosity_WARNING;
 	}
@@ -347,9 +350,9 @@ static void maybe_write_primary_config(const CommandLineArguments& args)
 		const auto primary_config_path = get_primary_config_path();
 
 		if (!config_file_is_valid(primary_config_path)) {
-			// No config is loaded at this point, so we're
-			// writing the default settings to the primary
-			// config.
+			// No config is loaded at this point, so we're writing
+			// the default settings to the primary config.
+			MSG_LoadMessages();
 			if (control->WriteConfig(primary_config_path)) {
 				LOG_MSG("CONFIG: Created primary config file '%s'",
 				        primary_config_path.string().c_str());
@@ -365,7 +368,7 @@ static void maybe_write_primary_config(const CommandLineArguments& args)
 constexpr char version_msg[] =
         R"(%s, version %s
 
-Copyright (C) 2020-2025 The DOSBox Staging Team
+Copyright (C) 2020-2026 The DOSBox Staging Team
 License: GNU GPL-2.0-or-later <https://www.gnu.org/licenses/gpl-2.0.html>
 
 This is free software, and you are welcome to change and redistribute it under
@@ -410,8 +413,8 @@ static std::optional<int> maybe_handle_command_line_output_only_actions(
 		list_code_pages();
 		return 0;
 	}
-	if (args.list_glshaders) {
-		list_glshaders();
+	if (args.list_shaders) {
+		list_shaders();
 		return 0;
 	}
 	return {};
@@ -427,17 +430,17 @@ static void handle_cli_set_commands(const std::vector<std::string>& set_args)
 			continue;
 		}
 
-		std::vector<std::string> pvars(1, std::move(command));
+		std::vector<std::string> parameters(1, command);
 
-		const auto warning_message = control->SetProperty(pvars);
+		if (const auto warning_message = control->SetPropertyFromCli(parameters);
+		    !warning_message.empty()) {
 
-		if (!warning_message.empty()) {
 			// TODO convert to notification
 			LOG_WARNING("CONFIG: %s", warning_message.c_str());
 
 		} else {
-			Section* tsec = control->GetSection(pvars[0]);
-			std::string value(pvars[2]);
+			auto section = control->GetSection(parameters[0]);
+			std::string value(parameters[2]);
 
 			// Due to parsing, there can be a '=' at the
 			// start of the value.
@@ -446,18 +449,17 @@ static void handle_cli_set_commands(const std::vector<std::string>& set_args)
 				value.erase(0, 1);
 			}
 
-			for (size_t i = 3; i < pvars.size(); i++) {
-				value += (std::string(" ") + pvars[i]);
+			for (size_t i = 3; i < parameters.size(); i++) {
+				value += (std::string(" ") + parameters[i]);
 			}
 
-			std::string inputline = pvars[1] + "=" + value;
-
-			bool change_success = tsec->HandleInputline(inputline);
+			auto input_line = parameters[1] + "=" + value;
+			bool change_success = section->HandleInputLine(input_line);
 
 			if (!change_success && !value.empty()) {
 				// TODO convert to notification
 				LOG_WARNING("CONFIG: Cannot set '%s'",
-				            inputline.c_str());
+				            input_line.c_str());
 			}
 		}
 	}
@@ -498,41 +500,33 @@ static void apply_windows_debugger_workaround(const bool is_console_disabled)
 
 static void maybe_create_resource_directories()
 {
+	auto try_create_resource_dir = [](std_fs::path const& dir) {
+		if (!create_dir_if_not_exist(dir)) {
+			LOG_WARNING("CONFIG: Can't create directory '%s'",
+						dir.string().c_str());
+		}
+	};
 	const auto plugins_dir = get_config_dir() / PluginsDir;
-
-	if (create_dir(plugins_dir, 0700, OK_IF_EXISTS) != 0) {
-		LOG_WARNING("CONFIG: Can't create directory '%s': %s",
-		            plugins_dir.string().c_str(),
-		            safe_strerror(errno).c_str());
-	}
+	try_create_resource_dir(plugins_dir);
 
 #if C_OPENGL
-	const auto glshaders_dir = get_config_dir() / GlShadersDir;
-
-	if (create_dir(glshaders_dir, 0700, OK_IF_EXISTS) != 0) {
-		LOG_WARNING("CONFIG: Can't create directory '%s': %s",
-		            glshaders_dir.string().c_str(),
-		            safe_strerror(errno).c_str());
-	}
+	const auto shaders_dir = get_config_dir() / ShadersDir;
+	try_create_resource_dir(shaders_dir);
 #endif
 
 	const auto soundfonts_dir = get_config_dir() / DefaultSoundfontsDir;
-
-	if (create_dir(soundfonts_dir, 0700, OK_IF_EXISTS) != 0) {
-		LOG_WARNING("CONFIG: Can't create directory '%s': %s",
-		            soundfonts_dir.string().c_str(),
-		            safe_strerror(errno).c_str());
-	}
+	try_create_resource_dir(soundfonts_dir);
 
 #if C_MT32EMU
 	const auto mt32_rom_dir = get_config_dir() / DefaultMt32RomsDir;
-
-	if (create_dir(mt32_rom_dir, 0700, OK_IF_EXISTS) != 0) {
-		LOG_WARNING("CONFIG: Can't create directory '%s': %s",
-		            mt32_rom_dir.string().c_str(),
-		            safe_strerror(errno).c_str());
-	}
+	try_create_resource_dir(mt32_rom_dir);
 #endif
+
+	const auto soundcanvas_rom_dir = get_config_dir() / DefaultSoundCanvasRomsDir;
+	try_create_resource_dir(soundcanvas_rom_dir);
+
+	const auto webserver_dir = get_config_dir() / DefaultWebserverDir;
+	try_create_resource_dir(webserver_dir);
 }
 
 static void quit_func()
@@ -637,7 +631,7 @@ int main(int argc, char* argv[])
 		DOS_Locale_AddMessages();
 
 		// We need to call this before initialising the modules to to
-		// support the '--list-glshaders' command line option.
+		// support the '--list-shaders' command line option.
 		RENDER_AddMessages();
 
 		GFX_AddConfigSection();
@@ -680,10 +674,9 @@ int main(int argc, char* argv[])
 
 		maybe_create_resource_directories();
 
-		// Initialise the GUI
-		GFX_Init();
-
+		GFX_InitSdl();
 		DOSBOX_InitModules();
+		GFX_InitAndStartGui();
 
 		// All subsystems' hotkeys need to be registered at this point
 		// to ensure their hotkeys appear in the graphical mapper.
@@ -696,9 +689,8 @@ int main(int argc, char* argv[])
 		// Start emulation
 		SHELL_InitAndRun();
 
-		// Shutdown and release
-		GFX_Destroy();
 		DOSBOX_DestroyModules();
+		GFX_Destroy();
 
 	} catch (char* error) {
 		// TODO Maybe show popup dialog with the error in addition to

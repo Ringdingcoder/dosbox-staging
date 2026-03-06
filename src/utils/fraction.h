@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2023-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2023-2026 The DOSBox Staging Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #ifndef DOSBOX_FRACTION_H
@@ -7,6 +7,8 @@
 #include <cassert>
 #include <cstdint>
 #include <numeric>
+
+#include <utils/string_utils.h>
 
 // Class to represent simple fractions. The fraction is always simplified
 // after construction or after any operation. The sign always is normalised so
@@ -72,11 +74,6 @@ public:
 	constexpr bool operator==(const Fraction& that) const
 	{
 		return (num == that.num) && (denom == that.denom);
-	}
-
-	constexpr bool operator!=(const Fraction& that) const
-	{
-		return !operator==(that);
 	}
 
 	// Addition
@@ -147,6 +144,12 @@ public:
 	constexpr Fraction operator/(const Fraction& that) const
 	{
 		return {num * that.denom, denom * that.num};
+	}
+
+	// Return a string representation of the fraction (e.g. `4:3 (1.333333)`)
+	std::string ToString() const
+	{
+		return format_str("%d:%d (%g)", num, denom, ToFloat());
 	}
 
 private:

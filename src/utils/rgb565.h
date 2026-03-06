@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2022-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2022-2026 The DOSBox Staging Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #ifndef DOSBOX_RGB565_H
@@ -27,11 +27,6 @@ public:
 	constexpr bool operator==(const Rgb565& rhs) const
 	{
 		return pixel == rhs.pixel;
-	}
-
-	constexpr bool operator!=(const Rgb565& that) const
-	{
-		return !operator==(that);
 	}
 
 	Rgb888 ToRgb888() const

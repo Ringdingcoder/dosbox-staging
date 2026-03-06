@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2025-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2025-2026 The DOSBox Staging Team
 // SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
@@ -184,7 +184,7 @@ static uint8_t cmos_readreg(io_port_t, io_width_t)
 		if (imageDiskList[1]) {
 			drive_b = imageDiskList[1]->GetBiosType();
 		}
-		return ((drive_a << 4) | (drive_b));
+		return ((drive_a << 4) | drive_b);
 	/* First harddrive info */
 	case 0x12:
 		hdparm = 0;

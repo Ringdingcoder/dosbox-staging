@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2022-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2022-2026 The DOSBox Staging Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #ifndef DOSBOX_MOUSE_COMMON_H
@@ -55,14 +55,6 @@ float MOUSE_SensitivityCoefficient(const int16_t user_setting);
 
 float MOUSE_GetBallisticsCoeff(const float speed);
 uint8_t MOUSE_GetDelayFromRateHz(const uint16_t rate_hz);
-
-float MOUSE_ClampRelativeMovement(const float rel);
-float MOUSE_ClampWheelMovement(const float rel);
-uint16_t MOUSE_ClampRateHz(const uint16_t rate_hz);
-
-bool MOUSE_HasAccumulatedInt(const float delta);
-int8_t MOUSE_ConsumeInt8(float& delta, const bool skip_delta_update = false);
-int16_t MOUSE_ConsumeInt16(float& delta, const bool skip_delta_update = false);
 
 // ***************************************************************************
 // Mouse speed calculation

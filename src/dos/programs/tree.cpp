@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2023-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2023-2026 The DOSBox Staging Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "tree.h"
@@ -96,7 +96,7 @@ void TREE::Run()
 
 	// Make sure no other switches are supplied
 	std::string tmp_str = {};
-	if (cmd->FindStringBegin("/", tmp_str)) {
+	if (cmd->FindStringBeginCaseSensitive("/", tmp_str)) {
 		tmp_str = std::string("/") + tmp_str;
 		WriteOut(MSG_Get("SHELL_ILLEGAL_SWITCH"), tmp_str.c_str());
 		return;
@@ -376,8 +376,7 @@ bool TREE::DisplayTree(MoreOutputStrings& output, const std::string& path,
 		output.AddString("%s%s\n", graph.c_str(), entry.name.c_str());
 		skip_empty_line = false;
 
-		CALLBACK_Idle();
-		if (DOSBOX_IsShutdownRequested()) {
+		if (CALLBACK_Idle()) {
 			break;
 		}
 

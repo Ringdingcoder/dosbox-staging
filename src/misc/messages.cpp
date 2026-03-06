@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2020-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2020-2026 The DOSBox Staging Team
 // SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
@@ -7,12 +7,14 @@
 #include "config/config.h"
 #include "config/setup.h"
 #include "dos/dos_locale.h"
+#include "hardware/input/mouse.h"
 #include "host_locale.h"
 #include "misc/ansi_code_markup.h"
 #include "misc/cross.h"
 #include "misc/std_filesystem.h"
 #include "misc/support.h"
 #include "misc/unicode.h"
+#include "private/messages_adjust.h"
 #include "private/messages_po_entry.h"
 #include "utils/checks.h"
 #include "utils/fs_utils.h"
@@ -66,13 +68,19 @@ private:
 
 	std::string GetLogStart(const std::string& message_key) const;
 
+	void AutoAdjustTranslation(const Message& message_english);
+
 	void VerifyMessage(const std::string& message_key);
 	void VerifyFormatString(const std::string& message_key);
+	void VerifyNoLeftoverHelperLines(const std::string& message_key);
 
 	void VerifyFormatStringAgainst(const std::string& message_key,
 	                               const Message& message_english);
 
-	void VerifyTranslationUpToDate(const Message& message_english);
+	void VerifyTranslationUpToDate(const std::string& message_key,
+	                               const Message& message_english);
+
+	static bool IsImportantHelp(const std::string& message_key);
 
 	const bool is_english;
 
@@ -106,14 +114,14 @@ private:
 
 Message::Message(const std::string& message_english)
         : is_english(true),
-          message_raw(message_english)
+          message_raw(replace_eol(message_english, "\n"))
 {}
 
 Message::Message(const std::string& message_english,
                  const std::string& message_translated)
         : is_english(false),
-          message_raw(message_translated),
-          message_previous_english(message_english)
+          message_raw(replace_eol(message_translated, "\n")),
+          message_previous_english(replace_eol(message_english, "\n"))
 {}
 
 bool Message::IsFuzzy() const
@@ -167,6 +175,25 @@ const std::string& Message::GetRaw() const
 	return message_raw;
 }
 
+void Message::AutoAdjustTranslation(const Message& message_english)
+{
+	// If the translation is known to be fuzzy, do not try to auto-adjust
+	// it; translator attention was already requested here
+	if (!is_ok || is_verified || is_fuzzy) {
+		return;
+	}
+
+	// If the English string is unchanged, there is nothing in the
+	// translated string that needs to be adjusted
+	if (message_previous_english == message_english.message_raw) {
+		return;
+	}
+
+	adjust_newlines(message_english.message_raw,
+	                message_previous_english,
+	                message_raw);
+}
+
 void Message::VerifyMessage(const std::string& message_key)
 {
 	if (!is_ok || is_verified) {
@@ -180,7 +207,7 @@ void Message::VerifyMessage(const std::string& message_key)
 
 		// No special characters allowed, except a newline character;
 		// please use DOSBox tags instead of ANSI escape sequences
-		LOG_WARNING("%s contains invalid character 0x%02x",
+		LOG_WARNING("LOCALE: '%s' contains invalid character 0x%02x",
 		            GetLogStart(message_key).c_str(),
 		            item);
 		MarkInvalid();
@@ -216,7 +243,7 @@ void Message::VerifyFormatString(const std::string& message_key)
 		// NOTE: If you want to skip format string checks for the given
 		//       message, put a 'MsgFlagNoFormatString' flag into
 		//       the relevant 'MSG_Add' call
-		LOG_WARNING("%s contains an incorrect format specifier: %s",
+		LOG_WARNING("LOCALE: '%s' contains an incorrect format specifier: %s",
 		            GetLogStart(message_key).c_str(),
 		            error.c_str());
 		MarkInvalid();
@@ -311,6 +338,53 @@ void Message::VerifyFormatString(const std::string& message_key)
 	}
 }
 
+void Message::VerifyNoLeftoverHelperLines(const std::string& message_key)
+{
+	if (!is_ok || is_verified) {
+		return;
+	}
+
+	auto get_helper_line = [](const std::string& segment) {
+		assert(!segment.empty());
+
+		constexpr size_t LineLength = 80;
+
+		std::string helper_line = {};
+		helper_line.reserve(LineLength);
+
+		while (helper_line.size() < LineLength) {
+			helper_line += segment;
+		}
+
+		return helper_line.substr(0, LineLength);
+	};
+
+	static const std::vector<std::string> HelperLines = {
+		get_helper_line("0123456789"),
+		get_helper_line("1234567890"),
+		get_helper_line("-")
+	};
+
+	for (const auto& helper_line : HelperLines) {
+
+		if (message_raw.find(helper_line) == std::string::npos) {
+			// No given leftover helper line in the translation
+			continue;
+		}
+
+		if (message_previous_english.find(helper_line) != std::string::npos) {
+			// Same string is present in the English message
+			continue;
+		}
+
+		LOG_WARNING("LOCALE: '%s' contains a leftover helper line",
+		            GetLogStart(message_key).c_str());
+		MarkInvalid();
+
+		break;
+	}
+}
+
 void Message::VerifyFormatStringAgainst(const std::string& message_key,
                                         const Message& message_english)
 {
@@ -321,7 +395,7 @@ void Message::VerifyFormatStringAgainst(const std::string& message_key,
 	// Check if the number of format specifiers match
 	if (format_specifiers.size() != message_english.format_specifiers.size()) {
 		LOG_WARNING(
-		        "%s has %d format specifier(s) "
+		        "LOCALE '%s' has %d format specifier(s) "
 		        "while English has %d specifier(s)",
 		        GetLogStart(message_key).c_str(),
 		        static_cast<int>(format_specifiers.size()),
@@ -368,7 +442,7 @@ void Message::VerifyFormatStringAgainst(const std::string& message_key,
 		    (specifier.precision != "*" && specifier_english.precision == "*")) {
 
 			LOG_WARNING(
-			        "%s has format specifier '%s' "
+			        "LOCALE: '%s' has format specifier '%s' "
 			        "incompatible with English counterpart '%s'",
 			        GetLogStart(message_key).c_str(),
 			        specifier.AsString().c_str(),
@@ -380,13 +454,75 @@ void Message::VerifyFormatStringAgainst(const std::string& message_key,
 	}
 }
 
-void Message::VerifyTranslationUpToDate(const Message& message_english)
+bool Message::IsImportantHelp(const std::string& message_key)
+{
+	// First check for certain hardcoded messages/prefixes
+
+	static const std::vector<std::string> ImportantMessagesList = {
+	        "DOSBOX_HELP", "AUTOEXEC_CONFIGFILE_HELP", "CONFIGFILE_INTRO"};
+
+	static const std::vector<std::string> ImportantMessagePrefixes = {
+	        // Config file option descriptions
+	        "CONFIG_",
+	        "CONFIGITEM_",
+	        // AUTOEXEC.BAT messages
+	        "AUTOEXEC_BAT_",
+	};
+
+	if (contains(ImportantMessagesList, message_key)) {
+		return true;
+	}
+
+	for (const auto& prefix : ImportantMessagePrefixes) {
+		if (message_key.starts_with(prefix)) {
+			return true;
+		}
+	}
+
+	// Check for program/command help messages
+
+	static const std::string ShellPrefix   = "SHELL_CMD_";
+	static const std::string ProgramPrefix = "PROGRAM_";
+	static const std::string HelpSuffix    = "_HELP";
+
+	auto is_help_message = [&](const std::string& prefix) {
+		if (!message_key.starts_with(prefix)) {
+			return false;
+		}
+
+		const auto prefix_length   = prefix.length();
+		const auto suffix_position = message_key.find(HelpSuffix);
+
+		if (suffix_position == std::string::npos ||
+		    suffix_position <= prefix_length) {
+			return false;
+		}
+
+		const auto interior = std::string_view(message_key).substr(
+			prefix_length, suffix_position - prefix_length);
+
+		return std::ranges::count(interior, '_') == 0;
+	};
+
+	return is_help_message(ShellPrefix) || is_help_message(ProgramPrefix);
+}
+
+void Message::VerifyTranslationUpToDate(const std::string& message_key,
+                                        const Message& message_english)
 {
 	assert(!is_english);
 
 	if (message_previous_english.empty() ||
 	    message_previous_english != message_english.GetRaw()) {
+
 		MarkFuzzy();
+	}
+
+	if (IsFuzzy() && IsImportantHelp(message_key)) {
+
+		// If the translation is not up to date (fuzzy), important help
+		// messages shall use English strings
+		MarkInvalid();
 	}
 }
 
@@ -411,8 +547,10 @@ void Message::VerifyTranslated(const std::string& message_key,
 	}
 
 	VerifyFormatString(message_key);
+	VerifyNoLeftoverHelperLines(message_key);
 	if (message_english.IsValid()) {
-		VerifyTranslationUpToDate(message_english);
+		AutoAdjustTranslation(message_english);
+		VerifyTranslationUpToDate(message_key, message_english);
 		VerifyFormatStringAgainst(message_key, message_english);
 	}
 
@@ -483,6 +621,7 @@ static std::unordered_map<std::string, MessageLocation> message_location = {};
 static std::unordered_map<std::string, Message> dictionary_english    = {};
 static std::unordered_map<std::string, Message> dictionary_translated = {};
 
+static std::string translation_language         = {};
 static std::optional<Script> translation_script = {};
 static bool is_translation_script_fuzzy         = false;
 
@@ -548,10 +687,17 @@ static bool check_message_exists(const std::string& message_key)
 
 static void clear_translated_messages()
 {
+	const bool notify_new_language = !translation_language.empty();
+
 	dictionary_translated.clear();
 
+	translation_language        = {};
 	translation_script          = {};
 	is_translation_script_fuzzy = false;
+
+	if (notify_new_language) {
+		MOUSE_NotifyLanguageChanged();
+	}
 }
 
 // ***************************************************************************
@@ -712,6 +858,10 @@ static bool load_messages_from_path(const std_fs::path& file_path)
 			if (!reader.ValidateGettextMetadata()) {
 				break;
 			}
+			const auto language = reader.GetLanguageFromMetadata();
+			if (!language.empty()) {
+				translation_language = language;
+			}
 			continue;
 		}
 
@@ -742,11 +892,17 @@ static bool load_messages_from_path(const std_fs::path& file_path)
 		reader.LogWarning("no messages found in the file");
 	}
 
+	// If no language was found in the metadata, use the file name instead
+	if (translation_language.empty()) {
+		translation_language = std_fs::path(file_path).stem().string();
+	}
+
 	// Check if current code page is suitable for this translation
 	if (dos.loaded_codepage) {
 		check_code_page();
 	}
 
+	MOUSE_NotifyLanguageChanged();
 	return true;
 }
 
@@ -863,6 +1019,15 @@ bool MSG_Exists(const std::string& message_key)
 	return dictionary_english.contains(message_key);
 }
 
+std::string MSG_GetLanguage()
+{
+	if (!translation_language.empty()) {
+		return translation_language;
+	}
+
+	return "en";
+}
+
 bool MSG_WriteToFile(const std::string& file_name)
 {
 	return save_messages_to_path(file_name);
@@ -976,10 +1141,20 @@ void MSG_LoadMessages()
 	}
 
 	// Get the list of autodetected languages
-	auto language_files = host_languages.language_files;
-	language_files.insert(language_files.end(),
-	                      host_languages.language_files_gui.begin(),
-	                      host_languages.language_files_gui.end());
+	auto languages = host_languages.app_languages;
+	languages.insert(languages.end(),
+	                 host_languages.gui_languages.begin(),
+	                 host_languages.gui_languages.end());
+
+	std::vector<std::string> language_files = {};
+	for (const auto& language : languages) {
+		for (const auto& language_file : language.GetLanguageFiles()) {
+			if (contains(language_files, language_file)) {
+				continue;
+			}
+			language_files.push_back(language_file);
+		}
+	}
 
 	// If autodetection failed, use internal English messages
 	if (language_files.empty()) {

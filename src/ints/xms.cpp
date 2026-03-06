@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2023-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2023-2026 The DOSBox Staging Team
 // SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
@@ -635,7 +635,7 @@ static Bitu XMS_Handler()
 			if ((umb_flag & 1) == 0) {
 				DOS_LinkUMBsToMemChain(1);
 			}
-			uint8_t old_memstrat = static_cast<uint8_t>(
+			auto old_memstrat = static_cast<uint8_t>(
 			        DOS_GetMemAllocStrategy() & 0xff);
 			DOS_SetMemAllocStrategy(0x40); // search in UMBs only
 

@@ -1,12 +1,14 @@
-// SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
+// SPDX-FileCopyrightText:  2002-2025 The DOSBox Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #ifndef DOSBOX_IPXSERVER_H_
 #define DOSBOX_IPXSERVER_H_
 
-#if C_IPX
+#include "dosbox.h"
 
-#include <SDL_net.h>
+#include <cstdint>
+
+#include "hardware/network/net_defs.h"
 
 struct packetBuffer {
 	uint8_t buffer[1024];
@@ -28,6 +30,4 @@ bool IPX_isConnectedToServer(Bits tableNum, IPaddress ** ptrAddr);
 
 uint8_t packetCRC(uint8_t *buffer, uint16_t bufSize);
 
-#endif
-
-#endif
+#endif // DOSBOX_IPXSERVER_H_

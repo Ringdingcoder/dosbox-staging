@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2019-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2019-2026 The DOSBox Staging Team
 // SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
@@ -521,7 +521,7 @@ static std::optional<FilterType> determine_filter_type(const std::string& filter
 		case SbType::GameBlaster: return FilterType::None;   break;
 		}
 		// clang-format on
-	} else if (filter_choice == "off") {
+	} else if (has_false(filter_choice)) {
 		return FilterType::None;
 
 	} else if (filter_choice == "sb1") {
@@ -1777,7 +1777,7 @@ static void dsp_do_reset(const uint8_t val)
 static void dsp_e2_dma_callback(const DmaChannel* /*chan*/, const DmaEvent event)
 {
 	if (event == DmaEvent::IsUnmasked) {
-		uint8_t val = (uint8_t)(sb.e2.value & 0xff);
+		auto val = static_cast<uint8_t>(sb.e2.value & 0xff);
 
 		DmaChannel* chan = DMA_GetChannel(sb.hw.dma8);
 
@@ -1935,7 +1935,7 @@ static void dsp_do_command()
 
 	case 0x0f: // SB16 ASP get register
 		if (sb.type == SbType::SB16) {
-			if ((asp_init_in_progress) && (sb.dsp.in.data[0] == 0x83)) {
+			if (asp_init_in_progress && (sb.dsp.in.data[0] == 0x83)) {
 				asp_regs[0x83] = ~asp_regs[0x83];
 			}
 #if 0
@@ -1960,8 +1960,9 @@ static void dsp_do_command()
 			sb.dac = {};
 		}
 
-		// Ensure we're using per-frame callback timing because DAC samples
-		// are sent one after another with sub-millisecond timing.
+		// Ensure we're using per-frame callback timing because DAC
+		// samples are sent one after another with sub-millisecond
+		// timing.
 		callback_type.SetPerFrame();
 
 		if (const auto dac_rate_hz = sb.dac.MeasureDacRateHz(); dac_rate_hz) {
@@ -2400,7 +2401,7 @@ static float calc_vol(const uint8_t amount)
 {
 	uint8_t count = 31 - amount;
 
-	float db = static_cast<float>(count);
+	auto db = static_cast<float>(count);
 
 	if (sb.type == SbType::SBPro1 || sb.type == SbType::SBPro2) {
 		if (count) {
@@ -2477,8 +2478,8 @@ static void ctmixer_reset()
 
 static void write_sb_pro_volume(uint8_t* dest, const uint8_t value)
 {
-	dest[0] = ((((value) & 0xf0) >> 3) | (sb.type == SbType::SB16 ? 1 : 3));
-	dest[1] = ((((value) & 0x0f) << 1) | (sb.type == SbType::SB16 ? 1 : 3));
+	dest[0] = (((value) & 0xf0) >> 3) | (sb.type == SbType::SB16 ? 1 : 3);
+	dest[1] = (((value) & 0x0f) << 1) | (sb.type == SbType::SB16 ? 1 : 3);
 }
 
 static uint8_t read_sb_pro_volume(const uint8_t* src)
@@ -3325,7 +3326,7 @@ static SbType determine_sb_type(const std::string& pref)
 		return SbType::SB16;
 	}
 
-	// "falsey" setting ("off", "none", "false", etc.)
+	assert(has_false(pref));
 	return SbType::None;
 }
 
@@ -3372,7 +3373,7 @@ static OplMode determine_oplmode(const std::string& pref, const SbType sb_type,
 			case SbType::None: return OplMode::None;
 			}
 		}
-		// "falsey" setting ("off", "none", "false", etc.)
+		assert(has_false(pref));
 		return OplMode::None;
 
 	} else {
@@ -3516,7 +3517,7 @@ SoundBlaster::SoundBlaster(Section* conf)
 {
 	assert(conf);
 
-	SectionProp* section = static_cast<SectionProp*>(conf);
+	auto section = static_cast<SectionProp*>(conf);
 
 	sb.hw.base = section->GetHex("sbbase");
 	sb.hw.irq  = static_cast<uint8_t>(section->GetInt("irq"));
@@ -3763,8 +3764,9 @@ void init_sblaster_config_settings(SectionProp& secprop)
 	pstring->SetValues(
 	        {"gb", "sb1", "sb2", "sbpro1", "sbpro2", "sb16", "ess", "none"});
 	pstring->SetHelp(
-	        "Sound Blaster model to emulate ('sb16' by default).\n"
-	        "The models auto-selected with 'oplmode' and 'cms' on 'auto' are also listed.\n"
+	        "Sound Blaster model to emulate ('sb16' by default). The models auto-selected\n"
+	        "with 'oplmode' and 'cms' on 'auto' are also listed. Possible values:\n"
+	        "\n"
 	        "  gb:        Game Blaster          - CMS\n"
 	        "  sb1:       Sound Blaster 1.0     - OPL2, CMS\n"
 	        "  sb2:       Sound Blaster 2.0     - OPL2\n"
@@ -3773,9 +3775,11 @@ void init_sblaster_config_settings(SectionProp& secprop)
 	        "  sb16:      Sound Blaster 16      - OPL3 (default)\n"
 	        "  ess:       ESS ES1688 AudioDrive - ESFM\n"
 	        "  none/off:  Disable Sound Blaster emulation.\n"
+	        "\n"
 	        "Notes:\n"
 	        "  - Creative Music System was later rebranded to Game Blaster; they are the\n"
 	        "    same card.\n"
+	        "\n"
 	        "  - The 'ess' option is for getting ESS Enhanced FM music via the card's ESFM\n"
 	        "    synthesiser in games that support it. The ESS DAC is not emulated but the\n"
 	        "    card is Sound Blaster Pro compatible; just configure the game for Sound\n"
@@ -3783,49 +3787,66 @@ void init_sblaster_config_settings(SectionProp& secprop)
 
 	auto phex = secprop.AddHex("sbbase", when_idle, 0x220);
 	phex->SetValues({"220", "240", "260", "280", "2a0", "2c0", "2e0", "300"});
-	phex->SetHelp("The IO address of the Sound Blaster (220 by default).");
+	phex->SetHelp(
+	        "The IO address of the Sound Blaster (220 by default).\n"
+	        "Possible values: 220, 240, 260, 280, 2a0, 2c0, 2e0, 300");
 
 	auto pint = secprop.AddInt("irq", when_idle, 7);
 	pint->SetValues({"3", "5", "7", "9", "10", "11", "12"});
-	pint->SetHelp("The IRQ number of the Sound Blaster (7 by default).");
+	pint->SetHelp(
+	        "The IRQ number of the Sound Blaster (7 by default).\n"
+	        "Possible values: 3, 5, 7, 9, 10, 11, 12");
 
 	pint = secprop.AddInt("dma", when_idle, 1);
 	pint->SetValues({"0", "1", "3", "5", "6", "7"});
-	pint->SetHelp("The DMA channel of the Sound Blaster (1 by default).");
+	pint->SetHelp(
+	        "The DMA channel of the Sound Blaster (1 by default).\n"
+	        "Possible values: 0, 1, 3, 5, 6, 7");
 
 	pint = secprop.AddInt("hdma", when_idle, 5);
 	pint->SetValues({"0", "1", "3", "5", "6", "7"});
-	pint->SetHelp("The High DMA channel of the Sound Blaster 16 (5 by default).");
+	pint->SetHelp(
+	        "The High DMA channel of the Sound Blaster 16 (5 by default).\n"
+	        "Possible values: 0, 1, 3, 5, 6, 7");
 
 	auto pbool = secprop.AddBool("sbmixer", when_idle, true);
 	pbool->SetHelp(
 	        "Allow the Sound Blaster mixer to modify volume levels ('on' by default).\n"
 	        "Sound Blaster Pro 1 and later cards allow programs to set the volume of the\n"
 	        "digital audio (DAC), FM synth, and CD Audio output. These correspond to the\n"
-	        "SB, OPL, and CDAUDIO DOSBox mixer channels, respectively.\n"
+	        "SB, OPL, and CDAUDIO DOSBox mixer channels, respectively. Possible values:\n"
+	        "\n"
 	        "  on:   The final level of the above channels is a combination of the volume\n"
 	        "        set by the program, and the volume set in the DOSBox mixer.\n"
+	        "\n"
 	        "  off:  Only the DOSBox mixer determines the volume of these channels.\n"
+	        "\n"
 	        "Note: Some games change the volume levels dynamically (e.g., lower the FM music\n"
 	        "      volume when speech is playing); it's best to leave 'sbmixer' enabled for\n"
 	        "      such games.");
 
 	pint = secprop.AddInt("sbwarmup", when_idle, 100);
 	pint->SetHelp(
-	        "Silence initial DMA audio after card power-on, in milliseconds\n"
-	        "(100 by default). This mitigates pops heard when starting many SB-based games.\n"
-	        "Reduce this if you notice intial playback is missing audio.");
+	        "Silence initial DMA audio after card power-on, in milliseconds (100 by default).\n"
+	        "This mitigates pops heard when starting many SB-based games. Reduce this if you\n"
+	        "notice intial playback is missing audio.");
 	pint->SetMinMax(0, 100);
 
 	pstring = secprop.AddString("sb_filter", when_idle, "modern");
 	pstring->SetHelp(
-	        "Type of filter to emulate for the Sound Blaster digital sound output:\n"
+	        "Type of filter to emulate for the Sound Blaster digital sound output ('modern'\n"
+	        "by default). Possible values:\n"
+	        "\n"
 	        "  auto:      Use the appropriate filter determined by 'sbtype'.\n"
+	        "\n"
 	        "  sb1, sb2, sbpro1, sbpro2, sb16:\n"
 	        "             Use the filter of this Sound Blaster model.\n"
+	        "\n"
 	        "  modern:    Use linear interpolation upsampling that acts as a low-pass\n"
 	        "             filter; this is the legacy DOSBox behaviour (default).\n"
+	        "\n"
 	        "  off:       Don't filter the output.\n"
+	        "\n"
 	        "  <custom>:  One or two custom filters in the following format:\n"
 	        "               TYPE ORDER FREQ\n"
 	        "             Where TYPE can be 'hpf' (high-pass) or 'lpf' (low-pass),\n"
@@ -3833,7 +3854,7 @@ void init_sblaster_config_settings(SectionProp& secprop)
 	        "             (1st order = 6dB/oct slope, 2nd order = 12dB/oct, etc.),\n"
 	        "             and FREQ is the cutoff frequency in Hz. Examples:\n"
 	        "                lpf 2 12000\n"
-	        "                hpf 3 120 lfp 1 6500");
+	        "                hpf 3 120 lpf 1 6500");
 
 	pbool = secprop.AddBool("sb_filter_always_on", when_idle, false);
 	pbool->SetHelp(

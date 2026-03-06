@@ -239,7 +239,7 @@ static void write_p201(io_port_t, io_val_t, io_width_t)
 	write_active = true;
 	last_write = PIC_Ticks;
 
-	auto percent_to_count = [](auto percent) -> uint8_t {
+	auto percent_to_count = [](auto percent) {
 		const auto scaled = static_cast<int>(round(percent * RANGE));
 		const auto shifted = check_cast<uint8_t>(scaled + RANGE);
 		return shifted;
@@ -382,27 +382,28 @@ double JOYSTICK_GetMove_Y(uint8_t which)
 void JOYSTICK_ParseConfiguredType()
 {
 	const auto conf    = get_joystick_section();
-	const auto section = static_cast<SectionProp *>(conf);
-	const auto type = section->GetString("joysticktype");
+	const auto section = static_cast<SectionProp*>(conf);
+	const auto type    = section->GetString("joysticktype");
 
-	if (type == "disabled")
+	if (has_false(type)) {
 		joytype = JOY_DISABLED;
-	else if (type == "hidden")
+	} else if (type == "hidden") {
 		joytype = JOY_ONLY_FOR_MAPPING;
-	else if (type == "auto")
+	} else if (type == "auto") {
 		joytype = JOY_AUTO;
-	else if (type == "2axis")
+	} else if (type == "2axis") {
 		joytype = JOY_2AXIS;
-	else if (type == "4axis")
+	} else if (type == "4axis") {
 		joytype = JOY_4AXIS;
-	else if (type == "4axis_2")
+	} else if (type == "4axis_2") {
 		joytype = JOY_4AXIS_2;
-	else if (type == "fcs")
+	} else if (type == "fcs") {
 		joytype = JOY_FCS;
-	else if (type == "ch")
+	} else if (type == "ch") {
 		joytype = JOY_CH;
-	else
+	} else {
 		joytype = JOY_AUTO;
+	}
 
 	assert(joytype != JOY_UNSET);
 }
@@ -628,24 +629,33 @@ static void init_joystick_config_settings(SectionProp& secprop)
 	        {"auto", "2axis", "4axis", "4axis_2", "fcs", "ch", "hidden", "disabled"});
 
 	pstring->SetHelp(
-	        "Type of joystick to emulate:\n"
+	        "Type of joystick to emulate ('auto' by default). Possible values:\n"
+			"\n"
 	        "  auto:      Detect and use any joystick(s), if possible (default).\n"
 	        "             Joystick emulation is disabled if no joystick is found.\n"
+			"\n"
 	        "  2axis:     Support up to two joysticks, each with 2 axis.\n"
+			"\n"
 	        "  4axis:     Support the first joystick only, as a 4-axis type.\n"
+			"\n"
 	        "  4axis_2:   Support the second joystick only, as a 4-axis type.\n"
+			"\n"
 	        "  fcs:       Emulate joystick as an original Thrustmaster FCS.\n"
+			"\n"
 	        "  ch:        Emulate joystick as an original CH Flightstick.\n"
+			"\n"
 	        "  hidden:    Prevent DOS from seeing the joystick(s), but enable them\n"
 	        "             for mapping.\n"
+			"\n"
 	        "  disabled:  Fully disable joysticks: won't be polled, mapped,\n"
 	        "             or visible in DOS.\n"
-	        "Remember to reset DOSBox's mapperfile if you saved it earlier.");
+			"\n"
+	        "Note: Remember to reset DOSBox's mapperfile if you saved it earlier.");
 
 	auto pbool = secprop.AddBool("timed", WhenIdle, true);
 	pbool->SetHelp(
-	        "Enable timed intervals for axis ('on' by default).\n"
-	        "Experiment with this option, if your joystick drifts away.");
+	        "Enable timed intervals for axis ('on' by default). Experiment with this option\n"
+			"if your joystick drifts away.");
 
 	pbool = secprop.AddBool("autofire", WhenIdle, false);
 	pbool->SetHelp("Fire continuously as long as the button is pressed ('off' by default)");
@@ -666,22 +676,25 @@ static void init_joystick_config_settings(SectionProp& secprop)
 	auto pint = secprop.AddInt("deadzone", WhenIdle, 10);
 	pint->SetMinMax(0, 100);
 	pint->SetHelp(
-	        "Percentage of motion to ignore (10 by default).\n"
-	        "100 turns the stick into a digital one.");
+	        "Percentage of motion to ignore (10 by default). Valid range is 0 to 100.\n"
+			"100 turns the stick into a digital one.");
 
 	pbool = secprop.AddBool("use_joy_calibration_hotkeys", WhenIdle, false);
 	pbool->SetHelp(
 	        "Enable hotkeys to allow realtime calibration of the joystick's X and Y axes\n"
 	        "('off' by default). Only consider this as a last resort if in-game calibration\n"
-	        "doesn't work correctly.\n"
-	        "  - Ctrl/Cmd+Arrow-keys adjust the axis' scalar value:\n"
+	        "doesn't work correctly. Instructions:\n"
+			"\n"
+	        "  - Press Ctrl/Cmd+Arrow-keys adjust the axis' scalar value:\n"
 	        "      - Left and Right diminish or magnify the x-axis scalar, respectively.\n"
 	        "      - Down and Up diminish or magnify the y-axis scalar, respectively.\n"
-	        "  - Alt+Arrow-keys adjust the axis' offset position:\n"
+			"\n"
+	        "  - Press Alt+Arrow-keys adjust the axis' offset position:\n"
 	        "      - Left and Right shift X-axis offset in the given direction.\n"
 	        "      - Down and Up shift the Y-axis offset in the given direction.\n"
-	        "  - Reset the X and Y calibration using Ctrl+Delete and Ctrl+Home,\n"
-	        "    respectively.\n"
+			"\n"
+	        "  - Reset the X and Y calibration using Ctrl+Delete and Ctrl+Home, respectively.\n"
+			"\n"
 	        "Each tap will report X or Y calibration values you can set below. When you find\n"
 	        "parameters that work, quit the game, switch this setting back to disabled, and\n"
 	        "populate the reported calibration parameters.");

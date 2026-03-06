@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2019-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2019-2026 The DOSBox Staging Team
 // SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
@@ -32,7 +32,7 @@ struct CommandLineArguments {
 	bool list_countries;
 	bool list_layouts;
 	bool list_code_pages;
-	bool list_glshaders;
+	bool list_shaders;
 	bool version;
 	bool help;
 	bool eraseconf;
@@ -62,7 +62,7 @@ public:
 
 private:
 	std::deque<Section*> sections            = {};
-	SectionLine overwritten_autoexec_section = {};
+	AutoExecSection overwritten_autoexec_section = {};
 	std::string overwritten_autoexec_conf    = {};
 
 	bool secure_mode = false;
@@ -80,8 +80,8 @@ public:
 	{
 		assert(cmdline);
 		startup_params = cmdline->GetArguments();
-		startup_params.insert(startup_params.begin(),
-		                      cmdline->GetFileName());
+		startup_params.emplace(startup_params.begin(),
+		                       cmdline->GetFileName());
 
 		ParseArguments();
 	}
@@ -101,7 +101,7 @@ public:
 	~Config();
 
 	SectionProp* AddSection(const char* section_name);
-	SectionLine* AddAutoexecSection();
+	AutoExecSection* AddAutoexecSection();
 
 	auto begin()
 	{
@@ -116,7 +116,7 @@ public:
 	Section* GetSectionFromProperty(const char* prop) const;
 
 	void OverwriteAutoexec(const std::string& conf, const std::string& line);
-	const SectionLine& GetOverwrittenAutoexecSection() const;
+	const AutoExecSection& GetOverwrittenAutoexecSection() const;
 	const std::string& GetOverwrittenAutoexecConf() const;
 
 	void ApplyQueuedValuesToCli(std::vector<std::string>& args) const;
@@ -129,7 +129,7 @@ public:
 
 	void ParseConfigFiles(const std_fs::path& config_path);
 
-	std::string SetProperty(std::vector<std::string>& pvars);
+	std::string SetPropertyFromCli(std::vector<std::string>& parameters);
 
 	const std::string& GetArgumentLanguage();
 

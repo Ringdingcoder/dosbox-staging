@@ -14,7 +14,9 @@ add_executable(dosbox_tests
     fraction_tests.cpp
     fs_utils_tests.cpp
     int10_modes_tests.cpp
+    language_territory_tests.cpp
     math_utils_tests.cpp
+    messages_adjust_tests.cpp
     mixer_tests.cpp
     port_containers_tests.cpp
     program_mixer_tests.cpp
@@ -28,6 +30,7 @@ add_executable(dosbox_tests
     # stubs.cpp
     support_tests.cpp
     unicode_tests.cpp
+    multi_prefix_tests.cpp
 )
 
 # Disable some warnings for deliberately flawed test cases
@@ -61,4 +64,5 @@ include(GoogleTest)
 gtest_discover_tests(
   dosbox_tests WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
   DISCOVERY_MODE PRE_TEST
+  DISCOVERY_TIMEOUT 60
 )

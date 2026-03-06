@@ -1,8 +1,9 @@
-// SPDX-FileCopyrightText:  2021-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2021-2026 The DOSBox Staging Team
 // SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "misc/cross.h"
+#include "utils/env_utils.h"
 
 #include <cerrno>
 #include <climits>
@@ -33,10 +34,6 @@
 #	endif
 #endif
 
-#if defined(HAVE_PWD_H)
-#	include <pwd.h>
-#endif
-
 #include "utils/fs_utils.h"
 #include "utils/string_utils.h"
 #include "misc/support.h"
@@ -58,13 +55,9 @@ static std_fs::path get_or_create_config_dir()
 {
 	const auto conf_path = resolve_home("~/Library/Preferences/DOSBox");
 
-	constexpr auto success = 0;
-	if (create_dir(conf_path, 0700, OK_IF_EXISTS) == success) {
-
-	} else {
-		LOG_ERR("CONFIG: Can't create config directory '%s': %s",
-		        conf_path.string().c_str(),
-		        safe_strerror(errno).c_str());
+	if (!create_dir_if_not_exist(conf_path)) {
+		LOG_ERR("CONFIG: Can't create config directory '%s'",
+		        conf_path.string().c_str());
 	}
 	return conf_path;
 }
@@ -99,11 +92,9 @@ static std_fs::path get_or_create_config_dir()
 
 	const auto conf_path = std_fs::path(appdata_path) / "DOSBox";
 
-	constexpr auto success_result = 0;
-	if (create_dir(conf_path, 0700, OK_IF_EXISTS) != success_result) {
-		LOG_ERR("CONFIG: Can't create config directory '%s': %s",
-		        conf_path.string().c_str(),
-		        safe_strerror(errno).c_str());
+	if (!create_dir_if_not_exist(conf_path)) {
+		LOG_ERR("CONFIG: Can't create config directory '%s'",
+		        conf_path.string().c_str());
 	}
 
 	return conf_path;
@@ -217,17 +208,8 @@ std_fs::path resolve_home(const std::string &str) noexcept
 
 	std::string temp_line = str;
 	if(temp_line.size() == 1 || temp_line[1] == CROSS_FILESPLIT) { //The ~ and ~/ variant
-		char * home = getenv("HOME");
-		if(home) temp_line.replace(0,1,std::string(home));
-
-#if defined(HAVE_SYS_TYPES_H) && defined(HAVE_PWD_H)
-	} else { // The ~username variant
-		std::string::size_type namelen = temp_line.find(CROSS_FILESPLIT);
-		if(namelen == std::string::npos) namelen = temp_line.size();
-		std::string username = temp_line.substr(1,namelen - 1);
-		struct passwd* pass = getpwnam(username.c_str());
-		if(pass) temp_line.replace(0,namelen,pass->pw_dir); //namelen -1 +1(for the ~)
-#endif // USERNAME lookup code
+		auto home = get_env_var("HOME");
+		if(!home.empty()) temp_line.replace(0, 1, home);
 	}
 	return temp_line;
 }
@@ -251,7 +233,7 @@ DirInformation* open_directory(const char* dirname) {
 
 	dir.handle = INVALID_HANDLE_VALUE;
 
-	return (path_exists(dirname) ? &dir : nullptr);
+	return (local_drive_path_exists(dirname) ? &dir : nullptr);
 }
 
 bool read_directory_first(DirInformation* dirp, char* entry_name, bool& is_directory) {
@@ -631,14 +613,16 @@ std::string cfstr_to_string(CFStringRef source)
 // Local time support
 // ***************************************************************************
 
+#if defined(WIN32)
+
 namespace cross {
 
-#if defined(WIN32)
 struct tm *localtime_r(const time_t *timep, struct tm *result)
 {
 	const errno_t err = localtime_s(result, timep);
 	return (err == 0 ? result : nullptr);
 }
-#endif
 
 } // namespace cross
+
+#endif

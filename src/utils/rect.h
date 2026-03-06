@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2023-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2023-2026 The DOSBox Staging Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #ifndef DOSBOX_RECTANGLE_H
@@ -69,11 +69,6 @@ struct Rect {
 	constexpr bool operator==(const Rect& that) const
 	{
 		return (x == that.x && y == that.y && w == that.w && h == that.h);
-	}
-
-	constexpr bool operator!=(const Rect& that) const
-	{
-		return !operator==(that);
 	}
 
 	constexpr float x1() const

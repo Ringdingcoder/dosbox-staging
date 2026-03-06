@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2019-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2019-2026 The DOSBox Staging Team
 // SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
@@ -53,6 +53,9 @@ class Section;
 class SectionProp;
 
 typedef Bitu (LoopHandler)(void);
+
+void DOSBOX_Init();
+void DOSBOX_Destroy();
 
 void DOSBOX_InitModuleConfigsAndMessages();
 void DOSBOX_InitModules();
@@ -167,14 +170,19 @@ inline bool is_machine_hercules() {
 #include "misc/logging.h"
 #endif // the logging system.
 
-constexpr auto DefaultMt32RomsDir   = "mt32-roms";
-constexpr auto DefaultSoundfontsDir = "soundfonts";
-constexpr auto GlShadersDir         = "glshaders";
-constexpr auto DiskNoiseDir         = "disknoises";
-constexpr auto PluginsDir           = "plugins";
+constexpr auto DefaultMt32RomsDir        = "mt32-roms";
+constexpr auto DefaultSoundCanvasRomsDir = "soundcanvas-roms";
+constexpr auto DefaultSoundfontsDir      = "soundfonts";
+constexpr auto DefaultWebserverDir       = "webserver";
+constexpr auto DiskNoisesDir             = "disk-noises";
+constexpr auto PluginsDir                = "plugins";
+constexpr auto ShaderPresetsDir          = "shader-presets";
+constexpr auto ShadersDir                = "shaders";
 
 constexpr auto MicrosInMillisecond = 1000;
 constexpr auto BytesPerKilobyte    = 1024;
+constexpr auto BytesPerMegabyte = BytesPerKilobyte * 1024;
+constexpr int64_t BytesPerGigabyte = BytesPerMegabyte * 1024;
 
 enum class DiskSpeed { Maximum, Fast, Medium, Slow };
 

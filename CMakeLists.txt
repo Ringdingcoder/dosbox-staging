@@ -15,7 +15,15 @@ set(DOSBOX_VERSION ${PROJECT_VERSION}-alpha)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# TODO Enable certain warnings-as-errors for at least MSVC, Clang & GCC
+# ccache support
+find_program(CCACHE_PROGRAM ccache)
+if(CCACHE_PROGRAM)
+  set(CMAKE_C_COMPILER_LAUNCHER   "${CCACHE_PROGRAM}")
+  set(CMAKE_CXX_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
+  # Direct mode is 10-fold quicker than non-direct mode
+  set(ENV{CCACHE_DIRECT} "true")
+  message(STATUS "Found and using ccache")
+endif()
 
 # Disable the noisy narrowing and conversion warnings by default. Use the
 # CHECK_NARROWING() macro to opt-in these checks on a per-file basis. See
@@ -29,15 +37,6 @@ if (MSVC)
   add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
 
 else()
-
-  # TODO: GCC 12 (still used in our CI workflow) complains about unrecognized
-  # command line options; after switching to a newer release, enable the
-  # following warning flags:
-  #     -Winvalid-utf8
-  #     -Wtrivial-auto-var-init
-  #     -Wdeprecated-non-prototype (C only)
-  #     -Wflex-array-member-not-at-end (C only)
-  #     -Wfree-labels (C only)
 
   # Warning flags common to C and C++ code
   set(WARNING_FLAGS_COMMON
@@ -64,7 +63,42 @@ else()
       ${WARNING_FLAGS_COMMON}
       "-Weffc++"
       "-Wextra-semi"
+      "-Wimplicit-fallthrough"
   )
+
+  # GCC 12 (still used in our CI workflow) complains about unrecognized
+  # command line options, so we'll enable these conditionally for the GCC 13+
+  # and Clang builds only for now.
+  #
+  if ((CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND
+       CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 13)
+       OR
+       (CMAKE_CXX_COMPILER_ID STREQUAL "Clang"))
+
+    set(WARNING_FLAGS_C
+        ${WARNING_FLAGS_C}
+        "-Winvalid-utf8"
+        "-Wtrivial-auto-var-init"
+    )
+    set(WARNING_FLAGS_CXX
+        ${WARNING_FLAGS_CXX}
+        "-Winvalid-utf8"
+        "-Wtrivial-auto-var-init"
+    )
+  endif()
+
+  if ((CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND
+       CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 15)
+       OR
+       (CMAKE_CXX_COMPILER_ID STREQUAL "Clang"))
+
+    set(WARNING_FLAGS_C
+            ${WARNING_FLAGS_C}
+            "-Wdeprecated-non-prototype"
+            "-Wflex-array-member-not-at-end"
+            "-Wfree-labels"
+    )
+  endif()
 
   add_compile_options(
     "$<$<COMPILE_LANGUAGE:C>:${WARNING_FLAGS_C}>"
@@ -75,13 +109,25 @@ endif()
 
 # GCC needs more memory reserved to fully optimize the CPU emulation code
 if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-  add_compile_options("--param" "max-gcse-memory=250000")
+  add_compile_options("--param" "max-gcse-memory=300000")
 endif()
 
-# TODO: These are sprintf deprecated warnings.
-# We probably do want to remove sprintf usage at some point.
 if (APPLE)
+  # TODO: These are sprintf deprecated warnings. We probably do want to remove
+  # sprintf usage at some point.
   add_compile_options("-Wno-deprecated-declarations")
+
+  # This adds more metadata to the executable (about ~500KB) which is handy
+  # for profiling. It also results in better crash dumps. This does not affect
+  # performance at all.
+  add_compile_options("-g")
+
+  if (C_TARGETCPU STREQUAL "ARMV8LE")
+    # This has virtually zero performance impact on ARM and it gives us deep
+    # observability on release mode builds at full speed (e.g., when using a
+    # profiler).
+    add_compile_options("-fno-omit-frame-pointer")
+  endif()
 endif()
 
 option(OPT_DEBUGGER "Enable debugger" OFF)
@@ -93,6 +139,7 @@ endif()
 include(CheckIncludeFile)
 include(CheckIncludeFiles)
 include(CheckCXXSourceCompiles)
+include(CheckStructHasMember)
 include(CheckSymbolExists)
 include(GNUInstallDirs)
 
@@ -127,15 +174,12 @@ if (OPT_SANITIZER)
   endif()
 
 elseif (OPT_THREAD_SANITIZER)
-  if (DOSBOX_PLATFORM_MACOS)
-    message(WARNING "Thread sanitizer does not work well on macOS")
-  endif()
   set(SANITIZER_FLAGS "thread")
 endif()
 
 if (OPT_SANITIZER OR OPT_THREAD_SANITIZER)
   if (MSVC)
-    message(FATAL_ERROR "Sanitizers are only supported for CLANG and GCC compilers")
+    message(FATAL_ERROR "Sanitizers are only supported for Clang and GCC compilers")
   endif()
 
   if (DOSBOX_PLATFORM_WINDOWS)
@@ -242,7 +286,6 @@ endif()
 
 check_include_file("libgen.h"     HAVE_LIBGEN_H)
 check_include_file("netinet/in.h" HAVE_NETINET_IN_H)
-check_include_file("pwd.h"        HAVE_PWD_H)
 check_include_file("stdlib.h"     HAVE_STDLIB_H)
 check_include_file("strings.h"    HAVE_STRINGS_H)
 check_include_file("sys/types.h"  HAVE_SYS_TYPES_H)
@@ -255,21 +298,16 @@ if (HAVE_GETPEERNAME AND HAVE_GETSOCKNAME)
 endif()
 
 set(C_PER_PAGE_W_OR_X ON)
-set(C_FPU ON)
-
-# Networking (TODO: Option & dependent on SDL2_Net)
-set(C_MODEM ON)
-set(C_IPX ON)
 
 option(OPT_OPENGL "Enable OpenGL render backend" ON)
 if (OPT_OPENGL)
   set(C_OPENGL ON)
 endif()
 
-set(C_MT32EMU ON)       # TODO: Option
-
-set(C_TRACY OFF)        # TODO: Option
-set(C_DIRECTSERIAL ON)
+option(OPT_MT32EMU "Enable Roland MT-32 emulation support" ON)
+if (OPT_MT32EMU)
+  set(C_MT32EMU ON)
+endif()
 
 if (OPT_DEBUGGER)
   set(C_DEBUGGER ON)
@@ -281,14 +319,14 @@ endif()
 
 # ManyMouse - optional XInput support
 option(OPT_MANYMOUSE
-       "Use ManyMouse library for single-computer multiplayer gaming in The Settlers I/II"
-       ON
+  "Use ManyMouse library for single-computer multiplayer gaming in The Settlers I/II"
+  ON
 )
 
 # ManyMouse - optional XInput support
 option(OPT_XINPUT
-       "Let ManyMouse use the X Input protocol"
-       OFF
+  "Let ManyMouse use the X Input protocol"
+  OFF
 )
 
 # ManyMouse
@@ -360,6 +398,13 @@ check_symbol_exists(
   sys_icache_invalidate "libkern/OSCacheControl.h" HAVE_SYS_ICACHE_INVALIDATE
 )
 
+check_struct_has_member(
+  "struct dirent"
+  d_type
+  dirent.h
+  HAVE_STRUCT_DIRENT_D_TYPE
+)
+
 set(CUSTOM_DATADIR "${CMAKE_INSTALL_FULL_DATADIR}")
 
 set(project_name "${PROJECT_NAME}")
@@ -382,7 +427,7 @@ set(CMAKE_BUILD_WITH_INSTALL_RPATH ON)
 # Find common external dependencies
 find_package(PkgConfig REQUIRED)
 find_package(SDL2 CONFIG REQUIRED)
-find_package(SDL2_net REQUIRED)
+find_package(SDL2_image CONFIG REQUIRED)
 find_package(iir REQUIRED)
 find_package(PNG REQUIRED)
 find_package(OpenGL REQUIRED)
@@ -401,14 +446,15 @@ target_include_directories(
 # Bundle licenses, but skip the ones that are not relevant for
 # binary distribution or allow us to not distribute the license text.
 set(LICENSE_FILES
-    licenses/BSD-2-Clause.txt
-    licenses/BSD-3-Clause.txt
-    licenses/DEBUG.COM.txt
-    licenses/GPL-2.0.txt
-    licenses/LGPL-2.1.txt
-    licenses/MIT.txt
-    licenses/UNICODE.txt
-    licenses/Zlib.txt)
+  licenses/BSD-2-Clause.txt
+  licenses/BSD-3-Clause.txt
+  licenses/DEBUG.COM.txt
+  licenses/GPL-2.0.txt
+  licenses/LGPL-2.1.txt
+  licenses/MIT.txt
+  licenses/UNICODE.txt
+  licenses/Zlib.txt
+)
 
 # Set the directory with resources to bundle
 set(RESOURCES_PATH "resources")
@@ -416,9 +462,6 @@ set(RESOURCES_PATH "resources")
 # Generate asset copy commands and add them as a dependency
 include(cmake/add_copy_assets.cmake)
 add_copy_assets()
-
-#find_package(Tracy CONFIG REQUIRED)
-#target_link_libraries(dosbox PRIVATE Tracy::TracyClient)
 
 include_directories(
   src

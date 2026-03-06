@@ -434,10 +434,7 @@ conf_data.set_quoted(
 )
 
 conf_data.set10(os_family_name, true)
-conf_data.set10('C_MODEM', get_option('use_sdl2_net'))
-conf_data.set10('C_IPX', get_option('use_sdl2_net'))
 conf_data.set10('C_MT32EMU', get_option('use_mt32emu'))
-conf_data.set10('C_TRACY', get_option('tracy'))
 conf_data.set10('C_FPU', true)
 conf_data.set10('C_FPU_X86', host_machine.cpu_family() in ['x86', 'x86_64'])
 
@@ -448,12 +445,6 @@ endif
 if get_option('enable_debugger') == 'heavy'
     conf_data.set10('C_HEAVY_DEBUGGER', true)
 endif
-
-foreach osdef : ['LINUX', 'WIN32', 'MACOSX', 'BSD']
-    if conf_data.has(osdef)
-        conf_data.set10('C_DIRECTSERIAL', true)
-    endif
-endforeach
 
 if cc.has_function('clock_gettime', prefix: '#include <time.h>')
     conf_data.set10('HAVE_CLOCK_GETTIME', true)
@@ -581,6 +572,14 @@ dl_dep = cc.find_library('dl', required: false)
 stdcppfs_dep = cxx.find_library('stdc++fs', required: false)
 threads_dep = dependency('threads')
 
+# standalone Asio (system dependency only; no wrap or vendored source)
+asio_dep = dependency(
+    'asio',
+    required: true,
+    fallback: [],
+    include_type: 'system',
+)
+
 # 3rd party libraries
 static_libs_list = get_option('try_static_libs')
 
@@ -607,35 +606,44 @@ opus_dep = dependency(
     include_type: 'system',
 )
 
-sdl2_dep = dependency(
-    'sdl2',
-    version: ['>= 2.0.5', '< 3'],
-    static: ('sdl2' in static_libs_list or prefers_static_libs),
-    default_options: default_wrap_options
-    + [
-        'assertions=' + (is_optimized_buildtype ? 'disabled' : 'enabled'),
-        'prefer_dlopen=true',
-        'test=' + wants_tests.to_string(),
-        'use_audio=enabled',
-        'use_events=enabled',
-        'use_joystick=enabled',
-        'use_loadso=enabled',
-        'use_timers=enabled',
-        'use_video=enabled',
+sdl2_opts = default_wrap_options + [
+    'assertions=' + (is_optimized_buildtype ? 'disabled' : 'enabled'),
+    'prefer_dlopen=true',
+    'test=' + wants_tests.to_string(),
+    'use_audio=enabled',
+    'use_events=enabled',
+    'use_joystick=enabled',
+    'use_loadso=enabled',
+    'use_timers=enabled',
+    'use_video=enabled',
 
-        'use_dummies=false',
-        'system_iconv=disabled',
-        'use_atomic=enabled',
-        'use_file=disabled',
-        'use_filesystem=disabled',
-        'use_hidapi=disabled',
-        'use_haptic=disabled',
-        'use_locale=disabled',
-        'use_sensor=disabled',
-        'use_power=disabled',
-    ],
-    include_type: 'system',
-)
+    'use_dummies=false',
+    'system_iconv=disabled',
+    'use_atomic=enabled',
+    'use_file=disabled',
+    'use_filesystem=disabled',
+    'use_hidapi=disabled',
+    'use_haptic=disabled',
+    'use_locale=disabled',
+    'use_sensor=disabled',
+    'use_power=disabled',
+]
+
+if host_machine.system() == 'darwin'
+    sdl2_proj = subproject(
+        'sdl2',
+        default_options: sdl2_opts,
+    )
+    sdl2_dep = sdl2_proj.get_variable('sdl2_dep')
+else
+    sdl2_dep = dependency(
+        'sdl2',
+        version: ['>= 2.0.5', '< 3'],
+        static: ('sdl2' in static_libs_list or prefers_static_libs),
+        default_options: sdl2_opts,
+        include_type: 'system',
+    )
+endif
 
 # zlib
 # ~~~~
@@ -874,27 +882,14 @@ have_fd_zero = (
     or cc.has_header_symbol('winsock2.h', 'FD_ZERO')
 )
 
-# SDL Networking
-sdl2_net_dep = optional_dep
-sdl2_net_summary_msg = 'Disabled'
-if get_option('use_sdl2_net')
-    sdl2_net_dep = dependency(
-        'SDL2_net',
-        version: ['>= 2.0.0', '< 3'],
-        static: ('sdl2_net' in static_libs_list or prefers_static_libs),
-        default_options: default_wrap_options,
-        not_found_message: msg.format('use_sdl2_net'),
-        include_type: 'system',
-    )
-    sdl2_net_summary_msg = sdl2_net_dep.found()
-
-    if sdl2_net_dep.found() and not have_fd_zero
-        sdl2_net_dep = optional_dep
-        sdl2_net_summary_msg = 'Disabled due to host missing file-descriptor routines'
-    endif
-
-endif
-summary('SDL_net 2.0 support', sdl2_net_summary_msg)
+# SDL Image
+sdl2_image_dep = dependency(
+    'SDL2_image',
+    version: ['>= 2.6.3', '< 3'],
+    static: ('sdl2_image' in static_libs_list or prefers_static_libs),
+    default_options: default_wrap_options,
+    include_type: 'system',
+)
 
 # slirp (depends on glib)
 libslirp_dep = optional_dep
@@ -963,21 +958,6 @@ if get_option('use_mt32emu')
     )
 endif
 summary('mt32emu support', mt32emu_dep.found())
-
-# Tracy
-tracy_dep = optional_dep
-if get_option('tracy')
-    tracy_dep = dependency(
-        'tracy',
-        version: ['>= 0.10', '< 1'],
-        default_options: default_wrap_options,
-        static: ('tracy' in static_libs_list or prefers_static_libs),
-        not_found_message: msg.format('tracy'),
-        include_type: 'system',
-    )
-    add_project_arguments('-g', language: ['c', 'cpp'])
-    add_project_arguments('-fno-omit-frame-pointer', language: ['c', 'cpp'])
-endif
 
 # macOS-only dependencies
 coreaudio_dep = optional_dep
@@ -1173,7 +1153,6 @@ internal_deps = []
 
 # bundled dependencies, in dependency-order
 #
-subdir('src/libs/ghc')
 subdir('src/libs/loguru')
 subdir('src/libs/decoders')
 subdir('src/libs/nuked')
@@ -1200,11 +1179,10 @@ third_party_deps = [
     stdcppfs_dep,
     sdl2_dep,
     threads_dep,
-    ghc_dep,
+    asio_dep,
     libglad_dep,
     libiir_dep,
     libloguru_dep,
-    tracy_dep,
     libwhereami_dep,
     libtalchorus_dep,
 ]
@@ -1227,6 +1205,7 @@ subdir('src/ints')
 subdir('src/midi')
 subdir('src/shell')
 subdir('src/utils')
+subdir('src/webserver')
 
 # debugger-specific libs
 if get_option('enable_debugger') != 'none'

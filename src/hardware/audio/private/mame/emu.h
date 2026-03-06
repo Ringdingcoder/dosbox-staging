@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2020-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2020-2026 The DOSBox Staging Team
 // SPDX-FileCopyrightText:  2017-2020 The DOSBox Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
@@ -15,7 +15,7 @@
 #endif
 #include <float.h>
 #include <stdlib.h>
-#include <memory.h>
+#include <memory>
 
 #if C_DEBUGGER
 #include <stdio.h>
@@ -117,8 +117,8 @@ public:
 	          shortName(short_name)
 	{}
 
-	virtual ~device_t() {
-	}
+	virtual ~device_t() = default;
+
 	// prevent copying and assignment
 	device_t(const device_t &) = delete;
 	device_t &operator=(const device_t &) = delete;

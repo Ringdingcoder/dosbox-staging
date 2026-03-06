@@ -1,6 +1,5 @@
 // SPDX-FileCopyrightTextound  2024-2025 The DOSBox Staging Team
 // SPDX-License-Identifier: GPL-2.0-or-later
-
 #include "private/soundcanvas.h"
 
 #include <optional>
@@ -19,6 +18,7 @@
 #include "misc/std_filesystem.h"
 #include "utils/checks.h"
 #include "utils/string_utils.h"
+#include "utils/env_utils.h"
 
 CHECK_NARROWING();
 
@@ -86,7 +86,7 @@ static const std::optional<Clap::PluginInfo> find_plugin_for_model(
 	// inspecting ther descriptions
 
 	for (const auto& plugin_info : plugin_infos) {
-		auto has = [&](const char* s) -> bool {
+		auto has = [&](const char* s) {
 			return find_in_case_insensitive(s, plugin_info.name);
 		};
 
@@ -280,9 +280,93 @@ static void setup_filter(MixerChannelPtr& channel, const bool filter_enabled)
 	}
 }
 
+#if defined(WIN32)
+
+static std::deque<std_fs::path> get_platform_rom_dirs()
+{
+	return {
+	        get_config_dir() / DefaultSoundCanvasRomsDir,
+	};
+}
+
+#elif defined(MACOSX)
+
+static std::deque<std_fs::path> get_platform_rom_dirs()
+{
+	return {
+	        get_config_dir() / DefaultSoundCanvasRomsDir,
+	};
+}
+#else
+
+static std::deque<std_fs::path> get_platform_rom_dirs()
+{
+	// First priority is user-specific data location
+	const auto xdg_data_home = get_xdg_data_home();
+
+	std::deque<std_fs::path> dirs = {
+	        xdg_data_home / "dosbox" / DefaultSoundCanvasRomsDir,
+	        xdg_data_home / "soundcanvas-rom-data",
+	};
+
+	// Second priority are the $XDG_DATA_DIRS
+	for (const auto& data_dir : get_xdg_data_dirs()) {
+		dirs.emplace_back(data_dir / "soundcanvas-rom-data");
+	}
+
+	// Third priority is $XDG_CONF_HOME, for convenience
+	dirs.emplace_back(get_config_dir() / DefaultSoundCanvasRomsDir);
+
+	return dirs;
+}
+
+#endif
+
+static std::deque<std_fs::path> get_rom_dirs()
+{
+	// Get potential ROM directories from the environment and/or system
+	auto rom_dirs = get_platform_rom_dirs();
+
+	// Get the user's configured ROM directory; otherwise use 'mt32-roms'
+	std_fs::path selected_romdir = get_soundcanvas_section()->GetString("soundcanvas_rom_dir");
+
+	if (selected_romdir.empty()) { // already trimmed
+		selected_romdir = DefaultSoundCanvasRomsDir;
+	}
+
+	// Make sure we search the user's configured directory first
+	rom_dirs.emplace_front(resolve_home(selected_romdir.string()));
+	return rom_dirs;
+}
+
+static void set_soundcanvas_rom_dir_env_var()
+{
+	// Get potential ROM directory candidates, these will be added to a 
+	// SOUNDCANVAS_ROM_PATH environment variable which may be used by 
+	// a plugin to search for ROM files
+	std::error_code ec;
+	std::string env_list = {};
+	for (auto rom_dir : get_rom_dirs()) {
+		if (std_fs::is_directory(rom_dir, ec) && !ec) {
+			const auto canonical_rom_dir = std_fs::canonical(rom_dir, ec);
+			if (ec) {
+				continue;
+			}
+			if (env_list.size() > 0) {
+				env_list.append(env_path_separator);
+			}
+			env_list.append(canonical_rom_dir.string());
+		}
+	}
+	LOG_MSG("SOUNDCANVAS: Setting SOUNDCANVAS_ROM_PATH env variable to '%s'", env_list.c_str());
+	set_env_var("SOUNDCANVAS_ROM_PATH", env_list.c_str(), Env::Overwrite);
+}
+
 MidiDeviceSoundCanvas::MidiDeviceSoundCanvas()
 {
 	using namespace SoundCanvas;
+
+	set_soundcanvas_rom_dir_env_var();
 
 	const auto model_name = get_model_setting();
 
@@ -361,7 +445,7 @@ MidiDeviceSoundCanvas::MidiDeviceSoundCanvas()
 		setup_filter(mixer_channel, filter_enabled);
 
 	} else if (!mixer_channel->TryParseAndSetCustomFilter(filter_prefs)) {
-		if (filter_prefs != "off") {
+		if (!has_false(filter_prefs)) {
 			LOG_WARNING(
 			        "SOUNDCANVAS: Invalid 'soundcanvas_filter' value: '%s', "
 			        "using 'on'",
@@ -683,11 +767,14 @@ void SOUNDCANVAS_ListDevices(MidiDeviceSoundCanvas* device, Program* caller)
 {
 	using namespace SoundCanvas;
 
+	set_soundcanvas_rom_dir_env_var();
+
 	// Table layout constants
 	constexpr auto ColumnDelim = " ";
 	constexpr auto Indent      = "  ";
 
 	if (!available_models_initialised) {
+		available_models.clear();
 		for (auto m : all_models) {
 			if (const auto p = try_load_plugin(*m); p.plugin) {
 				available_models.insert(m);
@@ -727,7 +814,7 @@ void SOUNDCANVAS_ListDevices(MidiDeviceSoundCanvas* device, Program* caller)
 	}();
 
 	auto highlight_model = [&](const SynthModel* model,
-	                           const char* display_name) -> std::string {
+	                           const char* display_name) {
 		constexpr auto darkgray = "[color=dark-gray]";
 		constexpr auto green    = "[color=light-green]";
 		constexpr auto reset    = "[reset]";
@@ -806,21 +893,30 @@ static void init_soundcanvas_config_settings(SectionProp& sec_prop)
 	                      sc55mk2_101.config_name});
 
 	str_prop->SetHelp(
-	        "The Roland Sound Canvas model to use.\n"
-	        "One or more CLAP audio plugins that implement the supported Sound Canvas\n"
-	        "models must be present in the 'plugins' directory in your DOSBox installation\n"
-	        "or configuration directory. DOSBox searches for the requested model by\n"
-	        "inspecting the plugin descriptions. The lookup for the best model is\n"
-	        "performed in order as listed.\n"
+	        "Roland Sound Canvas model to use ('auto' by default). One or more CLAP audio\n"
+	        "plugins that implement the supported Sound Canvas models must be present in the\n"
+	        "'plugins' directory in your DOSBox installation or configuration directory.\n"
+	        "DOSBox searches for the requested model by inspecting the plugin descriptions.\n"
+	        "The lookup for the best model is performed in order as listed. Possible values:\n"
+	        "\n"
 	        "  auto:       Pick the best available model (default).\n"
 	        "  sc55:       Pick the best available original SC-55 model.\n"
 	        "  sc55mk2:    Pick the best available SC-55mk2 model.\n"
 	        "  <version>:  Use the exact specified model version (e.g., 'sc55_121').");
 
+	str_prop = sec_prop.AddString("soundcanvas_rom_dir", when_idle, "");
+	str_prop->SetHelp(
+	        "The directory containing the Roland Sound Canvas ROMs (unset by default).\n"
+	        "The directory can be absolute or relative, or leave it unset to use the\n"
+	        "'soundcanvas-roms' directory in your DOSBox configuration directory. Other\n"
+	        "common system locations will be checked as well.");
+
 	str_prop = sec_prop.AddString("soundcanvas_filter", when_idle, "on");
 	assert(str_prop);
 	str_prop->SetHelp(
-	        "Filter for the Roland Sound Canvas audio output:\n"
+	        "Filter for the Roland Sound Canvas audio output ('on' by default).\n"
+	        "Possible values:\n"
+	        "\n"
 	        "  on:        Filter the output (default).\n"
 	        "  off:       Don't filter the output.\n"
 	        "  <custom>:  Custom filter definition; see 'sb_filter' for details.");
@@ -835,6 +931,10 @@ static void register_soundcanvas_text_messages()
 static void notify_soundcanvas_setting_updated([[maybe_unused]] SectionProp& section,
                                                const std::string& prop_name)
 {
+	if (prop_name == "soundcanvas_rom_dir") {
+		available_models_initialised = false;
+	}
+
 	const auto device = dynamic_cast<MidiDeviceSoundCanvas*>(
 	        MIDI_GetCurrentDevice());
 

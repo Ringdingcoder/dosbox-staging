@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2020-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2020-2026 The DOSBox Staging Team
 // SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
@@ -138,11 +138,6 @@ struct VideoMode {
 		        color_depth == that.color_depth &&
 		        is_double_scanned_mode == that.is_double_scanned_mode &&
 		        has_vga_colors == that.has_vga_colors);
-	}
-
-	constexpr bool operator!=(const VideoMode& that) const
-	{
-		return !operator==(that);
 	}
 };
 
@@ -293,11 +288,6 @@ struct ImageInfo {
 		        pixel_aspect_ratio == that.pixel_aspect_ratio &&
 		        pixel_format == that.pixel_format &&
 		        video_mode == that.video_mode);
-	}
-
-	constexpr bool operator!=(const ImageInfo& that) const
-	{
-		return !operator==(that);
 	}
 };
 

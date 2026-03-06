@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2020-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2020-2026 The DOSBox Staging Team
 // SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
@@ -12,6 +12,7 @@
 #include <ctime>
 
 #include "dosbox.h"
+#include "dos_windows.h"
 #include "ints/bios.h"
 #include "hardware/memory.h"
 #include "cpu/registers.h"
@@ -36,7 +37,8 @@ std::array<std::unique_ptr<DOS_File>, DOS_FILES> Files = {};
 std::array<std::shared_ptr<DOS_Drive>, DOS_DRIVES> Drives = {};
 
 // Set by "file_locking" config
-static bool emulate_file_locking = true;
+enum class FileLockingConfig { Auto, On, Off };
+static FileLockingConfig emulate_file_locking = FileLockingConfig::Auto;
 
 enum class FileSharingMode
 {
@@ -275,7 +277,7 @@ bool DOS_MakeName(const char* const name, char* const fullname, uint8_t* drive)
 
 			int32_t iDown;
 			bool dots = true;
-			int32_t templen=(int32_t)strlen(tempdir);
+			auto templen=(int32_t)strlen(tempdir);
 			for(iDown=0;(iDown < templen) && dots;iDown++)
 				if(tempdir[iDown] != '.')
 					dots = false;
@@ -997,9 +999,6 @@ bool DOS_GetFileAttr(const char* const name, FatAttributeFlags* attr)
 	}
 
 	if (Drives.at(drive)->GetFileAttr(fullname, attr)) {
-		if (Drives.at(drive)->IsReadOnly()) {
-			attr->read_only = true;
-		}
 		return true;
 	} else {
 		*attr = 0;
@@ -1285,7 +1284,7 @@ uint8_t FCB_Parsename(uint16_t seg, uint16_t offset, uint8_t parser,
 	while (true) {
 		unsigned char nc = *reinterpret_cast<const unsigned char*>(
 		        &string[0]);
-		char ncs = (char)toupper(nc); //Should use DOS_ToUpper, but then more calls need to be changed.
+		auto ncs = (char)toupper(nc); //Should use DOS_ToUpper, but then more calls need to be changed.
 		if (ncs == '*') { //Handle *
 			fill = '?';
 			ncs = '?';
@@ -1311,7 +1310,7 @@ checkext:
 	while (true) {
 		unsigned char nc = *reinterpret_cast<const unsigned char*>(
 		        &string[0]);
-		char ncs = (char)toupper(nc);
+		auto ncs = (char)toupper(nc);
 		if (ncs == '*') { //Handle *
 			fill = '?';
 			ncs = '?';
@@ -1567,9 +1566,9 @@ uint8_t DOS_FCBIncreaseSize(uint16_t seg, uint16_t offset)
 	date = DOS_PackDate(dos.date.year,dos.date.month,dos.date.day);
 	uint32_t ticks = mem_readd(BIOS_TIMER);
 	uint32_t seconds = (ticks*10)/182;
-	uint16_t hour = (uint16_t)(seconds/3600);
-	uint16_t min = (uint16_t)((seconds % 3600)/60);
-	uint16_t sec = (uint16_t)(seconds % 60);
+	auto hour = static_cast<uint16_t>(seconds/3600);
+	auto min  = static_cast<uint16_t>((seconds % 3600)/60);
+	auto sec  = static_cast<uint16_t>(seconds % 60);
 	time = DOS_PackTime(hour,min,sec);
 	Files[fhandle]->time = time;
 	Files[fhandle]->date = date;
@@ -1888,10 +1887,29 @@ void DOS_ClearDrivesAndFiles()
 
 bool DOS_IsFileLocking()
 {
-	return emulate_file_locking;
+	switch (emulate_file_locking) {
+	case FileLockingConfig::On: return true;
+	case FileLockingConfig::Off: return false;
+	case FileLockingConfig::Auto: return WINDOWS_IsStarted();
+	default:
+		assertm(false, "emulate_file_locking enum set to invalid value");
+		return WINDOWS_IsStarted();
+	}
 }
 
 void DOS_Files_Init(SectionProp& section)
 {
-	emulate_file_locking = section.GetBool("file_locking");
+	const auto locking = section.GetString("file_locking");
+	const auto maybe_bool = parse_bool_setting(locking);
+	if (maybe_bool) {
+		if (*maybe_bool) {
+			emulate_file_locking = FileLockingConfig::On;
+		} else {
+			emulate_file_locking = FileLockingConfig::Off;
+		}
+	} else {
+		assertm(locking == "auto",
+		        "file_locking config set to invalid string");
+		emulate_file_locking = FileLockingConfig::Auto;
+	}
 }

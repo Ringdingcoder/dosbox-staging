@@ -139,10 +139,14 @@ bool fatFile::Read(uint8_t * data, uint16_t *size) {
 
 bool fatFile::Write(uint8_t * data, uint16_t *size) {
 	// check if file opened in read-only mode
-	if ((this->flags & 0xf) == OPEN_READ || myDrive->IsReadOnly()) {
+	uint8_t lastflags = this->flags & 0xf;
+	if (lastflags == OPEN_READ || lastflags == OPEN_READ_NO_MOD) {
 		DOS_SetError(DOSERR_ACCESS_DENIED);
 		return false;
 	}
+
+	// File should always be opened in read-only mode if on read-only drive
+	assert(!IsOnReadOnlyMedium());
 
 	direntry tmpentry;
 	uint16_t sizedec, sizecount;
@@ -274,26 +278,26 @@ bool fatFile::Seek(uint32_t *pos, uint32_t type) {
 
 void fatFile::Close()
 {
-	if ((flags & 0xf) != OPEN_READ && !myDrive->IsReadOnly()) {
-		if (flush_time_on_close == FlushTimeOnClose::ManuallySet || set_archive_on_close) {
-			direntry tmpentry;
-			myDrive->directoryBrowse(dirCluster, &tmpentry, dirIndex);
-			if (flush_time_on_close == FlushTimeOnClose::ManuallySet) {
-				tmpentry.modTime = time;
-				tmpentry.modDate = date;
-			}
-			if (set_archive_on_close) {
-				FatAttributeFlags tmp = tmpentry.attrib;
-				tmp.archive           = true;
-				tmpentry.attrib       = tmp._data;
-			}
-			myDrive->directoryChange(dirCluster, &tmpentry, dirIndex);
+	if (flush_time_on_close == FlushTimeOnClose::ManuallySet ||
+	    set_archive_on_close) {
+		assert(!IsOnReadOnlyMedium());
+		direntry tmpentry;
+		myDrive->directoryBrowse(dirCluster, &tmpentry, dirIndex);
+		if (flush_time_on_close == FlushTimeOnClose::ManuallySet) {
+			tmpentry.modTime = time;
+			tmpentry.modDate = date;
 		}
+		if (set_archive_on_close) {
+			FatAttributeFlags tmp = tmpentry.attrib;
+			tmp.archive           = true;
+			tmpentry.attrib       = tmp._data;
+		}
+		myDrive->directoryChange(dirCluster, &tmpentry, dirIndex);
+	}
 
-		/* Flush buffer */
-		if (loadedSector) {
-			myDrive->writeSector(currentSector, sectorBuffer);
-		}
+	// Flush buffer
+	if (loadedSector) {
+		myDrive->writeSector(currentSector, sectorBuffer);
 	}
 
 	set_archive_on_close = false;
@@ -343,7 +347,7 @@ uint32_t fatDrive::getClusterValue(uint32_t clustNum) {
 	switch(fattype) {
 		case FAT12:
 			clustValue = var_read((uint16_t *)&fatSectBuffer[fatentoff]);
-			if(clustNum & 0x1) {
+			if(clustNum & 0x1) { //-V1051
 				clustValue >>= 4;
 			} else {
 				clustValue &= 0xfff;
@@ -513,7 +517,7 @@ bool fatDrive::getFileDirEntry(const char* const filename, direntry* useEntry,
 
 bool fatDrive::getDirClustNum(const char* dir, uint32_t* clustNum, bool parDir)
 {
-	uint32_t len = (uint32_t)strnlen(dir, DOS_PATHLENGTH);
+	auto len = static_cast<uint32_t>(strnlen(dir, DOS_PATHLENGTH));
 	char dirtoken[DOS_PATHLENGTH];
 	uint32_t currentClust = 0;
 	direntry foundEntry;
@@ -626,11 +630,11 @@ uint32_t fatDrive::getAbsoluteSectFromChain(uint32_t startClustNum, uint32_t log
 				if(testvalue >= 0xfffffff8) isEOF = true;
 				break;
 		}
-		if((isEOF) && (skipClust>=1)) {
-			//LOG_MSG("End of cluster chain reached before end of logical sector seek!");
+		if (isEOF && (skipClust >= 1)) {
 			if (skipClust == 1 && fattype == FAT12) {
 				//break;
-				LOG(LOG_DOSMISC, LOG_ERROR)("End of cluster chain reached, but maybe good after all ?");
+				LOG(LOG_DOSMISC,
+				    LOG_WARN)("End of cluster chain reached.");
 			}
 			return 0;
 		}
@@ -760,25 +764,23 @@ constexpr uint16_t dta_pages()
 	return pages;
 }
 
-fatDrive::fatDrive(const char *sysFilename,
-                   uint32_t bytesector,
-                   uint32_t cylsector,
-                   uint32_t headscyl,
-                   uint32_t cylinders,
-                   bool roflag)
-	: loadedDisk(nullptr),
-	  created_successfully(true),
-	  partSectOff(0),
-	  bootbuffer{{0}, {0}, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, {0}, 0, 0},
-	  absolute(false),
-	  readonly(roflag),
-	  fattype(0),
-	  CountOfClusters(0),
-	  firstDataSector(0),
-	  firstRootDirSect(0),
-	  cwdDirCluster(0),
-	  fatSectBuffer{0},
-	  curFatSect(0)
+fatDrive::fatDrive(const char* sysFilename, uint32_t bytesector,
+                   uint32_t cylsector, uint32_t headscyl, uint32_t cylinders,
+                   uint8_t mediaid, bool roflag)
+        : loadedDisk(nullptr),
+          created_successfully(true),
+          partSectOff(0),
+          mediaid(mediaid),
+          bootbuffer{{0}, {0}, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, {0}, 0, 0},
+          absolute(false),
+          readonly(roflag),
+          fattype(0),
+          CountOfClusters(0),
+          firstDataSector(0),
+          firstRootDirSect(0),
+          cwdDirCluster(0),
+          fatSectBuffer{0},
+          curFatSect(0)
 {
 	FILE *diskfile;
 	uint32_t filesize;
@@ -840,6 +842,8 @@ fatDrive::fatDrive(const char *sysFilename,
 	if (bytesector != BytePerSector) {
 		/* Non-standard sector sizes not implemented */
 		created_successfully = false;
+		LOG_WARNING("DOS: MOUNT - Non-standard sector size detected: %u bytes per sector",
+		            bytesector);
 		return;
 	}
 
@@ -903,6 +907,8 @@ fatDrive::fatDrive(const char *sysFilename,
 			} else {
 				/* Unknown format */
 				created_successfully = false;
+				LOG_WARNING("DOS: MOUNT - Unknown floppy format detected (media descriptor 0x%02x).",
+				            mdesc);
 				return;
 			}
 		}
@@ -910,22 +916,62 @@ fatDrive::fatDrive(const char *sysFilename,
 
 	if ((bootbuffer.magic1 != 0x55) || (bootbuffer.magic2 != 0xaa)) {
 		/* Not a FAT filesystem */
-		LOG_MSG("Loaded image has no valid magicnumbers at the end!");
+		LOG_MSG("Loaded image has no valid magicnumbers at the end.");
 	}
 
 	/* Sanity checks */
 
-	// Note: non-standard sector sizes notimplemented
-	if ((bootbuffer.sectorsperfat == 0) || // FAT32 not implemented yet
-	    (bootbuffer.bytespersector != BytePerSector) ||
-	    (bootbuffer.sectorspercluster == 0) ||
-	    (bootbuffer.rootdirentries == 0) ||
-	    (bootbuffer.fatcopies == 0) ||
-	    (bootbuffer.headcount == 0) ||
-	    (bootbuffer.headcount > headscyl) ||
-	    (bootbuffer.sectorspertrack == 0) ||
-	    (bootbuffer.sectorspertrack > cylsector)) {
+	if (bootbuffer.sectorsperfat == 0) {
+		/* Possibly a FAT32 or non-FAT filesystem */
 		created_successfully = false;
+		LOG_WARNING("DOS: MOUNT - Loaded image has zero sectors per FAT! FAT32 and non-FAT filesystems are not supported.");
+		return;
+	}
+	if (bootbuffer.bytespersector != BytePerSector) {
+		created_successfully = false;
+		LOG_WARNING("DOS: MOUNT - Bytes Per Sector mismatch: expected %u, got %u.",
+		            BytePerSector,
+		            bootbuffer.bytespersector);
+		return;
+	}
+	if (bootbuffer.sectorspercluster == 0) {
+		created_successfully = false;
+		LOG_WARNING("DOS: MOUNT - Loaded image has zero sectors per cluster.");
+		return;
+	}
+	if (bootbuffer.rootdirentries == 0) {
+		created_successfully = false;
+		LOG_WARNING("DOS: MOUNT - Loaded image has zero root directory entries.");
+		return;
+	}
+	if (bootbuffer.fatcopies == 0) {
+		created_successfully = false;
+		LOG_WARNING("DOS: MOUNT - Loaded image has zero FAT copies.");
+		return;
+	}
+	/* Check geometry values */
+	if (bootbuffer.headcount == 0) {
+		created_successfully = false;
+		LOG_WARNING("DOS: MOUNT - Loaded image has zero heads per cylinder.");
+		return;
+	}
+	if (bootbuffer.headcount > headscyl) {
+		created_successfully = false;
+		LOG_WARNING("DOS: MOUNT - Loaded image has more heads per cylinder (%u) than the disk geometry allows (%u).",
+		            bootbuffer.headcount,
+		            headscyl);
+		return;
+	}
+	if (bootbuffer.sectorspertrack == 0) {
+		created_successfully = false;
+		LOG_WARNING("DOS: MOUNT - Loaded image has zero sectors per track.");
+		return;
+	}
+	if (bootbuffer.sectorspertrack > cylsector) {
+		created_successfully = false;
+		LOG_WARNING("DOS: MOUNT - Loaded image has more sectors per track (%u) than the disk geometry allows (%u).",
+		            bootbuffer.sectorspertrack,
+		            cylsector);
 		return;
 	}
 
@@ -1031,14 +1077,14 @@ Bits fatDrive::UnMount()
 }
 
 uint8_t fatDrive::GetMediaByte(void) {
-	return loadedDisk ? loadedDisk->GetBiosType() : 0;
+	return mediaid;
 }
 
 // name can be a full DOS path with filename, up-to DOS_PATHLENGTH in length
 std::unique_ptr<DOS_File> fatDrive::FileCreate(const char* name,
                                                FatAttributeFlags attributes)
 {
-	if (readonly) {
+	if (IsReadOnly()) {
 		DOS_SetError(DOSERR_ACCESS_DENIED);
 		return nullptr;
 	}
@@ -1135,10 +1181,16 @@ std::unique_ptr<DOS_File> fatDrive::FileOpen(const char* name, uint8_t flags)
 
 	const FatAttributeFlags entry_attributes = fileEntry.attrib;
 	const bool is_readonly                   = entry_attributes.read_only;
-	bool open_for_readonly                   = ((flags & 0xf) == OPEN_READ);
+	bool open_for_readonly                   = ((flags & 0xf) == OPEN_READ ||
+		                                        (flags & 0xf) == OPEN_READ_NO_MOD);
 	if (is_readonly && !open_for_readonly) {
 		DOS_SetError(DOSERR_ACCESS_DENIED);
 		return nullptr;
+	}
+
+	// Force read-only mode if the drive is read-only.
+	if (!open_for_readonly && IsReadOnly()) {
+		flags = OPEN_READ;
 	}
 
 	// These must be extracted to temporaries or GCC throws a compile error
@@ -1163,7 +1215,7 @@ std::unique_ptr<DOS_File> fatDrive::FileOpen(const char* name, uint8_t flags)
 }
 
 bool fatDrive::FileUnlink(const char * name) {
-	if (readonly) {
+	if (IsReadOnly()) {
 		DOS_SetError(DOSERR_ACCESS_DENIED);
 		return false;
 	}
@@ -1212,7 +1264,7 @@ bool fatDrive::FindFirst(const char *_dir, DOS_DTA &dta,bool /*fcb_findfirst*/) 
 		return true;
 	}
 	if (FatAttributeFlags(attr).volume) //check for root dir or fcb_findfirst
-		LOG(LOG_DOSMISC,LOG_WARN)("findfirst for volumelabel used on fatDrive. Unhandled!!!!!");
+		LOG(LOG_DOSMISC,LOG_WARN)("findfirst for volumelabel used on fatDrive. Unhandled.");
 #endif
 	if(!getDirClustNum(_dir, &cwdDirCluster, false)) {
 		DOS_SetError(DOSERR_PATH_NOT_FOUND);
@@ -1383,7 +1435,7 @@ bool fatDrive::GetFileAttr(const char* name, FatAttributeFlags* attr)
 
 bool fatDrive::SetFileAttr(const char* name, const FatAttributeFlags attr)
 {
-	if (readonly) {
+	if (IsReadOnly()) {
 		DOS_SetError(DOSERR_ACCESS_DENIED);
 		return false;
 	}
@@ -1412,7 +1464,7 @@ bool fatDrive::directoryBrowse(uint32_t dirClustNumber, direntry *useEntry, int3
 	uint32_t entryoffset = 0;	/* Index offset within sector */
 	uint32_t tmpsector;
 	if ((start<0) || (start>65535)) return false;
-	uint16_t dirPos = (uint16_t)start;
+	auto dirPos = static_cast<uint16_t>(start);
 	if (entNum<start) return false;
 	entNum-=start;
 
@@ -1536,7 +1588,7 @@ void fatDrive::zeroOutCluster(uint32_t clustNumber) {
 
 bool fatDrive::MakeDir(const char* dir)
 {
-	if (readonly) {
+	if (IsReadOnly()) {
 		DOS_SetError(DOSERR_ACCESS_DENIED);
 		return false;
 	}
@@ -1592,7 +1644,7 @@ bool fatDrive::MakeDir(const char* dir)
 }
 
 bool fatDrive::RemoveDir(const char *dir) {
-	if (readonly) {
+	if (IsReadOnly()) {
 		DOS_SetError(DOSERR_ACCESS_DENIED);
 		return false;
 	}
@@ -1649,7 +1701,7 @@ bool fatDrive::RemoveDir(const char *dir) {
 }
 
 bool fatDrive::Rename(const char * oldname, const char * newname) {
-	if (readonly) {
+	if (IsReadOnly()) {
 		DOS_SetError(DOSERR_ACCESS_DENIED);
 		return false;
 	}

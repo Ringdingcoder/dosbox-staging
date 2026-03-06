@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2020-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2020-2026 The DOSBox Staging Team
 // SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
@@ -56,7 +56,7 @@ static bool is_ega_color(const Rgb666 color)
 	       palette.ega.cend();
 }
 
-// In the automatic "video mode specific" CRT emulation mode (`glshader =
+// In the automatic "video mode specific" CRT emulation mode (`shader =
 // crt-auto`), we want "true EGA" games on emulated VGA adapters to use the
 // single scanline EGA shader. "True EGA" games set up an EGA mode and don't
 // change the palette to use 18-bit VGA colours. These games look identical on
@@ -160,7 +160,7 @@ static void vga_dac_send_color(const uint8_t palette_idx, const uint8_t color_id
 	const auto b8 = rgb6_to_8_lut(rgb666.blue);
 
 	// Map the source color into palette's requested index
-	vga.dac.palette_map[palette_idx].Set(b8, g8, r8);
+	vga.dac.palette_map[palette_idx] = Bgrx8888(r8, g8, b8);
 
 	ReelMagic_RENDER_SetPalette(palette_idx, r8, g8, b8);
 }

@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2020-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2020-2026 The DOSBox Staging Team
 // SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
@@ -92,10 +92,10 @@ static Bitu PROGRAMS_Handler(void)
 	static_assert(exec_block_size < UINT16_MAX, "Should only be 19 bytes");
 
 	// Read the index from program code in memory
-	PhysPt reader = PhysicalMake(dos.psp(),
-	                             256 + static_cast<uint16_t>(exec_block_size));
+	auto reader = PhysicalMake(dos.psp(),
+	                           256 + static_cast<uint16_t>(exec_block_size));
 
-	HostPt writer = (HostPt)&index;
+	auto writer = (HostPt)&index;
 
 	for (; size > 0; size--) {
 		*writer++ = mem_readb(reader++);
@@ -155,8 +155,7 @@ void Program::ChangeToLongCmd()
 	// Length of arguments can be ~120. but switch when above 100 to be sure
 
 	if (/*control->SecureMode() ||*/ cmd->GetNumArguments() > 100) {
-		CommandLine* temp = new CommandLine(cmd->GetFileName(),
-		                                    full_arguments);
+		auto temp = new CommandLine(cmd->GetFileName(), full_arguments);
 		delete cmd;
 		cmd = temp;
 	}
@@ -236,7 +235,7 @@ public:
 private:
 	void DisplayHelp();
 
-	void HandleHelpCommand(const std::vector<std::string>& pvars);
+	void HandleHelpCommand(const std::vector<std::string>& parameters);
 
 	void WriteConfig(const std::string& name)
 	{
@@ -265,15 +264,15 @@ void CONFIG::DisplayHelp()
 	output.Display();
 }
 
-void CONFIG::HandleHelpCommand(const std::vector<std::string>& pvars_in)
+void CONFIG::HandleHelpCommand(const std::vector<std::string>& _parameters)
 {
-	auto pvars = pvars_in;
+	auto parameters = _parameters;
 
-	switch (pvars.size()) {
+	switch (parameters.size()) {
 	case 0: DisplayHelp(); return;
 
 	case 1: {
-		if (!strcasecmp("sections", pvars[0].c_str())) {
+		if (!strcasecmp("sections", parameters[0].c_str())) {
 			// List the sections
 			MoreOutputStrings output(*this);
 			output.AddString(MSG_Get("PROGRAM_CONFIG_HLP_SECTLIST"));
@@ -289,36 +288,37 @@ void CONFIG::HandleHelpCommand(const std::vector<std::string>& pvars_in)
 		}
 
 		// If it's a section, leave it as single param
-		Section* sec = control->GetSection(pvars[0]);
+		Section* sec = control->GetSection(parameters[0]);
 		if (!sec || !sec->IsActive()) {
 			// Could be a property
-			sec = control->GetSectionFromProperty(pvars[0].c_str());
+			sec = control->GetSectionFromProperty(parameters[0].c_str());
 			if (!sec || !sec->IsActive()) {
 				WriteOut(MSG_Get("PROGRAM_CONFIG_SECTION_OR_SETTING_NOT_FOUND"),
-				         pvars[0].c_str());
+				         parameters[0].c_str());
 				return;
 			}
-			pvars.emplace(pvars.begin(), sec->GetName());
+			parameters.emplace(parameters.begin(), sec->GetName());
 		}
 		break;
 	}
 
 	case 2: {
-		Section* sec = control->GetSection(pvars[0]);
+		Section* sec = control->GetSection(parameters[0]);
 		if (sec && !sec->IsActive()) {
 			sec = nullptr;
 		}
 
-		Section* sec2 = control->GetSectionFromProperty(pvars[1].c_str());
+		Section* sec2 = control->GetSectionFromProperty(
+		        parameters[1].c_str());
 
 		if (!sec || !sec->IsActive()) {
 			WriteOut(MSG_Get("PROGRAM_CONFIG_SECTION_OR_SETTING_NOT_FOUND"),
-			         pvars[0].c_str());
+			         parameters[0].c_str());
 			return;
 
 		} else if (!sec2 || !sec2->IsActive() || sec != sec2) {
 			WriteOut(MSG_Get("PROGRAM_CONFIG_SECTION_OR_SETTING_NOT_FOUND"),
-			         pvars[1].c_str());
+			         parameters[1].c_str());
 			return;
 		}
 		break;
@@ -327,17 +327,17 @@ void CONFIG::HandleHelpCommand(const std::vector<std::string>& pvars_in)
 	default: DisplayHelp(); return;
 	}
 
-	// If we have a single value in pvars, it's a section.
+	// If we have a single value in parameters, it's a section.
 	// If we have two values, that's a section and a property.
-	Section* sec = control->GetSection(pvars[0]);
+	Section* sec = control->GetSection(parameters[0]);
 
 	if (sec == nullptr || !sec->IsActive()) {
 		WriteOut(MSG_Get("PROGRAM_CONFIG_SECTION_OR_SETTING_NOT_FOUND"),
-		         pvars[0].c_str());
+		         parameters[0].c_str());
 		return;
 	}
 
-	SectionProp* psec = dynamic_cast<SectionProp*>(sec);
+	auto psec = dynamic_cast<SectionProp*>(sec);
 
 	// Special [autoexec] section handling (if has no properties like all
 	// the other sections).
@@ -350,10 +350,10 @@ void CONFIG::HandleHelpCommand(const std::vector<std::string>& pvars_in)
 		return;
 	}
 
-	if (pvars.size() == 1) {
+	if (parameters.size() == 1) {
 		MoreOutputStrings output(*this);
 		output.AddString(MSG_Get("PROGRAM_CONFIG_HLP_SECTHLP"),
-		                 pvars[0].c_str());
+		                 parameters[0].c_str());
 
 		auto i = 0;
 		while (true) {
@@ -371,7 +371,7 @@ void CONFIG::HandleHelpCommand(const std::vector<std::string>& pvars_in)
 		output.Display();
 
 	} else {
-		// pvars has more than 1 element
+		// parameters has more than 1 element
 		MoreOutputStrings output(*this);
 
 		// Find the property by its name
@@ -383,10 +383,10 @@ void CONFIG::HandleHelpCommand(const std::vector<std::string>& pvars_in)
 				break;
 			}
 
-			if (!strcasecmp(p->propname.c_str(), pvars[1].c_str())) {
+			if (!strcasecmp(p->propname.c_str(), parameters[1].c_str())) {
 				// Found it; make the list of possible values
 				std::string possible_values;
-				std::vector<Value> pv = p->GetValues();
+				std::vector<Value> values = p->GetValues();
 
 				if (p->GetType() == Value::V_BOOL) {
 					possible_values += "on, off";
@@ -394,10 +394,11 @@ void CONFIG::HandleHelpCommand(const std::vector<std::string>& pvars_in)
 				} else if (p->GetType() == Value::V_INT) {
 					// Print min & max for integer values if
 					// used
-					PropInt* pint = dynamic_cast<PropInt*>(p);
+					auto pint = dynamic_cast<PropInt*>(p);
 					assert(pint);
 
-					if (pint && pint->GetMin() != pint->GetMax()) {
+					if (pint &&
+					    pint->GetMin() != pint->GetMax()) {
 						std::ostringstream oss;
 						oss << pint->GetMin();
 						oss << "..";
@@ -406,14 +407,14 @@ void CONFIG::HandleHelpCommand(const std::vector<std::string>& pvars_in)
 					}
 				}
 
-				for (size_t k = 0; k < pv.size(); ++k) {
-					if (pv[k].ToString() == "%u") {
+				for (size_t k = 0; k < values.size(); ++k) {
+					if (values[k].ToString() == "%u") {
 						possible_values += MSG_Get(
 						        "PROGRAM_CONFIG_HLP_POSINT");
 					} else {
-						possible_values += pv[k].ToString();
+						possible_values += values[k].ToString();
 					}
-					if ((k + 1) < pv.size()) {
+					if ((k + 1) < values.size()) {
 						possible_values += ", ";
 					}
 				}
@@ -478,58 +479,95 @@ void CONFIG::HandleHelpCommand(const std::vector<std::string>& pvars_in)
 
 void CONFIG::Run(void)
 {
-	static const char* const params[] = {
-	        "-r",      "-wcd",       "-wc",      "-writeconf",   "-l",
-	        "-h",      "-help",      "-?",       "-axclear",     "-axadd",
-	        "-axtype", "-avistart",  "-avistop", "-startmapper", "-get",
-	        "-set",    "-writelang", "-wl",      "-securemode",  ""};
+	// TODO use a map instead
+	static const char* const AllCommandLineParamFlags[] = {
+	        "-r", // Restart
 
-	enum prs {
-		P_NOMATCH,
-		P_NOPARAMS, // fixed return values for GetParameterFromList
-		P_RESTART,
-		P_WRITECONF_DEFAULT,
-		P_WRITECONF,
-		P_WRITECONF2,
-		P_LISTCONF,
-		P_HELP,
-		P_HELP2,
-		P_HELP3,
-		P_AUTOEXEC_CLEAR,
-		P_AUTOEXEC_ADD,
-		P_AUTOEXEC_TYPE,
-		P_REC_AVI_START,
-		P_REC_AVI_STOP,
-		P_START_MAPPER,
-		P_GETPROP,
-		P_SETPROP,
-		P_WRITELANG,
-		P_WRITELANG2,
-		P_SECURE
-	} presult = P_NOMATCH;
+	        "-wcd",       // WriteDefaultConfig
+	        "-wc",        // WriteConfig1
+	        "-writeconf", // WriteConfig2
+	        "-l",         // ListConfig
+
+	        "-h",    // ShowHelp1
+	        "-help", // ShowHelp2
+	        "-?",    // ShowHelp3
+
+	        "-axclear", // ClearAutoexec
+	        "-axadd",   // AppendLineToAutoexec
+	        "-axtype",  // ShowAutoexec
+
+	        "-avistart", // StartVideoCapture
+	        "-avistop",  // StopVideoCapture
+
+	        "-startmapper", // StartMapper
+
+	        "-get", // GetProperty
+	        "-set", // SetProperty
+
+	        "-writelang", // WriteLanguageFile1
+	        "-wl",        // WriteLanguageFile2
+
+	        "-securemode", // EnableSecureMode
+	        ""};
+
+	enum Parameter {
+		NoMatch  = 0,
+		NoParams = 1, // fixed return values for GetParameterFromList
+
+		Restart = 2,
+
+		WriteDefaultConfig,
+		WriteConfig1,
+		WriteConfig2,
+		ListConfig,
+
+		ShowHelp1,
+		ShowHelp2,
+		ShowHelp3,
+
+		ClearAutoexec,
+		AppendLineToAutoexec,
+		ShowAutoexec,
+
+		StartVideoCapture,
+		StopVideoCapture,
+
+		StartMapper,
+		GetProperty,
+		SetProperty,
+
+		WriteLanguageFile1,
+		WriteLanguageFile2,
+
+		EnableSecureMode
+	} param_result = NoMatch;
 
 	bool first = true;
 
-	std::vector<std::string> pvars = {};
+	std::vector<std::string> parameters = {};
 
 	// Loop through the passed parameters
-	while (presult != P_NOPARAMS) {
-		presult = (enum prs)cmd->GetParameterFromList(params, pvars);
+	while (param_result != NoParams) {
+		param_result = (enum Parameter)cmd->GetParameterFromList(
+		        AllCommandLineParamFlags, parameters);
 
-		switch (presult) {
-		case P_RESTART:
+		switch (param_result) {
+		case Restart:
 			if (CheckSecureMode()) {
 				return;
 			}
-			if (pvars.empty()) {
+			if (parameters.empty()) {
 				DOSBOX_Restart();
 			} else {
 				std::vector<std::string> restart_params;
-				restart_params.push_back(
+
+				restart_params.emplace_back(
 				        control->cmdline->GetFileName());
-				for (size_t i = 0; i < pvars.size(); i++) {
-					restart_params.push_back(pvars[i]);
+
+				for (size_t i = 0; i < parameters.size(); i++) {
+					restart_params.emplace_back(parameters[i]);
 				}
+
 				const auto remaining_args = cmd->GetArguments();
 				restart_params.insert(restart_params.end(),
 				                      remaining_args.begin(),
@@ -539,7 +577,7 @@ void CONFIG::Run(void)
 			}
 			return;
 
-		case P_LISTCONF: {
+		case ListConfig: {
 			auto size = control->config_files.size();
 			const std_fs::path config_path = get_config_dir();
 
@@ -582,11 +620,11 @@ void CONFIG::Run(void)
 			break;
 		}
 
-		case P_WRITECONF_DEFAULT: {
+		case WriteDefaultConfig: {
 			if (CheckSecureMode()) {
 				return;
 			}
-			if (!pvars.empty()) {
+			if (!parameters.empty()) {
 				WriteOut(MSG_Get("SHELL_TOO_MANY_PARAMETERS"));
 				return;
 			}
@@ -594,19 +632,19 @@ void CONFIG::Run(void)
 			break;
 		}
 
-		case P_WRITECONF:
-		case P_WRITECONF2:
+		case WriteConfig1:
+		case WriteConfig2:
 			if (CheckSecureMode()) {
 				return;
 			}
-			if (pvars.size() > 1) {
+			if (parameters.size() > 1) {
 				WriteOut(MSG_Get("SHELL_TOO_MANY_PARAMETERS"));
 				return;
 			}
 
-			if (pvars.size() == 1) {
+			if (parameters.size() == 1) {
 				// write config to startup directory
-				WriteConfig(pvars[0]);
+				WriteConfig(parameters[0]);
 			} else {
 				// -wc without parameter: write dosbox.conf to
 				// startup directory
@@ -618,20 +656,20 @@ void CONFIG::Run(void)
 			}
 			break;
 
-		case P_NOPARAMS:
+		case NoParams:
 			if (!first) {
 				break;
 			}
 			[[fallthrough]];
 
-		case P_NOMATCH: DisplayHelp(); return;
+		case NoMatch: DisplayHelp(); return;
 
-		case P_HELP:
-		case P_HELP2:
-		case P_HELP3: HandleHelpCommand(pvars); return;
+		case ShowHelp1:
+		case ShowHelp2:
+		case ShowHelp3: HandleHelpCommand(parameters); return;
 
-		case P_AUTOEXEC_CLEAR: {
-			SectionLine* sec = dynamic_cast<SectionLine*>(
+		case ClearAutoexec: {
+			auto sec = dynamic_cast<AutoExecSection*>(
 			        control->GetSection(std::string("autoexec")));
 			if (!sec) {
 				WriteOut(MSG_Get("PROGRAM_CONFIG_SECTION_ERROR"));
@@ -641,27 +679,27 @@ void CONFIG::Run(void)
 			break;
 		}
 
-		case P_AUTOEXEC_ADD: {
-			if (pvars.empty()) {
+		case AppendLineToAutoexec: {
+			if (parameters.empty()) {
 				WriteOut(MSG_Get("PROGRAM_CONFIG_MISSINGPARAM"));
 				return;
 			}
-			SectionLine* sec = dynamic_cast<SectionLine*>(
+			auto sec = dynamic_cast<AutoExecSection*>(
 			        control->GetSection(std::string("autoexec")));
 			if (!sec) {
 				WriteOut(MSG_Get("PROGRAM_CONFIG_SECTION_ERROR"));
 				return;
 			}
-			for (const auto& pvar : pvars) {
+			for (const auto& param : parameters) {
 				const auto line_utf8 = dos_to_utf8(
-				        pvar, DosStringConvertMode::WithControlCodes);
-				sec->HandleInputline(line_utf8);
+				        param, DosStringConvertMode::WithControlCodes);
+				sec->HandleInputLine(line_utf8);
 			}
 			break;
 		}
 
-		case P_AUTOEXEC_TYPE: {
-			SectionLine* sec = dynamic_cast<SectionLine*>(
+		case ShowAutoexec: {
+			auto sec = dynamic_cast<AutoExecSection*>(
 			        control->GetSection(std::string("autoexec")));
 
 			if (!sec) {
@@ -679,53 +717,52 @@ void CONFIG::Run(void)
 			break;
 		}
 
-		case P_REC_AVI_START: CAPTURE_StartVideoCapture(); break;
-		case P_REC_AVI_STOP: CAPTURE_StopVideoCapture(); break;
-		case P_START_MAPPER:
+		case StartVideoCapture: CAPTURE_StartVideoCapture(); break;
+		case StopVideoCapture: CAPTURE_StopVideoCapture(); break;
+		case StartMapper:
 			if (CheckSecureMode()) {
 				return;
 			}
 			MAPPER_Run(false);
 			break;
 
-		case P_GETPROP: {
+		case GetProperty: {
 			// "section property"
 			// "property"
 			// "section"
 			// "section" "property"
-			if (pvars.empty()) {
+			if (parameters.empty()) {
 				WriteOut(MSG_Get("PROGRAM_CONFIG_GET_SYNTAX"));
 				return;
 			}
 
-			std::string::size_type spcpos = pvars[0].find_first_of(' ');
+			std::string::size_type spcpos = parameters[0].find_first_of(' ');
 
 			// split on the ' '
 			if (spcpos != std::string::npos) {
-				pvars.emplace(pvars.begin() + 1,
-				              pvars[0].substr(spcpos + 1));
-				pvars[0].erase(spcpos);
+				parameters.emplace(parameters.begin() + 1,
+				                   parameters[0].substr(spcpos + 1));
+				parameters[0].erase(spcpos);
 			}
 
-			switch (pvars.size()) {
+			switch (parameters.size()) {
 			case 1: {
 				// property/section only
 				// is it a section?
-				Section* sec = control->GetSection(pvars[0]);
+				Section* sec = control->GetSection(parameters[0]);
 				if (sec) {
 					// list properties in section
 					auto i = 0;
-					SectionProp* psec =
-					        dynamic_cast<SectionProp*>(sec);
+					auto psec = dynamic_cast<SectionProp*>(sec);
 
 					if (psec == nullptr) {
-						// autoexec section
-						SectionLine* pline =
-						        dynamic_cast<SectionLine*>(sec);
+						auto pline = dynamic_cast<AutoExecSection*>(
+						        sec);
 						assert(pline);
 
 						if (pline) {
-							WriteOut("%s", pline->data.c_str());
+							WriteOut("%s",
+							         pline->data.c_str());
 						}
 						break;
 					}
@@ -747,29 +784,30 @@ void CONFIG::Run(void)
 				} else {
 					// no: maybe it's a property?
 					sec = control->GetSectionFromProperty(
-					        pvars[0].c_str());
+					        parameters[0].c_str());
 					if (!sec) {
 						WriteOut(MSG_Get("PROGRAM_CONFIG_SECTION_OR_SETTING_NOT_FOUND"),
-						         pvars[0].c_str());
+						         parameters[0].c_str());
 						return;
 					}
 					// it's a property name
 					const auto val_dos = utf8_to_dos(
-					        sec->GetPropertyValue(pvars[0]),
+					        sec->GetPropertyValue(parameters[0]),
 					        DosStringConvertMode::NoSpecialCharacters,
 					        UnicodeFallback::Simple);
 
 					WriteOut("%s", val_dos.c_str());
 					DOS_PSP(psp->GetParent())
-					        .SetEnvironmentValue("CONFIG", val_dos);
+					        .SetEnvironmentValue("CONFIG",
+					                             val_dos);
 				}
 				break;
 			}
 
 			case 2: {
 				// section + property
-				const char* sec_name  = pvars[0].c_str();
-				const char* prop_name = pvars[1].c_str();
+				const char* sec_name  = parameters[0].c_str();
+				const char* prop_name = parameters[1].c_str();
 				const Section* sec = control->GetSection(sec_name);
 				if (!sec) {
 					WriteOut(MSG_Get("PROGRAM_CONFIG_SECTION_ERROR"),
@@ -802,8 +840,8 @@ void CONFIG::Run(void)
 			return;
 		}
 
-		case P_SETPROP: {
-			if (pvars.empty()) {
+		case SetProperty: {
+			if (parameters.empty()) {
 				WriteOut(MSG_Get("PROGRAM_CONFIG_SET_SYNTAX"));
 				return;
 			}
@@ -811,34 +849,35 @@ void CONFIG::Run(void)
 			// add rest of command
 			std::string rest;
 			if (cmd->GetStringRemain(rest)) {
-				pvars.push_back(rest);
+				parameters.push_back(rest);
 			}
 
-			if (const auto warning_message = control->SetProperty(pvars);
+			if (const auto warning_message = control->SetPropertyFromCli(
+			            parameters);
 			    !warning_message.empty()) {
 
 				WriteOut(warning_message);
 
 			} else {
-				auto* tsec = dynamic_cast<SectionProp*>(
-				        control->GetSection(pvars[0]));
-				if (!tsec) {
+				auto* section = dynamic_cast<SectionProp*>(
+				        control->GetSection(parameters[0]));
+				if (!section) {
 					WriteOut(MSG_Get("PROGRAM_CONFIG_SECTION_OR_SETTING_NOT_FOUND"),
-					         pvars[0].c_str());
+					         parameters[0].c_str());
 					return;
 				}
 
-				auto* property = tsec->GetProperty(pvars[1]);
+				auto* property = section->GetProperty(parameters[1]);
 
 				if (!property) {
 					WriteOut(MSG_Get("PROGRAM_CONFIG_SECTION_OR_SETTING_NOT_FOUND"),
-					         pvars[1].c_str());
+					         parameters[1].c_str());
 					return;
 				}
 
-				// Input has been parsed (pvar[0]=section,
+				// Input has been parsed (param[0]=section,
 				// [1]=property, [2]=value) now execute
-				std::string value(pvars[2]);
+				std::string value(parameters[2]);
 
 				// Due to parsing there can be a = at the start
 				// of value.
@@ -847,8 +886,8 @@ void CONFIG::Run(void)
 					value.erase(0, 1);
 				}
 
-				for (size_t i = 3; i < pvars.size(); ++i) {
-					value += (std::string(" ") + pvars[i]);
+				for (size_t i = 3; i < parameters.size(); ++i) {
+					value += (std::string(" ") + parameters[i]);
 				}
 
 				if (value.empty()) {
@@ -862,46 +901,44 @@ void CONFIG::Run(void)
 				    Property::Changeable::OnlyAtStart) {
 
 					WriteOut(MSG_Get("PROGRAM_CONFIG_NOT_CHANGEABLE"),
-					         pvars[1].c_str());
+					         parameters[1].c_str());
 
-					property->SetQueueableValue(std::move(value));
+					property->SetQueuedValue(value);
 					return;
 				}
 
-				std::string inputline = pvars[1] + "=" + value;
-
+				const auto input_line = parameters[1] + "=" + value;
 				const auto line_utf8 = dos_to_utf8(
-				        inputline,
+				        input_line,
 				        DosStringConvertMode::NoSpecialCharacters);
 
-				tsec->HandleInputline(line_utf8);
-
-				tsec->ExecuteUpdate(*property);
+				section->HandleInputLine(line_utf8);
+				section->ExecuteUpdate(*property);
 			}
 			return;
 		}
 
-		case P_WRITELANG:
-		case P_WRITELANG2:
+		case WriteLanguageFile1:
+		case WriteLanguageFile2:
 			// In secure mode don't allow a new languagefile to be
 			// created Who knows which kind of file we would overwrite.
 			if (CheckSecureMode()) {
 				return;
 			}
 
-			if (pvars.size() < 1) {
+			if (parameters.size() < 1) {
 				WriteOut(MSG_Get("PROGRAM_CONFIG_MISSINGPARAM"));
 				return;
 			}
 
-			if (!MSG_WriteToFile(pvars[0])) {
+			if (!MSG_WriteToFile(parameters[0])) {
 				WriteOut(MSG_Get("PROGRAM_CONFIG_FILE_ERROR"),
-				         pvars[0].c_str());
+				         parameters[0].c_str());
 				return;
 			}
 			break;
 
-		case P_SECURE:
+		case EnableSecureMode:
 			// Code for switching to secure mode
 			control->SwitchToSecureMode();
 			WriteOut(MSG_Get("PROGRAM_CONFIG_SECURE_ON"));
@@ -1079,16 +1116,24 @@ void PROGRAMS_AddMessages()
 	        "[color=white]PROPERTY[reset][=][color=white]VALUE[reset]\n");
 
 	MSG_Add("PROGRAM_CONFIG_INVALID_SETTING",
-	        "Invalid [color=light-green]'%s'[reset] setting: [color=white]'%s'[reset]; "
+	        "Invalid [color=light-green]'%s'[reset] setting: [color=white]'%s'[reset];\n"
 	        "using [color=white]'%s'[reset]");
+
+	MSG_Add("PROGRAM_CONFIG_INVALID_SETTING_WITH_DETAILS",
+	        "Invalid [color=light-green]'%s'[reset] setting: [color=white]'%s'[reset].\n"
+	        "%s; using [color=white]'%s'[reset]");
 
 	MSG_Add("PROGRAM_CONFIG_DEPRECATED_SETTING_VALUE",
-	        "Deprecated [color=light-green]'%s'[reset] setting: [color=white]'%s'[reset]; "
+	        "Deprecated [color=light-green]'%s'[reset] setting: [color=white]'%s'[reset];\n"
 	        "using [color=white]'%s'[reset]");
 
-	MSG_Add("PROGRAM_CONFIG_SETTING_OUTSIDE_VALID_RANGE",
-	        "Invalid [color=light-green]'%s'[reset] setting: [color=white]'%s'[reset]; "
-	        "must be between %s-%s, using [color=white]'%s'[reset]");
+	MSG_Add("PROGRAM_CONFIG_INVALID_INTEGER_SETTING",
+	        "Invalid [color=light-green]'%s'[reset] setting: [color=white]'%s'[reset];\n"
+	        "must be an integer, using [color=white]'%s'[reset]");
+
+	MSG_Add("PROGRAM_CONFIG_INVALID_INTEGER_SETTING_OUTSIDE_VALID_RANGE",
+	        "Invalid [color=light-green]'%s'[reset] setting: [color=white]'%s'[reset];\n"
+	        "must be between %s and %s, using [color=white]'%s'[reset]");
 
 	MSG_Add("PROGRAM_CONFIG_NO_HELP",
 	        "No help available for the setting [color=light-green]'%s'[reset].");

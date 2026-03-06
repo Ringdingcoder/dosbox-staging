@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2020-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2020-2026 The DOSBox Staging Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "utils/math_utils.h"
@@ -322,6 +322,34 @@ TEST(ascii_to_bcd, test_string)
 	EXPECT_EQ(bcd[0], (1 << 4) | 2);
 	EXPECT_EQ(bcd[1], (3 << 4) | 4);
 	EXPECT_EQ(bcd[2], 5 << 4);
+}
+
+TEST(round_to_multiple_of, zero)
+{
+	EXPECT_EQ(round_to_multiple_of(1, 0), 1);
+	EXPECT_EQ(round_to_multiple_of(16, 0), 16);
+}
+
+TEST(round_to_multiple_of, positive)
+{
+	EXPECT_EQ(round_to_multiple_of(1, 1), 1);
+	EXPECT_EQ(round_to_multiple_of(8, 48), 48);
+	EXPECT_EQ(round_to_multiple_of(8, 49), 56);
+	EXPECT_EQ(round_to_multiple_of(8, 65), 72);
+	EXPECT_EQ(round_to_multiple_of(11, 7), 11);
+	EXPECT_EQ(round_to_multiple_of(11, 12), 22);
+	EXPECT_EQ(round_to_multiple_of(11, 11), 11);
+}
+
+TEST(round_to_multiple_of, negative)
+{
+	EXPECT_EQ(round_to_multiple_of(1, -1), -1);
+	EXPECT_EQ(round_to_multiple_of(8, -48), -48);
+	EXPECT_EQ(round_to_multiple_of(8, -49), -56);
+	EXPECT_EQ(round_to_multiple_of(8, -65), -72);
+	EXPECT_EQ(round_to_multiple_of(11, -7), -11);
+	EXPECT_EQ(round_to_multiple_of(11, -12), -22);
+	EXPECT_EQ(round_to_multiple_of(11, -11), -11);
 }
 
 } // namespace
