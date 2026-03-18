@@ -3206,10 +3206,10 @@ ImageInfo setup_drawing()
 		printf("PINHACK: "); // Check for triggering preconditions...
 		if ((!pinhack.specifichack.pinballdreams.enabled ||
 		     pinhack.specifichack.pinballdreams.trigger) &&
-		    (render_height >= pinhack.triggerheight.min &&
-		     render_height <= pinhack.triggerheight.max) &&
-		    (pinhack.triggerwidth.min <= render_width &&
-		     render_width <= pinhack.triggerwidth.max)) {
+		    (int(render_height) >= pinhack.triggerheight.min &&
+		     int(render_height) <= pinhack.triggerheight.max) &&
+		    (pinhack.triggerwidth.min <= int(render_width) &&
+		     int(render_width) <= pinhack.triggerwidth.max)) {
 			printf("triggered -> ");
 			pinhack.trigger = true;
 			printf("original geometry: %dx%d. expanding to geometry: %dx%d.\n",
