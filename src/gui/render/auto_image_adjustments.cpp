@@ -3,7 +3,7 @@
 
 #include "private/auto_image_adjustments.h"
 
-#include "private/shader_manager.h"
+#include "private/auto_shader_switcher.h"
 
 #include "utils/checks.h"
 
@@ -23,7 +23,7 @@ static constexpr AutoImageAdjustments monochrome_settings = {
 // most appropriate.
 //
 static constexpr AutoImageAdjustments composite_settings = {
-        0.53f,                   // black level
+        0.60f,                   // black level
         CrtColorProfile::SmpteC, // colour profile
         6500.0f                  // colour temperature
 };
@@ -35,13 +35,13 @@ static constexpr AutoImageAdjustments composite_settings = {
 // white point also softens the garish look of the CGA/EGA palette.
 //
 static constexpr AutoImageAdjustments cga_settings = {
-        0.65f,                // black level
+        0.55f,                // black level
         CrtColorProfile::P22, // colour profile
         9300.0f               // colour temperature
 };
 
 static constexpr AutoImageAdjustments ega_settings = {
-        0.60f,                // black level
+        0.50f,                // black level
         CrtColorProfile::P22, // colour profile
         9300.0f               // colour temperature
 };
@@ -71,30 +71,45 @@ static constexpr AutoImageAdjustments arcade_settings = {
 };
 
 std::optional<AutoImageAdjustments> AutoImageAdjustmentsManager::GetSettings(
-        const VideoMode& video_mode) const
+        const MachineType machine_type, const VideoMode& video_mode,
+        const ColorSpace color_space,
+        const ShaderDescriptor& curr_shader_descriptor) const
 {
 	using enum ShaderMode;
 
-	switch (ShaderManager::GetInstance().GetCurrentShaderMode()) {
-	case Single:
-		// If no adaptive CRT shader is active, use the machine type to
-		// derive the appropriate colour settings.
-		return GetAutoMachineSettings(video_mode);
+	auto settings = [&]() {
+		switch (curr_shader_descriptor.shader_mode) {
+		case Single:
+			// If no adaptive CRT shader is active, use the machine
+			// type to derive the appropriate colour settings.
+			return GetAutoMachineSettings(machine_type, video_mode);
 
-	case AutoGraphicsStandard:
-		return GetAutoGraphicsStandardSettings(video_mode);
+		case AutoGraphicsStandard:
+			return GetAutoGraphicsStandardSettings(video_mode);
 
-	case AutoMachine: return GetAutoMachineSettings(video_mode);
+		case AutoMachine:
+			return GetAutoMachineSettings(machine_type, video_mode);
 
-	case AutoArcade:
-	case AutoArcadeSharp: return arcade_settings;
+		case AutoArcade:
+		case AutoArcadeSharp: return arcade_settings;
 
-	default: assertm(false, "Invalid ShaderMode value"); return {};
+		default:
+			assertm(false, "Invalid ShaderMode value");
+			return AutoImageAdjustments{};
+		}
+	}();
+
+	// The black levels in the auto settings are set up for 2.6 DCI-P3 gamma,
+	// so we'll need to adjust them for color spaces with ~2.2-2.4 gamma.
+	if (get_gamma(color_space) < 2.6f) {
+		settings.black_level *= 0.50f;
 	}
+
+	return settings;
 }
 
 AutoImageAdjustments AutoImageAdjustmentsManager::GetAutoMachineSettings(
-        const VideoMode& video_mode) const
+        const MachineType machine_type, const VideoMode& video_mode) const
 {
 	if (video_mode.color_depth == ColorDepth::Composite) {
 		return composite_settings;
@@ -102,7 +117,7 @@ AutoImageAdjustments AutoImageAdjustmentsManager::GetAutoMachineSettings(
 
 	using enum MachineType;
 
-	switch (machine) {
+	switch (machine_type) {
 	case Hercules:
 	case CgaMono: return monochrome_settings;
 

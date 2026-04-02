@@ -10,7 +10,9 @@
 #include <memory>
 #include <mutex>
 
-#include "gui/private/auto_image_adjustments.h"
+#include "private/auto_image_adjustments.h"
+#include "private/auto_shader_switcher.h"
+#include "private/shader_manager.h"
 
 #include "capture/capture.h"
 #include "config/config.h"
@@ -562,6 +564,7 @@ static void set_scan_and_pixel_doubling()
 	VGA_AllowPixelDoubling(!force_no_pixel_doubling);
 }
 
+static ColorSpace curr_color_space                            = {};
 static ImageAdjustmentSettings curr_image_adjustment_settings = {};
 
 static void set_image_adjustment_settings()
@@ -639,7 +642,11 @@ static const char* to_displayable_name(const CrtColorProfile profile)
 static void handle_auto_image_adjustment_settings(const VideoMode& video_mode)
 {
 	const auto maybe_auto_settings =
-	        AutoImageAdjustmentsManager::GetInstance().GetSettings(video_mode);
+	        AutoImageAdjustmentsManager::GetInstance().GetSettings(
+	                machine,
+	                video_mode,
+	                curr_color_space,
+	                GFX_GetRenderer()->GetCurrentShaderDescriptor());
 
 	if (maybe_auto_settings) {
 		const auto settings = *maybe_auto_settings;
@@ -1207,6 +1214,61 @@ static void set_deinterlacing(const SectionProp& section)
 	}();
 }
 
+constexpr int DeditheringStrengthMin = 0;
+constexpr int DeditheringStrengthMax = 100;
+
+static float get_dedithering_strength()
+{
+	constexpr auto SettingName     = "dedithering";
+	constexpr auto DefaultValue    = "off";
+	constexpr auto DefaultStrength = 0.0f;
+
+	const std::string pref = get_render_section().GetStringLowCase(SettingName);
+
+	if (has_false(pref)) {
+		return 0.0f;
+
+	} else if (has_true(pref)) {
+		return 1.0f;
+
+	} else if (const auto maybe_int = parse_int(pref); maybe_int) {
+		const auto strength_int = *maybe_int;
+
+		if (strength_int >= DeditheringStrengthMin &&
+		    strength_int <= DeditheringStrengthMax) {
+			return static_cast<float>(*maybe_int) / 100.0f;
+
+		} else {
+			NOTIFY_DisplayWarning(
+			        Notification::Source::Console,
+			        "RENDER",
+			        "PROGRAM_CONFIG_INVALID_INTEGER_SETTING_OUTSIDE_VALID_RANGE",
+			        SettingName,
+			        format_str("%d", strength_int).c_str(),
+			        format_str("%d", DeditheringStrengthMin).c_str(),
+			        format_str("%d", DeditheringStrengthMax).c_str(),
+			        DefaultValue);
+
+			set_section_property_value("render", SettingName, DefaultValue);
+			return DefaultStrength;
+		}
+
+	} else {
+		NOTIFY_DisplayWarning(Notification::Source::Console,
+		                      "RENDER",
+		                      "PROGRAM_CONFIG_INVALID_SETTING",
+		                      SettingName,
+		                      pref.c_str(),
+		                      DefaultValue);
+		return DefaultStrength;
+	}
+}
+
+static void set_dedithering()
+{
+	GFX_GetRenderer()->SetDeditheringStrength(get_dedithering_strength());
+}
+
 DosBox::Rect RENDER_CalcRestrictedViewportSizeInPixels(const DosBox::Rect& canvas_size_px)
 {
 	const auto dpi_scale = GFX_GetDpiScaleFactor();
@@ -1299,7 +1361,9 @@ DosBox::Rect RENDER_CalcDrawRectInPixels(const DosBox::Rect& canvas_size_px,
 		// - it enables vertical integer scaling for the adaptive CRT
 		//   shaders if the viewport is large enough (otherwise it falls
 		//   back to the 'sharp' shader with no integer scaling),
+		//
 		// - it allows the 3.5x and 4.5x half steps,
+		//
 		// - and it disables integer scaling above 5.0x scaling.
 		//
 		// The half-steps and no scaling above 5.0x result in no
@@ -1310,7 +1374,10 @@ DosBox::Rect RENDER_CalcDrawRectInPixels(const DosBox::Rect& canvas_size_px,
 			return draw_size_fit_px;
 		}
 
-		if (GFX_GetRenderer()->GetCurrentShaderInfo().is_adaptive) {
+		const auto curr_shader_descriptor =
+		        GFX_GetRenderer()->GetCurrentShaderDescriptor();
+
+		if (curr_shader_descriptor.EnforceAutoIntegerScaling()) {
 			auto integer_scale_factor = [&] {
 				const auto factor = draw_size_fit_px.h /
 				                    render_size_px.h;
@@ -1556,10 +1623,6 @@ static void init_render_settings(SectionProp& section)
 	        "             aspect ratios (this is less of an issue on high resolution\n"
 	        "             monitors).\n"
 	        "\n"
-	        "  jinc2:     Upscale the image using jinc 2-lobe interpolation with anti-ringing.\n"
-	        "             This blends together dithered color patterns at the cost of image\n"
-	        "             sharpness.\n"
-	        "\n"
 	        "Start DOSBox Staging with the '--list-shaders' command line option to see the\n"
 	        "full list of available shaders. You can also use an absolute or relative path to\n"
 	        "a file. In all cases, you may omit the shader's '.glsl' file extension.");
@@ -1765,30 +1828,38 @@ static void init_render_settings(SectionProp& section)
 	        {"auto", "none", "ebu", "p22", "smpte-c", "philips", "trinitron"});
 	string_prop->SetHelp(
 	        "Set a CRT colour profile for more authentic video output emulation ('auto' by\n"
-	        "default). All profiles have a built-in colour temperature (white point) that you\n"
-	        "can tweak further with the 'color_temperature' setting. Possible values:\n"
+	        "default). Possible values:\n"
 	        "\n"
-	        "  auto:       Select an authentic colour profile for adaptive CRT shaders;\n"
-	        "              for any other shader, use 'none' (default).\n"
+	        "  auto:       Select an authentic colour profile appropriate for the currently\n"
+	        "              active adaptive CRT shader (e.g. 'crt-auto'), or the current\n"
+	        "              machine type for regular shaders (e.g., 'sharp').\n"
 	        "\n"
 	        "  none:       Display raw colours without any colour profile transforms.\n"
 	        "\n"
 	        "  ebu:        EBU standard phosphor emulation, used in high-end professional CRT\n"
-	        "              monitors, such as the Sony BVM/PVM series (6500K white point).\n"
+	        "              monitors, such as the Sony BVM/PVM series.\n"
 	        "\n"
-	        "  p22:        P22 phosphor emulation, the most commonly used in lower-end CRT\n"
-	        "              monitors (6500K white point).\n"
+	        "  p22:        P22 phosphor emulation, most commonly used in lower-end CRT\n"
+	        "              monitors.\n"
 	        "\n"
 	        "  smpte-c:    SMPT \"C\" phosphor emulation, the standard for American broadcast\n"
-	        "              video monitors (6500K white point).\n"
+	        "              video monitors.\n"
 	        "\n"
 	        "  philips:    Philips CRT monitor colours typical to 15 kHz home computer\n"
-	        "              monitors, such as the Commodore 1084S (~6100K white point).\n"
-	        "              Needs a wide gamut DCI-P3 display for the best results.\n"
+	        "              monitors (e.g. the Commodore 1084S). The intended use of this\n"
+	        "              profile is with 'colour_temperature' set to 6500. The output then\n"
+	        "              will look yellowish due to the ~6100 K colour temperature typical\n"
+	        "              to Philips CRTs \"baked into\" this profile. You can still tweak \n"
+	        "              'colour_temperature' to adjust the white balance. Needs a wide\n"
+	        "              gamut DCI-P3 display for the most accurate results.\n"
 	        "\n"
-	        "  trinitron:  Typical Sony Trinitron CRT TV and monitor colours (~9300K\n"
-	        "              white point). Needs a wide gamut DCI-P3 display for the best\n"
-	        "              results.");
+	        "  trinitron:  Typical Sony Trinitron CRT TV and monitor colours. The intended\n"
+	        "              use of this profile is with 'colour_temperature' set to 6500. The\n"
+	        "              output then will look blueish due to the ~9300 K colour\n"
+	        "              temperature typical to Trinitron CRTs \"baked into\" this profile.\n"
+	        "              You can still tweak 'colour_temperature' to adjust the relative\n"
+	        "              white balance. Needs a wide gamut DCI-P3 display for the most\n"
+	        "              accurate results.");
 
 	constexpr int DefaultBrightness = 45;
 	int_prop = section.AddInt("brightness", Always, DefaultBrightness);
@@ -1874,15 +1945,14 @@ static void init_render_settings(SectionProp& section)
 	        "Set the colour temperature (white point) of the video output ('%s' by\n"
 	        "default). Possible values:\n"
 	        "\n"
-	        "  auto:      Select an authentic colour temperature for adaptive CRT shaders;\n"
-	        "             for any other shader, use 6500 (default).\n"
-	        "\n"
+	        "  auto:      Select an authentic colour temperature appropriate for the\n"
+	        "             currently active adaptive CRT shader (e.g. 'crt-auto'), or the\n"
+	        "             current machine type for regular shaders (e.g., 'sharp').\n"
+	        "             \n"
 	        "  <number>:  Specify colour temperature in Kelvin (K). Valid range is %d to\n"
-	        "             %d. The Kelvin value only makes sense if 'crt_color_profile' is\n"
-	        "             set to 'none' or to one of the profiles with 6500K white point,\n"
-	        "             otherwise it acts as a relative colour temperature adjustment (less\n"
-	        "             then 6500 results in warmer colours, more than 6500 in cooler\n"
-	        "             colours).",
+	        "             %d. 6500 K is the neutral point for most modern displays. Values\n"
+	        "             below 6500 result in warmer colours, values above 6500 in cooler\n"
+	        "             colours.",
 	        DefaultColorTemperature,
 	        ColorTemperatureMin,
 	        ColorTemperatureMax));
@@ -1894,8 +1964,8 @@ static void init_render_settings(SectionProp& section)
 	int_prop->SetMinMax(ColorTemperatureLumaPreserveMin,
 	                    ColorTemperatureLumaPreserveMax);
 	int_prop->SetHelp(format_str(
-	        "Preserve image luminosity prior to colour temperature adjustment (%d by\n"
-	        "default). Valid range is %d to %d. 0 doesn't perform any luminosity\n"
+	        "Preserve luminosity of the video output prior to colour temperature adjustment\n"
+	        "(%d by default). Valid range is %d to %d. 0 doesn't perform any luminosity \n"
 	        "preservation, 100 fully preserves the luminosity. Values greater than 0 result\n"
 	        "in inaccurate colour temperatures in the brighter shades, so it's best to set\n"
 	        "this to 0 or close to 0 if your monitor is bright enough.",
@@ -1959,6 +2029,27 @@ static void init_render_settings(SectionProp& section)
 	        "      displays to avoid interference artifacts when using lower deinterlacing\n"
 	        "      strengths. Alternatively, use 'full' strength to completely eliminate all\n"
 	        "      potential interference patterns.");
+
+	string_prop = section.AddString("dedithering", Always, "off");
+	string_prop->SetHelp(format_str(
+	        "Remove checkerboard dither patterns from the video output ('off' by default).\n"
+	        "Useful with CGA and EGA games that use dither patterns to create the illusion\n"
+	        "of more colours with the limited CGA/EGA palettes. Possible values:\n"
+	        "\n"
+	        "  off:       Disable dedithering (default).\n"
+	        "  on:        Enable dedithering (at full strength).\n"
+	        "\n"
+	        "  <number>:  Set dedithering strength from %d (off) to %d (full strength). Lower\n"
+	        "             values result in a subtle softening of dither patterns; higher\n"
+	        "             values blend between the original and the dedithered image.\n"
+	        "\n"
+	        "Notes:\n"
+	        "   - Dedithering only works in OpenGL output mode.\n"
+	        "\n"
+	        "   - Dedithering is applied to rendered screenshots, but not to raw and upscaled\n"
+	        "     screenshots and video captures.",
+	        DeditheringStrengthMin,
+	        DeditheringStrengthMax));
 }
 
 enum { Horiz, Vert };
@@ -2087,12 +2178,31 @@ static ColorSpace to_color_space_enum(const std::string& setting)
 	}
 }
 
+float get_gamma(const ColorSpace cs)
+{
+	using enum ColorSpace;
+
+	switch (cs) {
+	case Srgb:
+	case DisplayP3:
+	case ModernP3:
+	case AdobeRgb: return 2.2f;
+
+	case Rec2020: return 2.4f;
+
+	case DciP3:
+	case DciP3_D65: return 2.6f;
+
+	default: assertm(false, "Invalid ColorSpace enum value"); return 0.0f;
+	}
+}
+
 static void update_color_space_setting()
 {
-	const auto color_space = to_color_space_enum(
+	curr_color_space = to_color_space_enum(
 	        get_render_section().GetString("color_space"));
 
-	GFX_GetRenderer()->SetColorSpace(color_space);
+	GFX_GetRenderer()->SetColorSpace(curr_color_space);
 }
 
 static void update_enable_image_adjustments_setting()
@@ -2172,7 +2282,7 @@ static std::optional<int> get_black_level_setting_value()
 			NOTIFY_DisplayWarning(
 			        Notification::Source::Console,
 			        "RENDER",
-			        "PROGRAM_CONFIG_SETTING_OUTSIDE_VALID_RANGE",
+			        "PROGRAM_CONFIG_INVALID_INTEGER_SETTING_OUTSIDE_VALID_RANGE",
 			        SettingName,
 			        format_str("%d", black_level).c_str(),
 			        format_str("%d", BlackLevelMin).c_str(),
@@ -2243,7 +2353,7 @@ static std::optional<int> get_color_temperature_setting_value()
 			NOTIFY_DisplayWarning(
 			        Notification::Source::Console,
 			        "RENDER",
-			        "PROGRAM_CONFIG_SETTING_OUTSIDE_VALID_RANGE",
+			        "PROGRAM_CONFIG_INVALID_INTEGER_SETTING_OUTSIDE_VALID_RANGE",
 			        SettingName,
 			        format_str("%d", color_temperature).c_str(),
 			        format_str("%d", ColorTemperatureMin).c_str(),
@@ -2521,8 +2631,8 @@ static void adjust_image_setting(const Direction dir)
 		set_setting("black_level", format_str("%d", new_value));
 
 		update_black_level_setting();
-		handle_auto_image_adjustment_settings(VGA_GetCurrentVideoMode());
 		set_image_adjustment_settings();
+		handle_auto_image_adjustment_settings(VGA_GetCurrentVideoMode());
 	} break;
 
 	case Saturation:
@@ -2683,6 +2793,7 @@ void RENDER_Init()
 	set_image_adjustment_settings();
 
 	set_deinterlacing(*section);
+	set_dedithering();
 }
 
 static void notify_render_setting_updated(SectionProp& section,
@@ -2698,6 +2809,10 @@ static void notify_render_setting_updated(SectionProp& section,
 
 	} else if (prop_name == "deinterlacing") {
 		set_deinterlacing(section);
+		render_reset();
+
+	} else if (prop_name == "dedithering") {
+		set_dedithering();
 		render_reset();
 
 	} else if (prop_name == "glshader" || prop_name == "shader") {
@@ -2728,6 +2843,7 @@ static void notify_render_setting_updated(SectionProp& section,
 
 	} else if (prop_name == "color_space") {
 		update_color_space_setting();
+		handle_auto_image_adjustment_settings(VGA_GetCurrentVideoMode());
 
 	} else if (prop_name == "image_adjustments") {
 		update_enable_image_adjustments_setting();
@@ -2755,8 +2871,8 @@ static void notify_render_setting_updated(SectionProp& section,
 
 	} else if (prop_name == "black_level") {
 		update_black_level_setting();
-		handle_auto_image_adjustment_settings(VGA_GetCurrentVideoMode());
 		set_image_adjustment_settings();
+		handle_auto_image_adjustment_settings(VGA_GetCurrentVideoMode());
 
 	} else if (prop_name == "saturation") {
 		update_saturation_setting();
@@ -2764,8 +2880,8 @@ static void notify_render_setting_updated(SectionProp& section,
 
 	} else if (prop_name == "color_temperature") {
 		update_color_temperature_setting();
-		handle_auto_image_adjustment_settings(VGA_GetCurrentVideoMode());
 		set_image_adjustment_settings();
+		handle_auto_image_adjustment_settings(VGA_GetCurrentVideoMode());
 
 	} else if (prop_name == "color_temperature_luma_preserve") {
 		update_color_temperature_luma_preserve_setting();

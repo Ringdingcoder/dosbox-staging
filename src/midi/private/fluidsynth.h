@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "audio/mixer.h"
+#include "dos/programs/more_output.h"
 #include "misc/std_filesystem.h"
 #include "utils/rwqueue.h"
 
@@ -30,6 +31,51 @@ struct ReverbParameters {
 	double damping   = {};
 	double width     = {};
 	double level     = {};
+};
+
+enum class SoundFont {
+	// Unidentified SoundFont
+	Unknown,
+
+	// GeneralUser GS -- a general-purpose Roland GS compatible SoundFont by
+	// S. Christian Collins
+	//
+	// Ref: https://schristiancollins.com/generaluser.php
+	//
+	GeneralUserGs,
+
+	// Conversion of the original 'synthgs.sbk' AWE32 SoundFont by S.
+	// Christian Collins
+	//
+	// Ref: https://github.com/mrbumpy409/AWE32-midi-conversions
+	//
+	Awe32_SynthGs,
+
+	// Conversion of the original '4gmgsmt.sf2' Sound Blaster Live! SoundFont
+	// by S. Christian Collins
+	//
+	// Ref: https://github.com/mrbumpy409/AWE32-midi-conversions
+	//
+	SbLive_4GmGsMt,
+
+	// Fluid R3 -- a general-purpose Roland GS compatible SoundFont by Frank
+	// Wen
+	//
+	// Ref:
+	// - https://www.polyphone.io/en/soundfonts/instrument-sets/250-fluidr3-gm
+	// - https://archive.org/download/fluidr3-gm-gs
+	//
+	FluidR3,
+
+	// Trevor0402's Roland SC-55 emulation
+	//
+	// Ref:
+	// -
+	// https://www.doomworld.com/forum/topic/118828-trevor0402s-sc-55-soundfont/
+	// - https://archive.org/download/500-soundfonts-full-gm-sets/ (SC-55
+	// SoundFont.v1.2b [Trevor0402].sf2)
+	//
+	Trevor0402_Sc55
 };
 
 class MidiDeviceFluidSynth final : public MidiDevice {
@@ -64,6 +110,8 @@ public:
 	void SetVolume(const int volume_percent);
 
 private:
+	void IdentifySoundFont();
+
 	void SetChorusParams(const ChorusParameters& params);
 	void SetReverbParams(const ReverbParameters& params);
 
@@ -91,6 +139,8 @@ private:
 
 	std_fs::path soundfont_path = {};
 
+	SoundFont soundfont = {};
+
 	// Used to track the balance of time between the last mixer callback
 	// versus the current MIDI SysEx or Msg event.
 	double last_rendered_ms   = 0.0;
@@ -99,6 +149,6 @@ private:
 	bool had_underruns = false;
 };
 
-void FSYNTH_ListDevices(MidiDeviceFluidSynth* device, Program* caller);
+void FSYNTH_ListDevices(MidiDeviceFluidSynth* device, MoreOutputStrings& output);
 
 #endif // DOSBOX_FLUIDSYNTH_H

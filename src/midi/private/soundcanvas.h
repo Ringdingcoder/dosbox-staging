@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2024-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2024-2026 The DOSBox Staging Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #ifndef DOSBOX_SOUNDCANVAS_H
@@ -12,6 +12,7 @@
 #include "audio/clap/event_list.h"
 #include "audio/clap/plugin.h"
 #include "audio/mixer.h"
+#include "dos/programs/more_output.h"
 #include "utils/rwqueue.h"
 
 namespace SoundCanvas {
@@ -78,16 +79,16 @@ private:
 	void ProcessWorkFromFifoBacklogged();
 
 	int GetNumPendingAudioFrames();
-	void RenderAudioFramesToFifo(const int num_frames = 1);
+	void RenderAudioFramesToFifo(const int num_frames);
 	void Render();
 	void RenderBacklogged();
 
 	void AddClapEvent(const MidiWork& work);
 
 	// Managed objects
-	MixerChannelPtr mixer_channel = nullptr;
-	RWQueue<AudioFrame> audio_frame_fifo{1};
-	RWQueue<MidiWork> work_fifo{1};
+	MixerChannelPtr mixer_channel        = nullptr;
+	RWQueue<AudioFrame> audio_frame_fifo = {1};
+	RWQueue<MidiWork> work_fifo          = {1};
 
 	struct {
 		std::unique_ptr<Clap::Plugin> plugin = nullptr;
@@ -107,6 +108,6 @@ private:
 	bool is_work_fifo_backlogged = false;
 };
 
-void SOUNDCANVAS_ListDevices(MidiDeviceSoundCanvas* device, Program* caller);
+void SOUNDCANVAS_ListDevices(MidiDeviceSoundCanvas* device, MoreOutputStrings& output);
 
 #endif // DOSBOX_SOUNDCANVAS_H

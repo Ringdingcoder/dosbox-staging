@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2024-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2024-2026 The DOSBox Staging Team
 // SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
@@ -56,13 +56,7 @@ static void dyn_mmx_simple_imm8(uint8_t op, uint8_t modrm, uint8_t imm)
 
 static void dyn_mmx_mem(Bitu op, Bitu reg = decode.modrm.reg, void* mem = &mmxtmp)
 {
-#if C_TARGETCPU == X86
-	cache_addw(0x0F | (op << 8));
-	cache_addb(0x05 | (reg << 3));
-	cache_addd((uint32_t)(mem));
-#else // X86_64
 	opcode((int)reg).setabsaddr(mem).Emit16((uint16_t)(0x0F | (op << 8)));
-#endif
 }
 
 static void dyn_mmx_op(Bitu op)
