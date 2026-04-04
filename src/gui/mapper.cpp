@@ -2665,11 +2665,11 @@ void MAPPER_CheckEvent(SDL_Event *event)
                 fake_joy[0].right_pressed = event->type == SDL_KEYDOWN;
                 update = true;
                 break;
-            case SDL_SCANCODE_A:
+            case SDL_SCANCODE_Q:
                 fake_joy[0].button0_pressed = event->type == SDL_KEYDOWN;
                 update = true;
                 break;
-            case SDL_SCANCODE_S:
+            case SDL_SCANCODE_A:
                 fake_joy[0].button1_pressed = event->type == SDL_KEYDOWN;
                 update = true;
                 break;
@@ -2681,8 +2681,12 @@ void MAPPER_CheckEvent(SDL_Event *event)
                 fake_joy[1].right_pressed = event->type == SDL_KEYDOWN;
                 update = true;
                 break;
-            case SDL_SCANCODE_COMMA:
+            case SDL_SCANCODE_K:
                 fake_joy[1].button0_pressed = event->type == SDL_KEYDOWN;
+                update = true;
+                break;
+            case SDL_SCANCODE_COMMA:
+                fake_joy[1].button1_pressed = event->type == SDL_KEYDOWN;
                 update = true;
                 break;
             default:
