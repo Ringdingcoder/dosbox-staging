@@ -27,7 +27,8 @@
 
 #include <lz4hc.h>
 
-#include "gui/private/auto_image_adjustments.h"
+#include "private/auto_image_adjustments.h"
+#include "private/auto_shader_switcher.h"
 
 #include "audio/mixer.h"
 #include "capture/capture.h"
