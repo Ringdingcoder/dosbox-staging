@@ -114,19 +114,6 @@ private:
 	std::optional<GLuint> BuildShader(const GLenum type,
 	                                  const std::string& source) const;
 
-	void GetPass1UniformLocations();
-	void UpdatePass1Uniforms();
-
-	void GetPass2UniformLocations(const ShaderParameters& params);
-	void UpdatePass2Uniforms();
-
-	void RecreatePass1InputTextureAndRenderBuffer();
-	void RecreatePass1OutputTexture();
-	void SetPass1OutputTextureFiltering();
-
-	void RenderPass1();
-	void RenderPass2();
-
 	// ---------------------------------------------------------------------
 	// Common
 	// ---------------------------------------------------------------------
@@ -151,9 +138,12 @@ private:
 	// True if the last framebuffer has been updated since the last present
 	bool last_framebuf_dirty = false;
 
-	DosBox::Rect viewport_rect_px = {};
-
-	GLuint frame_count = 0;
+	struct {
+		int width      = 0;
+		int height     = 0;
+		int pitch      = 0;
+		GLuint texture = 0;
+	} input_texture = {};
 
 	// Vertex buffer object
 	GLuint vbo = 0;
@@ -164,67 +154,56 @@ private:
 	// Vertex data for an oversized triangle
 	std::array<GLfloat, 2 * 3> vertex_data = {};
 
+	// ---------------------------------------------------------------------
+	// Shader passes
+	// ---------------------------------------------------------------------
+	enum class ShaderPassId { ImageAdjustments, Main };
+
+	struct ShaderPass {
+		ShaderPassId id       = {};
+		Shader shader         = {};
+		GLuint in_texture     = 0;
+		GLuint out_fbo        = 0;
+		GLuint out_texture    = 0;
+		DosBox::Rect viewport = {};
+	};
+
+	std::vector<ShaderPass> shader_passes = {};
+
+	// Image adjustments pass params
+	// -----------------------------
 	ColorSpace color_space = {};
 
-	// ---------------------------------------------------------------------
-	// Render passes
-	// ---------------------------------------------------------------------
+	ImageAdjustmentSettings image_adjustment_settings = {};
 
-	struct {
-		Shader shader = {};
+	bool enable_image_adjustments = false;
 
-		GLuint in_texture    = 0;
-		int in_texture_pitch = 0;
+	void UpdateImageAdjustmentsPassUniforms();
 
-		GLuint out_fbo     = 0;
-		GLuint out_texture = 0;
+	// Main shader pass params
+	// -----------------------
+	ShaderPreset main_shader_preset = {};
 
-		int width  = 0;
-		int height = 0;
+	void UpdateMainShaderPassUniforms();
 
-		struct {
-			GLint input_texture = -1;
+	ShaderPass& GetShaderPass(const ShaderPassId id);
+	void RecreateInputTexture();
 
-			GLint color_space = -1;
+	GLuint CreateTexture();
+	void SetTextureFiltering(const GLuint texture);
+	void RenderPass(const ShaderPass& pass);
 
-			GLint enable_adjustments = -1;
+	void SetUniform1i(const GLint program_object, const std::string& name,
+	                  const int val);
 
-			GLint color_profile     = -1;
-			GLint brightness        = -1;
-			GLint contrast          = -1;
-			GLint gamma             = -1;
-			GLint digital_contrast  = -1;
-			GLint black_level_color = -1;
-			GLint black_level       = -1;
-			GLint saturation        = -1;
+	void SetUniform1f(const GLint program_object, const std::string& name,
+	                  const float val);
 
-			GLint color_temperature_kelvin        = -1;
-			GLint color_temperature_luma_preserve = -1;
+	void SetUniform2f(const GLint program_object, const std::string& name,
+	                  const float val1, const float val2);
 
-			GLint red_gain   = -1;
-			GLint green_gain = -1;
-			GLint blue_gain  = -1;
-		} uniforms = {};
-
-		ImageAdjustmentSettings image_adjustment_settings = {};
-
-		bool enable_image_adjustments = false;
-	} pass1 = {};
-
-	struct {
-		Shader shader              = {};
-		ShaderPreset shader_preset = {};
-
-		struct {
-			GLint texture_size  = -1;
-			GLint input_size    = -1;
-			GLint output_size   = -1;
-			GLint frame_count   = -1;
-			GLint input_texture = -1;
-
-			std::unordered_map<std::string, GLint> params = {};
-		} uniforms = {};
-	} pass2 = {};
+	void SetUniform3f(const GLint program_object, const std::string& name,
+	                  const float val1, const float val2, const float val3);
 
 	// ---------------------------------------------------------------------
 	// Shader caching & preset management

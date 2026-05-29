@@ -15,8 +15,6 @@ layout (location = 0) in vec2 a_position;
 
 out vec2 v_texCoord;
 
-uniform vec2 inputSize;
-
 void main()
 {
 	gl_Position = vec4(a_position, 0.0, 1.0);
@@ -29,7 +27,7 @@ in vec2 v_texCoord;
 
 out vec4 FragColor;
 
-uniform sampler2D inputTexture;
+uniform sampler2D INPUT_TEXTURE;
 
 uniform int COLOR_SPACE;
 
@@ -353,7 +351,7 @@ const float CrtBlackLevel =
 
 void main()
 {
-	vec3 color = texture(inputTexture, v_texCoord).rgb;
+	vec3 color = texture(INPUT_TEXTURE, v_texCoord).rgb;
 	vec3 orig_color = color;
 
 	color = sigmoid_contrast(color, DIGITAL_CONTRAST);
