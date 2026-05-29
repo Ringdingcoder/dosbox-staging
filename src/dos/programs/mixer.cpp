@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2023-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2023-2026 The DOSBox Staging Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "mixer.h"
@@ -750,7 +750,9 @@ void MIXER::Run()
 		return;
 	}
 	if (cmd->FindExist("/LISTMIDI")) {
-		MIDI_ListDevices(this);
+		MoreOutputStrings output(*this);
+		MIDI_ListDevices(output);
+		output.Display();
 		return;
 	}
 

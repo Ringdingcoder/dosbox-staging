@@ -994,7 +994,7 @@ static void add_dosbox_config_section(const ConfigPtr& conf)
 	        "the drive's directory, with content as follows:\n"
 	        "\n"
 	        "  [drive]\n"
-	        "  type     = dir, overlay, floppy, or cdrom\n"
+	        "  type     = dir, overlay, floppy, cdrom or iso (same as cdrom)\n"
 	        "  label    = custom_label\n"
 	        "  path     = path-specification (e.g., path = %%path%%;c:\\tools)\n"
 	        "  override_drive = mount the directory to this drive instead (default empty)\n"
@@ -1100,7 +1100,7 @@ void DOSBOX_InitModuleConfigsAndMessages()
 
 	MSG_Add("AUTOEXEC_CONFIGFILE_HELP",
 	        "Each line in this section is executed at startup as a DOS command.\n"
-	        "Important: The [autoexec] section must be the last section in the config!");
+	        "Important: The [autoexec] section must be the last section in the config!\n");
 
 	MSG_Add("CONFIGFILE_INTRO",
 	        "# This is the configuration file for " DOSBOX_NAME

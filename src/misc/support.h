@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText:  2020-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightText:  2020-2026 The DOSBox Staging Team
 // SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
@@ -39,7 +39,7 @@
 
 // Typical values - do not rely on this, use for optimizations only. If you need
 // to be 100% certain, use the OS specific detection routines.
-#if C_TARGETCPU == ARMV8LE
+#if C_TARGET_CPU_ARM
 constexpr uint16_t HostPageSize = 16384;
 #else
 constexpr uint16_t HostPageSize = 4096;

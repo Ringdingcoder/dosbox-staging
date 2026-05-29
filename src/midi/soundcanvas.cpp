@@ -1,5 +1,6 @@
-// SPDX-FileCopyrightTextound  2024-2025 The DOSBox Staging Team
+// SPDX-FileCopyrightTextound  2024-2026 The DOSBox Staging Team
 // SPDX-License-Identifier: GPL-2.0-or-later
+
 #include "private/soundcanvas.h"
 
 #include <optional>
@@ -17,8 +18,8 @@
 #include "misc/ansi_code_markup.h"
 #include "misc/std_filesystem.h"
 #include "utils/checks.h"
-#include "utils/string_utils.h"
 #include "utils/env_utils.h"
+#include "utils/string_utils.h"
 
 CHECK_NARROWING();
 
@@ -328,7 +329,8 @@ static std::deque<std_fs::path> get_rom_dirs()
 	auto rom_dirs = get_platform_rom_dirs();
 
 	// Get the user's configured ROM directory; otherwise use 'mt32-roms'
-	std_fs::path selected_romdir = get_soundcanvas_section()->GetString("soundcanvas_rom_dir");
+	std_fs::path selected_romdir = get_soundcanvas_section()->GetString(
+	        "soundcanvas_rom_dir");
 
 	if (selected_romdir.empty()) { // already trimmed
 		selected_romdir = DefaultSoundCanvasRomsDir;
@@ -341,8 +343,8 @@ static std::deque<std_fs::path> get_rom_dirs()
 
 static void set_soundcanvas_rom_dir_env_var()
 {
-	// Get potential ROM directory candidates, these will be added to a 
-	// SOUNDCANVAS_ROM_PATH environment variable which may be used by 
+	// Get potential ROM directory candidates, these will be added to a
+	// SOUNDCANVAS_ROM_PATH environment variable which may be used by
 	// a plugin to search for ROM files
 	std::error_code ec;
 	std::string env_list = {};
@@ -358,7 +360,8 @@ static void set_soundcanvas_rom_dir_env_var()
 			env_list.append(canonical_rom_dir.string());
 		}
 	}
-	LOG_MSG("SOUNDCANVAS: Setting SOUNDCANVAS_ROM_PATH env variable to '%s'", env_list.c_str());
+	LOG_MSG("SOUNDCANVAS: Setting SOUNDCANVAS_ROM_PATH env variable to '%s'",
+	        env_list.c_str());
 	set_env_var("SOUNDCANVAS_ROM_PATH", env_list.c_str(), Env::Overwrite);
 }
 
@@ -424,7 +427,7 @@ MidiDeviceSoundCanvas::MidiDeviceSoundCanvas()
 	// level constant noise from time to time depending on previous MIDI
 	// input. Implementations accurate to the hardwave behaviour might
 	// emulate this noise as well, so we'll use our audio gate to remove it.
-	
+
 	// This effectively disables the gate on the mk2
 	const auto is_mk1_model = (sc_model->model <= Model::Sc55_200);
 	const auto threshold_db = is_mk1_model ? -70.0f : -1000.0f;
@@ -695,7 +698,8 @@ void MidiDeviceSoundCanvas::RenderBacklogged()
 	// wrong-sounding instruments in many cases.
 	//
 	if (clap.event_list.Size() > 10) {
-		RenderAudioFramesToFifo();
+		constexpr auto OneFrame = 1;
+		RenderAudioFramesToFifo(OneFrame);
 	}
 
 	if (!MIXER_FastForwardModeEnabled()) {
@@ -725,14 +729,15 @@ void MidiDeviceSoundCanvas::ProcessWorkFromFifoBacklogged()
 
 	// If we're in backlogged mode when fast-forward is activated, it means
 	// the Sound Canvas can't keep up with the sped-up CPU emulation.
-	// Therefore, we need to minimise the work to catch up. We can't just
-	// not process any MIDI events at all; we need to keep processing
-	// program change, control change, etc. events, otherwise there's a real
-	// chance the instrument sounds will be wrong when we resume normal
-	// playback. But we can drop all MIDI notes and bypass the actual audio
-	// rendering (we'll just render a few samples from time to time to keep
-	// the Sound Canvas emulation ticking along); this way we can catch up
-	// and stay in sync with the CPU emulation.
+	// Therefore, we need to minimise the work to catch up.
+	//
+	// We can't just *not* process any MIDI events at all; we need to keep
+	// processing program change, control change, etc. events, otherwise
+	// there's a real chance the instrument sounds will be wrong when we
+	// resume normal playback. But we can drop all MIDI notes and bypass the
+	// actual audio rendering; we'll just render a few samples from time to
+	// time to keep the Sound Canvas emulation ticking along. This way, we
+	// can catch up and stay in sync with the CPU emulation.
 	//
 	if (const auto status = get_midi_status(work->message[0]);
 	    get_midi_message_type(status) == MessageType::Channel) {
@@ -753,7 +758,8 @@ void MidiDeviceSoundCanvas::Render()
 		if (is_work_fifo_backlogged) {
 			RenderBacklogged();
 		} else {
-			work_fifo.IsEmpty() ? RenderAudioFramesToFifo()
+			constexpr auto OneFrame = 1;
+			work_fifo.IsEmpty() ? RenderAudioFramesToFifo(OneFrame)
 			                    : ProcessWorkFromFifo();
 		}
 	}
@@ -763,7 +769,7 @@ static std::set<const SoundCanvas::SynthModel*> available_models = {};
 
 static bool available_models_initialised = false;
 
-void SOUNDCANVAS_ListDevices(MidiDeviceSoundCanvas* device, Program* caller)
+void SOUNDCANVAS_ListDevices(MidiDeviceSoundCanvas* device, MoreOutputStrings& output)
 {
 	using namespace SoundCanvas;
 
@@ -784,7 +790,7 @@ void SOUNDCANVAS_ListDevices(MidiDeviceSoundCanvas* device, Program* caller)
 	}
 
 	if (available_models.empty()) {
-		caller->WriteOut("%s%s\n\n",
+		output.AddString("%s%s\n\n",
 		                 Indent,
 		                 MSG_Get("MIDI_DEVICE_NO_MODELS").c_str());
 		return;
@@ -813,8 +819,7 @@ void SOUNDCANVAS_ListDevices(MidiDeviceSoundCanvas* device, Program* caller)
 		}
 	}();
 
-	auto highlight_model = [&](const SynthModel* model,
-	                           const char* display_name) {
+	auto highlight_model = [&](const SynthModel* model, const char* display_name) {
 		constexpr auto darkgray = "[color=dark-gray]";
 		constexpr auto green    = "[color=light-green]";
 		constexpr auto reset    = "[reset]";
@@ -831,11 +836,11 @@ void SOUNDCANVAS_ListDevices(MidiDeviceSoundCanvas* device, Program* caller)
 		const auto model_string = format_str(
 		        "%s%s%s%s", color, active_prefix, display_name, reset);
 
-		return convert_ansi_markup(model_string.c_str());
+		return convert_ansi_markup(model_string);
 	};
 
 	// Print available Sound Canvas models
-	caller->WriteOut("%s%s", Indent, MSG_Get("SC55_MODELS_LABEL").c_str());
+	output.AddString("%s%s", Indent, MSG_Get("SC55_MODELS_LABEL").c_str());
 
 	// Display order, from old to new
 	const std::vector<const SynthModel*> models_old_to_new = {&sc55_100_model,
@@ -848,27 +853,27 @@ void SOUNDCANVAS_ListDevices(MidiDeviceSoundCanvas* device, Program* caller)
 
 	for (const auto& model : models_old_to_new) {
 		const auto display_name = model->display_name_short;
-		caller->WriteOut("%s%s",
+		output.AddString("%s%s",
 		                 highlight_model(model, display_name).c_str(),
 		                 ColumnDelim);
 	}
-	caller->WriteOut("\n");
+	output.AddString("\n");
 
-	caller->WriteOut("%s---\n", Indent);
+	output.AddString("%s---\n", Indent);
 
 	// Print info about the active model
 	if (active_sc_model) {
-		caller->WriteOut("%s%s%s\n",
+		output.AddString("%s%s%s\n",
 		                 Indent,
 		                 MSG_Get("SOUNDCANVAS_ACTIVE_MODEL_LABEL").c_str(),
 		                 (*active_sc_model)->display_name_long);
 	} else {
-		caller->WriteOut("%s%s\n",
+		output.AddString("%s%s\n",
 		                 Indent,
 		                 MSG_Get("MIDI_DEVICE_NO_MODEL_ACTIVE").c_str());
 	}
 
-	caller->WriteOut("\n");
+	output.AddString("\n");
 }
 
 static void init_soundcanvas_config_settings(SectionProp& sec_prop)
@@ -881,16 +886,16 @@ static void init_soundcanvas_config_settings(SectionProp& sec_prop)
 
 	// Listed in resolution priority order
 	str_prop->SetValues({"auto",
-	                      SoundCanvas::BestModelAlias::Sc55,
-	                      sc55_121_model.config_name,
-	                      sc55_120_model.config_name,
-	                      sc55_110_model.config_name,
-	                      sc55_100_model.config_name,
-	                      sc55_200_model.config_name,
+	                     SoundCanvas::BestModelAlias::Sc55,
+	                     sc55_121_model.config_name,
+	                     sc55_120_model.config_name,
+	                     sc55_110_model.config_name,
+	                     sc55_100_model.config_name,
+	                     sc55_200_model.config_name,
 
-	                      SoundCanvas::BestModelAlias::Sc55mk2,
-	                      sc55mk2_100.config_name,
-	                      sc55mk2_101.config_name});
+	                     SoundCanvas::BestModelAlias::Sc55mk2,
+	                     sc55mk2_100.config_name,
+	                     sc55mk2_101.config_name});
 
 	str_prop->SetHelp(
 	        "Roland Sound Canvas model to use ('auto' by default). One or more CLAP audio\n"

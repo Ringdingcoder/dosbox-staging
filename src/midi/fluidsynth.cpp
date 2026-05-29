@@ -243,7 +243,7 @@ static std_fs::path find_sf_file(const std::string& sf_name)
 		for (const auto& sf :
 		     {dir / sf_name, dir / (sf_name + SoundFontExtension)}) {
 #if 0
-			LOG_MSG("FSYNTH: FluidSynth checking if '%s' exists", sf.c_str());
+			LOG_DEBUG("FSYNTH: FluidSynth checking if '%s' exists", sf.c_str());
 #endif
 			if (path_exists(sf)) {
 				// Parts of the path come from the `soundfont`
@@ -924,12 +924,12 @@ void MidiDeviceFluidSynth::ProcessWorkFromFifo()
 #if 0
 	// To log inter-cycle rendering
 	if (work->num_pending_audio_frames > 0) {
-		LOG_MSG("FSYNTH: %2u audio frames prior to %s message, followed by "
-		        "%2lu more messages. Have %4lu audio frames queued",
-		        work->num_pending_audio_frames,
-		        work->message_type == MessageType::Channel ? "channel" : "sysex",
-		        work_fifo.Size(),
-		        audio_frame_fifo.Size());
+		LOG_DEBUG("FSYNTH: %2u audio frames prior to %s message, followed by "
+		          "%2lu more messages. Have %4lu audio frames queued",
+		          work->num_pending_audio_frames,
+		          work->message_type == MessageType::Channel ? "channel" : "sysex",
+		          work_fifo.Size(),
+		          audio_frame_fifo.Size());
 	}
 #endif
 
@@ -960,64 +960,25 @@ std_fs::path MidiDeviceFluidSynth::GetSoundFontPath()
 	return soundfont_path;
 }
 
-std::string format_sf_line(size_t width, const std_fs::path& sf_path)
-{
-	assert(width > 0);
-	std::vector<char> line_buf(width);
-
-	const auto& name = sf_path.filename().string();
-	const auto& path = simplify_path(sf_path).string();
-
-	snprintf(line_buf.data(), width, "%-16s - %s", name.c_str(), path.c_str());
-	std::string line = line_buf.data();
-
-	// Formatted line did not fill the whole buffer - no further
-	// formatting is necessary.
-	if (line.size() + 1 < width) {
-		return line;
-	}
-
-	// The description was too long and got trimmed; place three
-	// dots in the end to make it clear to the user.
-	const std::string cutoff = "...";
-
-	assert(line.size() > cutoff.size());
-
-	const auto start = line.end() - static_cast<int>(cutoff.size());
-	line.replace(start, line.end(), cutoff);
-
-	return line;
-}
-
-void FSYNTH_ListDevices(MidiDeviceFluidSynth* device, Program* caller)
+void FSYNTH_ListDevices(MidiDeviceFluidSynth* device, MoreOutputStrings& output)
 {
 	const size_t term_width = INT10_GetTextColumns();
 
-	constexpr auto Indent = "  ";
+	constexpr auto Indent   = "  ";
+	const auto curr_sf_path = device ? device->GetSoundFontPath() : "";
 
 	auto write_line = [&](const std_fs::path& sf_path) {
-		const auto line = format_sf_line(term_width - 2, sf_path);
+		const auto line = truncate_path(sf_path, term_width - strlen(Indent));
 
-		const auto do_highlight = [&] {
-			if (device) {
-				const auto curr_sf_path = device->GetSoundFontPath();
-				return curr_sf_path == sf_path;
-			}
-			return false;
-		}();
-
+		const auto do_highlight = (curr_sf_path == sf_path);
 		if (do_highlight) {
 			constexpr auto Green = "[color=light-green]";
 			constexpr auto Reset = "[reset]";
 
-			const auto output = format_str("%s* %s%s\n",
-			                               Green,
-			                               line.c_str(),
-			                               Reset);
-
-			caller->WriteOut(convert_ansi_markup(output));
+			output.AddString(convert_ansi_markup(
+			        format_str("%s* %s%s\n", Green, line.c_str(), Reset)));
 		} else {
-			caller->WriteOut("%s%s\n", Indent, line.c_str());
+			output.AddString("%s%s\n", Indent, line.c_str());
 		}
 	};
 
@@ -1053,14 +1014,20 @@ void FSYNTH_ListDevices(MidiDeviceFluidSynth* device, Program* caller)
 		}
 	}
 
-	std::sort(sf_files.begin(),
-	          sf_files.end(),
-	          [](const std_fs::path& a, const std_fs::path& b) {
-		          return a.filename() < b.filename();
-	          });
+	// Add the currently loaded SoundFont to the list if wasn't already
+	// found in the standard locations
+	if (!curr_sf_path.empty() &&
+	    std::ranges::find(sf_files, curr_sf_path) == sf_files.end()) {
+
+		sf_files.emplace_back(curr_sf_path);
+	}
+
+	std::ranges::sort(sf_files, [](const std_fs::path& a, const std_fs::path& b) {
+		return natural_compare(a.filename().string(), b.filename().string());
+	});
 
 	if (sf_files.empty()) {
-		caller->WriteOut("%s%s\n",
+		output.AddString("%s%s\n",
 		                 Indent,
 		                 MSG_Get("FLUIDSYNTH_NO_SOUNDFONTS").c_str());
 	} else {
@@ -1069,7 +1036,7 @@ void FSYNTH_ListDevices(MidiDeviceFluidSynth* device, Program* caller)
 		}
 	}
 
-	caller->WriteOut("\n");
+	output.AddString("\n");
 }
 
 void FSYNTH_Init()
