@@ -2480,12 +2480,6 @@ void GFX_MaybePresentFrame()
 	}
 }
 
-void GFX_AlternatePresent()
-{
-        sdl.renderer->PrepareFrame();
-        sdl.renderer->PresentFrame();
-}
-
 kbd_event_exchange globl_kbd_exchange;
 
 static bool replacement_poll_event(SDL_Event *event)
