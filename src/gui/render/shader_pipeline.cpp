@@ -89,6 +89,7 @@ void ShaderPipeline::DestroySamplers()
 
 bool ShaderPipeline::IsPipelineComplete() const
 {
+    //printf("IsPipelineComplete: %d %d %d %d %d\n", (int) video_mode.width, (int) video_mode.height, (int) input_texture.size.IsEmpty(), (int) viewport.IsEmpty(), (int) !!main_shader);
 	return (video_mode.width > 0 && video_mode.height > 0 &&
 	        !input_texture.size.IsEmpty() && !viewport.IsEmpty() && main_shader);
 }
