@@ -1507,6 +1507,18 @@ static void drawPixels(void *pixels)
     }
 }
 
+static uint32_t tempLine[SCREEN_WIDTH/2];
+
+static void drawOneLine(int y)
+{
+    uint8_t *p8 = pix8 + y * SCREEN_WIDTH/2;
+    uint32_t *pd= tempLine;
+    for (int x=0; x<SCREEN_WIDTH/2; x++) {
+        uint32_t pixval = lut[*p8++];
+        *pd++ = pixval;
+    }
+}
+
 static int complete_read(int fd, char *buf, size_t count)
 {
     int ret;
@@ -1703,10 +1715,7 @@ void SHELL_AlternativeRun()
             }
             }
 
-        uint32_t *pixels;
-        int pitch;
-
-        if (!GFX_StartUpdate(pixels, pitch))
+        if (!RENDER_StartUpdate())
             continue;
 
         if (complete_read(sock_comm, real_sendbuf, 16)) {
@@ -1758,33 +1767,22 @@ void SHELL_AlternativeRun()
         static double delay_avg = 0.;
         static int delaycnt;
         static int compsize;
-        static int samplecnt;
-        static int dumpnextsample;
         delay_avg = (delay_avg * 3 + (ourtime-theirtime)) / 4;
         compsize += (unsigned) sendlen_uh + sendlen_lh;
-        if (dumpnextsample) {
-            FILE *f = fopen("nextpicdump.dat", "w");
-            fwrite(pixels, 320*224, 1, f);
-            fclose(f);
-            printf("dumped! ---------------\n");
-            dumpnextsample = 0;
-        }
         if (++delaycnt >= 5) {
             printf("delay %.3f, compsize %d\n", delay_avg*1000., compsize/5);
-            if (compsize >= 100000 && compsize <= 120000 && samplecnt < 100) {
-                if (++samplecnt == 100) {
-                    dumpnextsample = 1;
-                    FILE *f = fopen("picdump.dat", "w");
-                    fwrite(pixels, 320*224, 1, f);
-                    fclose(f);
-                }
-            }
             delaycnt = 0;
             compsize = 0;
         }
         assert(!quit);
-        drawPixels(pixels);
 
-        GFX_EndUpdate();
+        for (int y=0; y<SCREEN_HEIGHT/2; y++) {
+            drawOneLine(y);
+            for (int j=0; j<2; j++) {
+                RENDER_DrawLine(tempLine);
+            }
+        }
+
+        RENDER_EndUpdate(false);
     }
 }
