@@ -7,6 +7,7 @@
 
 #include "gui/private/common.h"
 #include "private/auto_shader_switcher.h"
+#include "private/shader_manager.h"
 
 #include "capture/capture.h"
 #include "dosbox_config.h"
@@ -228,7 +229,7 @@ DosBox::Rect OpenGlRenderer::GetCanvasSizeInPixels()
 	return r;
 }
 
-void OpenGlRenderer::NotifyViewportSizeChanged(const DosBox::Rect draw_rect_px)
+void OpenGlRenderer::NotifyViewportSizeChanged(const DosBox::Rect viewport_size_px)
 {
 	// If the viewport size has changed, the canvas size might have
 	// changed too.
@@ -236,6 +237,8 @@ void OpenGlRenderer::NotifyViewportSizeChanged(const DosBox::Rect draw_rect_px)
 
 	// We always expect a valid canvas
 	assert(!canvas_size_px.IsEmpty());
+
+	curr_viewport_size_px = viewport_size_px;
 
 	// The video mode hasn't changed, but the ShaderManager call expects it.
 	const auto video_mode = VGA_GetCurrentVideoMode();
@@ -263,7 +266,7 @@ void OpenGlRenderer::NotifyViewportSizeChanged(const DosBox::Rect draw_rect_px)
 
 	HandleShaderAndPresetChangeViaNotify(new_descriptor);
 
-	shader_pipeline->NotifyViewportSizeChanged(draw_rect_px);
+	shader_pipeline->NotifyViewportSizeChanged(curr_viewport_size_px);
 }
 
 void OpenGlRenderer::HandleShaderAndPresetChangeViaNotify(const ShaderDescriptor& new_descriptor)
@@ -276,7 +279,8 @@ void OpenGlRenderer::HandleShaderAndPresetChangeViaNotify(const ShaderDescriptor
 		LOG_ERR("RENDER: Error loading shader preset '%s'; using default preset",
 		        new_descriptor.ToString().c_str());
 
-		curr_shader_descriptor = {new_descriptor.shader_name, ""};
+		curr_shader_descriptor = new_descriptor;
+		curr_shader_descriptor.preset_name.clear();
 		break;
 
 	case ShaderError:
@@ -349,8 +353,8 @@ void OpenGlRenderer::RecreateInputTexture()
 	glActiveTexture(GL_TEXTURE0);
 	glBindTexture(GL_TEXTURE_2D, input_texture.texture);
 
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
@@ -386,7 +390,6 @@ void OpenGlRenderer::RecreateInputTexture()
 
 	input_texture.pitch = check_cast<int>(pitch_bytes);
 }
-
 
 void OpenGlRenderer::StartFrame(uint32_t*& pixels_out, int& pitch_out)
 {
@@ -461,17 +464,14 @@ OpenGlRenderer::SetShaderResult OpenGlRenderer::SetShader(const std::string& sym
 }
 
 OpenGlRenderer::SetShaderResult OpenGlRenderer::SetShaderInternal(
-        const std::string& new_symbolic_shader_descriptor, const bool force_reload)
+        const std::string& new_symbolic_shader_descriptor)
 {
 	using enum OpenGlRenderer::SetShaderResult;
 
 	const auto new_descriptor = AutoShaderSwitcher::GetInstance().NotifyShaderChanged(
 	        new_symbolic_shader_descriptor);
 
-	const auto curr_descriptor = force_reload ? ShaderDescriptor{"", ""}
-	                                          : curr_shader_descriptor;
-
-	const auto result = MaybeSwitchShaderAndPreset(curr_descriptor,
+	const auto result = MaybeSwitchShaderAndPreset(curr_shader_descriptor,
 	                                               new_descriptor);
 
 	switch (result) {
@@ -481,7 +481,8 @@ OpenGlRenderer::SetShaderResult OpenGlRenderer::SetShaderInternal(
 	} break;
 
 	case PresetError: {
-		curr_shader_descriptor = {new_descriptor.shader_name, ""};
+		curr_shader_descriptor = new_descriptor;
+		curr_shader_descriptor.preset_name.clear();
 
 		constexpr auto GlslExtension = ".glsl";
 		auto descriptor = ShaderDescriptor::FromString(new_symbolic_shader_descriptor,
@@ -503,7 +504,18 @@ OpenGlRenderer::SetShaderResult OpenGlRenderer::SetShaderInternal(
 
 void OpenGlRenderer::ForceReloadCurrentShader()
 {
-	// TODO to be reimplemented later
+	LOG_INFO("RENDER: Reloading current shader '%s'",
+	         curr_shader_descriptor.ToString().c_str());
+
+	const auto result = ShaderManager::GetInstance().ForceReloadShader(
+	        curr_shader_descriptor);
+
+	if (result) {
+		const auto& [shader, preset] = *result;
+
+		shader_pipeline->SetMainShader(shader);
+		shader_pipeline->SetMainShaderPreset(preset);
+	}
 }
 
 void OpenGlRenderer::NotifyVideoModeChanged(const VideoMode& video_mode)
@@ -514,11 +526,15 @@ void OpenGlRenderer::NotifyVideoModeChanged(const VideoMode& video_mode)
 	assert(!canvas_size_px.IsEmpty());
 	assert(video_mode.width > 0 && video_mode.height > 0);
 
+	curr_video_mode = video_mode;
+
 	// Handle shader auto-switching
 	const auto new_descriptor = AutoShaderSwitcher::GetInstance().NotifyRenderParametersChanged(
 	        curr_shader_descriptor, canvas_size_px, video_mode);
 
 	HandleShaderAndPresetChangeViaNotify(new_descriptor);
+
+	shader_pipeline->NotifyVideoModeChanged(curr_video_mode);
 }
 
 OpenGlRenderer::SetShaderResult OpenGlRenderer::MaybeSwitchShaderAndPreset(
@@ -562,8 +578,8 @@ bool OpenGlRenderer::SwitchShader(const std::string& shader_name)
 		return false;
 	}
 
-	const auto shader = *maybe_shader;
-	main_shader_info  = shader.info;
+	const auto& shader = *maybe_shader;
+	main_shader_info   = shader.info;
 
 	shader_pipeline->SetMainShader(shader);
 	return true;
@@ -596,6 +612,11 @@ void OpenGlRenderer::SetImageAdjustmentSettings(const ImageAdjustmentSettings& s
 	shader_pipeline->SetImageAdjustmentSettings(settings);
 }
 
+void OpenGlRenderer::SetDeditheringStrength(const float strength)
+{
+	shader_pipeline->SetDeditheringStrength(strength);
+}
+
 ShaderInfo OpenGlRenderer::GetCurrentShaderInfo()
 {
 	return main_shader_info;
@@ -609,6 +630,11 @@ ShaderPreset OpenGlRenderer::GetCurrentShaderPreset()
 std::string OpenGlRenderer::GetCurrentSymbolicShaderDescriptor()
 {
 	return curr_symbolic_shader_descriptor;
+}
+
+ShaderDescriptor OpenGlRenderer::GetCurrentShaderDescriptor()
+{
+	return curr_shader_descriptor;
 }
 
 RenderedImage OpenGlRenderer::ReadPixelsPostShader(const DosBox::Rect output_rect_px)

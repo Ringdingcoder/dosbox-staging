@@ -6,8 +6,11 @@
 
 /*
 
-#pragma force_single_scan
-#pragma force_no_pixel_doubling
+#pragma name        Main_Pass1
+#pragma output_size Viewport
+
+#pragma force_single_scan       on
+#pragma force_no_pixel_doubling on
 
 */
 

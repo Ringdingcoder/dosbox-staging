@@ -8,6 +8,7 @@
 #include <string>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 #include "gui/private/common.h"
 #include "shader.h"
@@ -37,6 +38,9 @@ public:
 
 	ShaderPreset LoadShaderPresetOrDefault(const ShaderDescriptor& descriptor);
 
+	std::optional<std::pair<Shader, ShaderPreset>> ForceReloadShader(
+	        const ShaderDescriptor& descriptor);
+
 	/*
 	 * Generate a human-readable shader inventory message (one list element
 	 * per line).
@@ -44,7 +48,7 @@ public:
 	std::deque<std::string> GenerateShaderInventoryMessage() const;
 
 private:
-	ShaderManager();
+	ShaderManager() = default;
 	~ShaderManager();
 
 	// prevent copying
@@ -60,14 +64,31 @@ private:
 	        const ShaderDescriptor& descriptor,
 	        const ShaderPreset& default_preset) const;
 
-	ShaderPreset ParseDefaultShaderPreset(const std::string& shader_name,
-	                                      const std::string& shader_source) const;
+	struct ParseShaderPragmaResult {
+		ShaderPreset preset                = {};
+		std::string pass_name              = "";
+		std::vector<std::string> input_ids = {};
+		ShaderOutputSize output_size       = {};
+	};
 
-	void SetShaderSetting(const std::string& name, const std::string& value,
-	                      ShaderSettings& settings) const;
+	std::optional<ParseShaderPragmaResult> ParseShaderPragmas(
+	        const std::string& shader_name, const std::string& shader_source) const;
+
+	bool SetShaderSetting(const std::string& name, const std::string& value,
+	                      ShaderSettings& out_settings) const;
 
 	std::optional<std::pair<std::string, float>> ParseParameterPragma(
 	        const std::string& pragma_value) const;
+
+	std::optional<std::pair<std::string, std::string>> ParseSettingPragma(
+	        const std::string& pragma) const;
+
+	std::optional<std::string> ParseNamePragma(const std::string& pragma) const;
+
+	std::optional<std::pair<int, std::string>> ParseInputPragma(
+	        const std::string& pragma) const;
+
+	std::optional<ShaderOutputSize> ParseOutputSizePragma(const std::string& pragma) const;
 
 	// Keys are the shader names including the path part but without the
 	// .glsl file extension

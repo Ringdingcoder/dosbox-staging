@@ -37,7 +37,7 @@ public:
 
 	DosBox::Rect GetCanvasSizeInPixels() override;
 
-	void NotifyViewportSizeChanged(const DosBox::Rect draw_rect_px) override;
+	void NotifyViewportSizeChanged(const DosBox::Rect viewport_size) override;
 
 	void NotifyRenderSizeChanged(const int new_render_width_px,
 	                             const int new_render_height_px) override;
@@ -52,6 +52,7 @@ public:
 	ShaderPreset GetCurrentShaderPreset() override;
 
 	std::string GetCurrentSymbolicShaderDescriptor() override;
+	ShaderDescriptor GetCurrentShaderDescriptor() override;
 
 	void StartFrame(uint32_t*& pixels_out, int& pitch_out) override;
 	void EndFrame() override;
@@ -64,6 +65,7 @@ public:
 	void SetColorSpace(const ColorSpace color_space) override;
 	void EnableImageAdjustments(const bool enable) override;
 	void SetImageAdjustmentSettings(const ImageAdjustmentSettings& settings) override;
+	void SetDeditheringStrength(const float strength) override;
 
 	RenderedImage ReadPixelsPostShader(const DosBox::Rect output_rect_px) override;
 
@@ -86,8 +88,7 @@ private:
 	void MaybeUpdateRenderSize(const int new_render_width_px,
 	                           const int new_render_height_px);
 
-	SetShaderResult SetShaderInternal(const std::string& symbolic_shader_descriptor,
-	                                  const bool force_reload = false);
+	SetShaderResult SetShaderInternal(const std::string& symbolic_shader_descriptor);
 
 	void HandleShaderAndPresetChangeViaNotify(const ShaderDescriptor& new_descriptor);
 
@@ -145,6 +146,9 @@ private:
 
 	ShaderInfo main_shader_info     = {};
 	ShaderPreset main_shader_preset = {};
+
+	DosBox::Rect curr_viewport_size_px = {};
+	VideoMode curr_video_mode          = {};
 
 	std::unique_ptr<ShaderPipeline> shader_pipeline = {};
 };

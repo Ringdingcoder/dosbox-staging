@@ -7,6 +7,7 @@
 #include <cassert>
 #include <fstream>
 #include <regex>
+#include <unordered_map>
 
 #include <SDL.h>
 
@@ -29,25 +30,48 @@ CHECK_NARROWING();
 ShaderDescriptor ShaderDescriptor::FromString(const std::string& descriptor,
                                               const std::string& extension)
 {
-	const auto parts        = split(descriptor, ":");
-	const auto& shader_name = parts[0];
+	const auto parts = split(descriptor, ":");
 
 	// Drop optional shader file extension (e.g., '.glsl')
-	std_fs::path path = shader_name;
+	std_fs::path path = parts[0];
 	if (path.extension() == extension) {
 		path.replace_extension("");
 	}
 
+	const auto shader_name = path.string();
 	const auto preset_name = (parts.size() > 1) ? parts[1] : "";
 
-	return {path.string(), preset_name};
+	const auto shader_mode = [&] {
+		// clang-format off
+		static const std::unordered_map<std::string, ShaderMode> auto_shader_map = {
+			{SymbolicShaderName::AutoGraphicsStandard, ShaderMode::AutoGraphicsStandard},
+			{SymbolicShaderName::AutoMachine,          ShaderMode::AutoMachine},
+			{SymbolicShaderName::AutoArcade,           ShaderMode::AutoArcade},
+			{SymbolicShaderName::AutoArcadeSharp,      ShaderMode::AutoArcadeSharp},
+		};
+		// clang-format on
+
+		if (const auto it = auto_shader_map.find(descriptor);
+		    it != auto_shader_map.end()) {
+			return it->second;
+		}
+		return ShaderMode::Single;
+	}();
+
+	return {shader_name, preset_name, shader_mode};
 }
 
-ShaderManager::ShaderManager() {}
+bool ShaderDescriptor::EnforceAutoIntegerScaling() const
+{
+	// Turn off vertical integer scaling for the 'sharp' shader
+	// in 'integer_scaling = auto' mode
+	//
+	return (shader_name != ShaderName::Sharp);
+}
 
 ShaderManager::~ShaderManager()
 {
-	for (auto& [_, shader] : shader_cache) {
+	for (const auto& [_, shader] : shader_cache) {
 		glDeleteProgram(shader.program_object);
 	}
 	shader_cache.clear();
@@ -78,13 +102,55 @@ std::optional<Shader> ShaderManager::LoadShader(const std::string& shader_name)
 	return shader_cache[shader_name];
 }
 
-std::optional<Shader> ShaderManager::ForceReloadShader(const std::string& shader_name)
+std::optional<std::pair<Shader, ShaderPreset>> ShaderManager::ForceReloadShader(
+        const ShaderDescriptor& descriptor)
 {
-	if (shader_cache.contains(shader_name)) {
-		glDeleteProgram(shader_cache[shader_name].program_object);
-		shader_cache.erase(shader_name);
+	const auto maybe_shader = LoadAndBuildShader(descriptor.shader_name);
+	if (!maybe_shader) {
+		LOG_ERR("RENDER: Error reloading shader '%s'",
+		        descriptor.shader_name.c_str());
+		return {};
 	}
-	return LoadAndBuildShader(shader_name);
+	const auto shader = *maybe_shader;
+
+	auto replace_cached_shader = [&] {
+		// Replace reloaded shader in the cache
+		const auto& shader_key = descriptor.shader_name;
+		assert(shader_cache.contains(shader_key));
+
+		glDeleteProgram(shader_cache[shader_key].program_object);
+		shader_cache[shader_key] = shader;
+	};
+
+	if (descriptor.preset_name.empty()) {
+		// No preset specified; use default preset
+		replace_cached_shader();
+
+		return {
+		        {shader, shader.info.default_preset}
+                };
+	}
+
+	const auto maybe_preset = ShaderManager::LoadShaderPreset(
+	        descriptor, shader.info.default_preset);
+	if (!maybe_preset) {
+		LOG_ERR("RENDER: Error reloading shader preset '%s'",
+		        descriptor.ToString().c_str());
+		return {};
+	}
+	const auto& preset = *maybe_preset;
+
+	replace_cached_shader();
+
+	// Replace reloaded shader preset in the cache
+	const auto& preset_key = descriptor.ToString();
+	assert(shader_preset_cache.contains(preset_key));
+
+	shader_preset_cache[preset_key] = preset;
+
+	return {
+	        {shader, preset}
+        };
 }
 
 std::optional<Shader> ShaderManager::LoadAndBuildShader(const std::string& shader_name)
@@ -105,16 +171,22 @@ std::optional<Shader> ShaderManager::LoadAndBuildShader(const std::string& shade
 	}
 
 	const auto& shader_source = *maybe_shader_source;
-	const auto default_preset = ParseDefaultShaderPreset(shader_name,
-	                                                     shader_source);
 
-	const bool is_adaptive = [&] {
-		// TODO to be reimplemented later
-		return (shader_name != ShaderName::Sharp);
-	}();
+	const auto maybe_pragmas = ParseShaderPragmas(shader_name, shader_source);
+	if (!maybe_pragmas) {
+		LOG_ERR("RENDER: Error parsing pragmas of shader '%s'",
+		        shader_name.c_str());
+		return {};
+	}
+	const auto pragmas = *maybe_pragmas;
 
 	Shader shader = {};
-	shader.info   = {shader_name, default_preset, is_adaptive};
+
+	shader.info = {shader_name,
+	               pragmas.pass_name,
+	               pragmas.input_ids,
+	               pragmas.output_size,
+	               pragmas.preset};
 
 	if (!shader.BuildShaderProgram(shader_source)) {
 		LOG_ERR("RENDER: Error loading shader '%s'", shader_name.c_str());
@@ -143,8 +215,8 @@ ShaderPreset ShaderManager::LoadShaderPresetOrDefault(const ShaderDescriptor& de
 	if (!shader_preset_cache.contains(cache_key)) {
 		const auto maybe_preset = LoadShaderPreset(descriptor, default_preset);
 		if (!maybe_preset) {
-			LOG_WARNING("OPENGL: Error loading shader preset '%s'; using default preset",
-			            descriptor.ToString().c_str());
+			LOG_ERR("OPENGL: Error loading shader preset '%s'; using default preset",
+			        descriptor.ToString().c_str());
 			return default_preset;
 		}
 
@@ -180,8 +252,8 @@ std::optional<ShaderPreset> ShaderManager::LoadShaderPreset(
 
 	// TODO get_resource_path() should return optional
 	if (path.empty()) {
-		LOG_WARNING("RENDER: Cannot locate shader preset '%s'",
-		            descriptor.ToString().c_str());
+		LOG_ERR("RENDER: Cannot locate shader preset '%s'",
+		        descriptor.ToString().c_str());
 		return {};
 	}
 
@@ -189,8 +261,7 @@ std::optional<ShaderPreset> ShaderManager::LoadShaderPreset(
 	                         (std_fs::is_regular_file(path) ||
 	                          std_fs::is_symlink(path));
 	if (!file_exists) {
-		LOG_WARNING(
-		        "RENDER: Error loading shader preset file '%s'; "
+		LOG_ERR("RENDER: Error loading shader preset file '%s'; "
 		        "file does not exist or not a regular file",
 		        path.string().c_str());
 		return {};
@@ -203,20 +274,24 @@ std::optional<ShaderPreset> ShaderManager::LoadShaderPreset(
 	LOG_DEBUG("RENDER: Loading shader preset '%s'", path.string().c_str());
 #endif
 
-	const auto result = ini.LoadFile(path.string().c_str());
-	if (result < 0) {
-		LOG_WARNING("RENDER: Error loading shader preset '%s'; invalid file format",
-		            path.string().c_str());
+	if (ini.LoadFile(path.string().c_str()) < 0) {
+		LOG_ERR("RENDER: Error loading shader preset '%s'; invalid file format",
+		        path.string().c_str());
 		return {};
 	}
 
 	ShaderPreset preset = default_preset;
-
-	preset.name = descriptor.preset_name;
+	preset.name         = descriptor.preset_name;
 
 	if (const auto settings = ini.GetSection("settings"); settings) {
 		for (const auto& [name, value] : *settings) {
-			SetShaderSetting(name.pItem, value, preset.settings);
+
+			if (!SetShaderSetting(name.pItem, value, preset.settings)) {
+				LOG_ERR("RENDER: Invalid shader setting, name: '%s', value: '%s'",
+				        name.pItem,
+				        value);
+				return {};
+			}
 		}
 	}
 
@@ -225,13 +300,12 @@ std::optional<ShaderPreset> ShaderManager::LoadShaderPreset(
 			const auto name = key.pItem;
 
 			if (!default_preset.params.contains(name)) {
-				LOG_WARNING("RENDER: Invalid shader parameter name: '%s'",
-				            name);
+				LOG_ERR("RENDER: Invalid shader parameter name: '%s'",
+				        name);
 			} else {
 				const auto maybe_float = parse_float(value_str);
 				if (!maybe_float) {
-					LOG_WARNING(
-					        "RENDER: Invalid value for shader parameter '%s' "
+					LOG_ERR("RENDER: Invalid value for shader parameter '%s' "
 					        "(must be float): '%s'",
 					        name,
 					        value_str);
@@ -241,7 +315,7 @@ std::optional<ShaderPreset> ShaderManager::LoadShaderPreset(
 			}
 		}
 	} else {
-		LOG_WARNING("RENDER: Invalid preset file; [parameters] section not found");
+		LOG_ERR("RENDER: Invalid shader preset file; [parameters] section not found");
 		return {};
 	}
 
@@ -356,13 +430,19 @@ std::optional<std::string> ShaderManager::FindShaderAndReadSource(
 	return {};
 }
 
-ShaderPreset ShaderManager::ParseDefaultShaderPreset(const std::string& shader_name,
-                                                     const std::string& shader_source) const
+std::optional<ShaderManager::ParseShaderPragmaResult> ShaderManager::ParseShaderPragmas(
+        const std::string& shader_name, const std::string& shader_source) const
 {
-	ShaderPreset preset = {};
+	// We'll try to parse all pragmas and report all errors
+	bool has_errors = false;
+
+	ParseShaderPragmaResult result = {};
 
 	// The default preset has no name
-	preset.name.clear();
+	result.preset.name.clear();
+
+	std::unordered_map<int, std::string> input_ids = {};
+	auto highest_input_index                       = -1;
 
 	try {
 		const std::regex re("\\s*#pragma\\s+(.+)");
@@ -381,16 +461,72 @@ ShaderPreset ShaderManager::ParseDefaultShaderPreset(const std::string& shader_n
 				if (const auto maybe_result = ParseParameterPragma(pragma);
 				    maybe_result) {
 
-					const auto [param_name,
-					            default_value] = *maybe_result;
+					const auto& [param_name,
+					             default_value] = *maybe_result;
 
-					preset.params[param_name] = default_value;
+					result.preset.params[param_name] = default_value;
 				} else {
-					LOG_ERR("RENDER: Invalid shader parameter: '%s'",
+					LOG_ERR("RENDER: Invalid shader parameter pragma: '%s'",
 					        pragma.c_str());
+					has_errors = true;
 				}
+
+			} else if (pragma.starts_with("name")) {
+				if (const auto maybe_name = ParseNamePragma(pragma);
+				    maybe_name) {
+
+					result.pass_name = *maybe_name;
+				} else {
+					LOG_ERR("RENDER: Invalid shader pass name pragma: '%s'",
+					        pragma.c_str());
+					has_errors = true;
+				}
+
+			} else if (pragma.starts_with("input")) {
+				if (const auto maybe_result = ParseInputPragma(pragma);
+				    maybe_result) {
+
+					const auto& [input_index,
+					             input_name] = *maybe_result;
+
+					input_ids[input_index] = input_name;
+
+					highest_input_index = std::max(
+					        input_index, highest_input_index);
+				} else {
+					LOG_ERR("RENDER: Invalid input name pragme: '%s'",
+					        pragma.c_str());
+					has_errors = true;
+				}
+
+			} else if (pragma.starts_with("output_size")) {
+				if (const auto maybe_output_size = ParseOutputSizePragma(
+				            pragma);
+				    maybe_output_size) {
+
+					result.output_size = *maybe_output_size;
+				} else {
+					LOG_ERR("RENDER: Invalid output size pragma: '%s'",
+					        pragma.c_str());
+					has_errors = true;
+				}
+
 			} else {
-				SetShaderSetting(pragma, "on", preset.settings);
+				bool parse_ok = false;
+
+				if (const auto maybe_setting = ParseSettingPragma(pragma);
+				    maybe_setting) {
+
+					const auto& [name, value] = *maybe_setting;
+
+					parse_ok = SetShaderSetting(
+					        name, value, result.preset.settings);
+				}
+				if (!parse_ok) {
+					LOG_ERR("RENDER: Invalid shader setting pragma: '%s'",
+					        pragma.c_str());
+					has_errors = true;
+				}
 			}
 
 			++next;
@@ -399,32 +535,71 @@ ShaderPreset ShaderManager::ParseDefaultShaderPreset(const std::string& shader_n
 		LOG_ERR("RENDER: Regex error while parsing shader '%s' for pragmas: %d",
 		        shader_name.c_str(),
 		        e.code());
+
+		has_errors = true;
 	}
 
-	return preset;
+	// Validate and store texture input IDs
+	const auto num_inputs = check_cast<int>(input_ids.size());
+
+	if (num_inputs != (highest_input_index + 1)) {
+		LOG_ERR("RENDER: Shader input indices are invalid "
+		        "(%d inputs but highest input index is %d)",
+		        num_inputs,
+		        highest_input_index);
+
+		has_errors = true;
+	}
+
+	if (num_inputs == 0) {
+		result.input_ids = {"Previous"};
+	} else {
+		for (auto i = 0; i <= highest_input_index; ++i) {
+			result.input_ids.emplace_back(input_ids[i]);
+		}
+	}
+
+	if (has_errors) {
+		return {};
+	}
+
+	return result;
 }
 
-void ShaderManager::SetShaderSetting(const std::string& name, const std::string& value,
-                                     ShaderSettings& settings) const
+bool ShaderManager::SetShaderSetting(const std::string& name, const std::string& value,
+                                     ShaderSettings& out_settings) const
 {
 	assert(!name.empty());
 
-	const auto is_true = (value == "1") || has_true(value);
+	const auto maybe_bool = parse_bool_setting(value);
+	if (!maybe_bool) {
+		return false;
+	}
+	const auto bool_value = *maybe_bool;
 
 	if (name == "force_single_scan") {
-		settings.force_single_scan = is_true;
-
-	} else if (name == "force_no_pixel_doubling") {
-		settings.force_no_pixel_doubling = is_true;
-
-	} else if (name == "use_nearest_texture_filter") {
-		settings.texture_filter_mode = is_true ? TextureFilterMode::NearestNeighbour
-		                                       : TextureFilterMode::Bilinear;
-
-	} else {
-		LOG_WARNING("RENDER: Unknown shader setting pragma: '%s'",
-		            name.c_str());
+		out_settings.force_single_scan = bool_value;
+		return true;
 	}
+
+	if (name == "force_no_pixel_doubling") {
+		out_settings.force_no_pixel_doubling = bool_value;
+		return true;
+	}
+
+	if (name == "linear_filtering") {
+		out_settings.texture_filter_mode =
+		        (bool_value ? TextureFilterMode::Bilinear
+		                    : TextureFilterMode::NearestNeighbour);
+		return true;
+	}
+
+	if (name == "float_output") {
+		out_settings.float_output_texture = bool_value;
+		return true;
+	}
+
+	return false;
 }
 
 std::optional<std::pair<std::string, float>> ShaderManager::ParseParameterPragma(
@@ -464,4 +639,92 @@ std::optional<std::pair<std::string, float>> ShaderManager::ParseParameterPragma
 	return {
 	        {param_name, *maybe_default_val}
         };
+}
+
+std::optional<std::pair<std::string, std::string>> ShaderManager::ParseSettingPragma(
+        const std::string& pragma) const
+{
+	// Shader setting format:
+	//
+	//   #pragma force_single_scan on
+	//
+	const auto parts = split(pragma);
+	if (parts.size() != 2) {
+		return {};
+	}
+	return {
+	        {parts[0], parts[1]}
+        };
+}
+
+std::optional<std::string> ShaderManager::ParseNamePragma(const std::string& pragma) const
+{
+	// Shader pass name format:
+	//
+	//   #pragma name Main_Pass1
+	//
+	const auto parts = split(strip_prefix(pragma, "name"));
+	if (parts.size() != 1) {
+		return {};
+	}
+	return parts[0];
+}
+
+std::optional<ShaderOutputSize> ShaderManager::ParseOutputSizePragma(
+        const std::string& pragma) const
+{
+	// Output size format:
+	//
+	//   #pragma output_size VideoMode
+	//
+	// Valid values are: Previous, Rendered, VideoMode, Viewport
+	//
+	const auto parts = split(strip_prefix(pragma, "output_size"));
+	if (parts.size() != 1) {
+		return {};
+	}
+	const auto& type = parts[0];
+
+	using enum ShaderOutputSize;
+
+	if (type == "Previous") {
+		return Previous;
+
+	} else if (type == "Rendered") {
+		return Rendered;
+
+	} else if (type == "VideoMode") {
+		return VideoMode;
+
+	} else if (type == "Viewport") {
+		return Viewport;
+	}
+
+	return {};
+}
+
+std::optional<std::pair<int, std::string>> ShaderManager::ParseInputPragma(
+        const std::string& pragma) const
+{
+	// Shader input format:
+	//
+	//   #pragma input0 Main_Pass2
+	//   #pragma input1 Previous
+	//   ...
+	//
+	const auto parts = split(strip_prefix(pragma, "input"));
+	if (parts.size() != 2) {
+		return {};
+	}
+
+	const auto& index_str = parts[0];
+
+	if (auto maybe_int = parse_int(index_str); maybe_int) {
+		const auto& name = parts[1];
+
+		return {
+		        {*maybe_int, name}
+                };
+	}
+	return {};
 }

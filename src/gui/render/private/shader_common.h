@@ -7,6 +7,10 @@
 #include "gui/private/common.h"
 #include "utils/rect.h"
 
+#include <string>
+#include <unordered_map>
+#include <vector>
+
 #include "glad/gl.h"
 
 namespace SymbolicShaderName {
@@ -87,6 +91,20 @@ enum class ShaderMode {
 	AutoArcadeSharp
 };
 
+inline const char* to_string(const ShaderMode s)
+{
+	using enum ShaderMode;
+
+	switch (s) {
+	case Single: return "Single";
+	case AutoGraphicsStandard: return "AutoGraphicsStandard";
+	case AutoMachine: return "AutoMachine";
+	case AutoArcade: return "AutoArcade";
+	case AutoArcadeSharp: return "AutoArcadeSharp";
+	default: assertm(false, "Invalid ShaderMode value"); return "";
+	}
+}
+
 /*
  * A symbolic shader descriptor is a `std::string` in the
  * `SHADER_NAME[:SHADER_PRESET]` format where `SHADER_NAME` can refer to the
@@ -142,6 +160,7 @@ enum class ShaderMode {
 struct ShaderDescriptor {
 	std::string shader_name = {};
 	std::string preset_name = {};
+	ShaderMode shader_mode  = {};
 
 	auto operator<=>(const ShaderDescriptor&) const = default;
 
@@ -158,6 +177,8 @@ struct ShaderDescriptor {
 
 	static ShaderDescriptor FromString(const std::string& descriptor,
 	                                   const std::string& extension);
+
+	bool EnforceAutoIntegerScaling() const;
 };
 
 // The default shader settings are important; we'll get these if the shader
@@ -167,6 +188,8 @@ struct ShaderSettings {
 	bool force_no_pixel_doubling = false;
 
 	TextureFilterMode texture_filter_mode = TextureFilterMode::Bilinear;
+
+	bool float_output_texture = false;
 
 	auto operator<=>(const ShaderSettings&) const = default;
 };
@@ -179,14 +202,50 @@ struct ShaderPreset {
 	ShaderParameters params = {};
 };
 
+enum class ShaderOutputSize {
+	// Size of output of the previous shader pass
+	Previous,
+
+	// Size of rendered VGA card output (e.g., for the mode 13h VGA mode, it
+	// can be 320x200, 320x400 or 640x400 depending on the double scanning and
+	// pixel doubling settings)
+	Rendered,
+
+	// "Nominal" size of the emulated DOS video mode (e.g., 320x200 for the
+	// mode 13h VGA mode, which is double-scanned to 400 lines)
+	VideoMode,
+
+	// Size of the viewport (depends on the window size or the screen
+	// dimensions in fullscreen, the various viewport restriction settings
+	// like integer scaling, etc.)
+	Viewport
+};
+
+inline const char* to_string(const ShaderOutputSize s)
+{
+	using enum ShaderOutputSize;
+
+	switch (s) {
+	case Previous: return "Previous";
+	case Rendered: return "Rendered";
+	case VideoMode: return "VideoMode";
+	case Viewport: return "Viewport";
+	default: assertm(false, "Invalid ShaderOutputSize value"); return "";
+	}
+}
+
 struct ShaderInfo {
 	// Resolved shader name without the file extension. The name might
 	// optionally contain a relative or absolute directory path.
 	std::string name = {};
 
-	ShaderPreset default_preset = {};
+	// Name of the shader pass set via `#pragma name`
+	std::string pass_name = {};
 
-	bool is_adaptive = false;
+	std::vector<std::string> input_ids = {"Previous"};
+	ShaderOutputSize output_size       = ShaderOutputSize::Previous;
+
+	ShaderPreset default_preset = {};
 };
 
 #endif // DOSBOX_SHADER_COMMON_H

@@ -5,6 +5,13 @@
 // SPDX-FileCopyrightText:  2020-2020 jmarsh <jmarsh@vogons.org>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+/*
+
+#pragma name        Main_Pass1
+#pragma output_size Viewport
+
+*/
+
 #if defined(VERTEX)
 
 layout (location = 0) in vec2 a_position;

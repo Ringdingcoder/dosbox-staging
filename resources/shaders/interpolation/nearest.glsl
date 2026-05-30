@@ -7,9 +7,12 @@
 
 /*
 
-#pragma use_nearest_texture_filter
-#pragma force_single_scan
-#pragma force_no_pixel_doubling
+#pragma name        Main_Pass1
+#pragma output_size Viewport
+
+#pragma linear_filtering           off
+#pragma force_single_scan          on
+#pragma force_no_pixel_doubling    on
 
 */
 

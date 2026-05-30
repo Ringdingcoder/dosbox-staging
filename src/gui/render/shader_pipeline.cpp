@@ -4,7 +4,10 @@
 #include "private/shader_pipeline.h"
 
 #include "gui/render/private/shader_manager.h"
+
+#include "misc/support.h"
 #include "utils/checks.h"
+#include "utils/math_utils.h"
 
 // Glad must be included before SDL
 #include "glad/gl.h"
@@ -16,103 +19,236 @@
 
 CHECK_NARROWING();
 
-ShaderPipeline::ShaderPipeline()
+std::string ShaderPass::ToString() const
 {
-	// The image adjustments pass is always the first; it cannot be disabled
-	// as it performs the colour space transforms as well.
-	LoadInternalShaderPassOrExit("image-adjustments-pass",
-	                             {.id = ShaderPassId::ImageAdjustments});
+	return format_str(
+	        "shader.info.name:        %s\n"
+	        "shader.info.pass_name:   %s\n"
+	        "shader.info.input_ids:   %s\n"
+	        "shader.info.output_size: %s\n"
+	        "shader.program_object:   %d\n\n"
 
-	// Main shader pass (e.g., a CRT shader, the sharp shader, an upscaler,
-	// etc.)
-	ShaderPass pass = {};
+	        "in_textures:             %s\n"
+	        "out_size:                %s\n"
+	        "out_fbo:                 %d\n"
+	        "out_texture:             %d\n",
 
-	pass.id          = ShaderPassId::Main;
-	pass.shader      = {}; // will be set later
-	pass.out_fbo     = 0;  // last pass; doesn't have an FBO
-	pass.out_texture = 0;  // last pass; doesn't have an output texture
-	pass.viewport    = {}; // will be set later
+	        shader.info.name.c_str(),
+	        shader.info.pass_name.c_str(),
+	        join(shader.info.input_ids).c_str(),
+	        to_string(shader.info.output_size),
+	        shader.program_object,
 
-	shader_passes.push_back(pass);
+	        to_string(in_textures).c_str(),
+	        out_size.ToString().c_str(),
+	        out_fbo,
+	        out_texture);
 }
 
-void ShaderPipeline::LoadInternalShaderPassOrExit(const std::string shader_name,
-                                                  const ShaderPass pass_params)
+ShaderPipeline::ShaderPipeline()
 {
-	const auto path = std_fs::path("_internal") / shader_name;
+	CreateSamplers();
 
-	const auto maybe_shader = ShaderManager::GetInstance().LoadShader(
-	        path.string());
-
-	if (!maybe_shader) {
-		E_Exit("OPENGL: Cannot load shader pass '%s' shader, exiting",
-		       path.string().c_str());
-	}
-
-	ShaderPass pass = pass_params;
-
-	pass.id          = ShaderPassId::ImageAdjustments;
-	pass.out_texture = 0;  // will be set later
-	pass.viewport    = {}; // will be set later
-
-	glGenFramebuffers(1, &pass.out_fbo);
-
-	pass.shader = *maybe_shader;
-
-	shader_passes.push_back(pass);
+	// The pipeline will be created lazily once we've received all necessary
+	// information via notifications. IsPipelineComplete() will return true
+	// when we're ready to create the pipeline.
 }
 
 ShaderPipeline::~ShaderPipeline()
 {
-	for (auto& pass : shader_passes) {
-		if (pass.out_texture) {
-			glDeleteTextures(1, &pass.out_texture);
-			pass.out_texture = 0;
-		}
-		glDeleteFramebuffers(1, &pass.out_fbo);
+	DestroyPipeline();
+	DestroySamplers();
+}
+
+void ShaderPipeline::CreateSamplers()
+{
+	glGenSamplers(1, &nearest_sampler);
+	glSamplerParameteri(nearest_sampler, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+	glSamplerParameteri(nearest_sampler, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+	glSamplerParameteri(nearest_sampler, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+	glSamplerParameteri(nearest_sampler, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+
+	glGenSamplers(1, &linear_sampler);
+	glSamplerParameteri(linear_sampler, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glSamplerParameteri(linear_sampler, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glSamplerParameteri(linear_sampler, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+	glSamplerParameteri(linear_sampler, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+}
+
+void ShaderPipeline::DestroySamplers()
+{
+	if (nearest_sampler) {
+		glDeleteSamplers(1, &nearest_sampler);
+		nearest_sampler = 0;
+	}
+	if (linear_sampler) {
+		glDeleteSamplers(1, &linear_sampler);
+		linear_sampler = 0;
 	}
 }
 
-void ShaderPipeline::NotifyViewportSizeChanged(const DosBox::Rect draw_rect_px)
+bool ShaderPipeline::IsPipelineComplete() const
 {
-	auto& pass    = GetShaderPass(ShaderPassId::Main);
-	pass.viewport = draw_rect_px;
+	return (video_mode.width > 0 && video_mode.height > 0 &&
+	        !input_texture.size.IsEmpty() && !viewport.IsEmpty() && main_shader);
+}
 
-	for (auto it = shader_passes.begin(); it != shader_passes.end(); ++it) {
-		UpdateTextureUniforms(it);
+void ShaderPipeline::NotifyViewportSizeChanged(const DosBox::Rect& new_viewport)
+{
+	if (viewport == new_viewport) {
+		return;
 	}
 
-	UpdateMainShaderPassUniforms();
+	viewport = new_viewport;
+
+	if (IsPipelineComplete()) {
+		DestroyPipeline();
+		CreatePipeline();
+	}
 }
 
 void ShaderPipeline::NotifyRenderSizeChanged(const int input_texture_width,
                                              const int input_texture_height,
-                                             const GLuint _input_texture)
+                                             const GLuint new_input_texture)
 {
-	input_texture.width   = input_texture_width;
-	input_texture.height  = input_texture_height;
-	input_texture.texture = _input_texture;
+	if ((ifloor(input_texture.size.w) == input_texture_width) &&
+	    (ifloor(input_texture.size.h) == input_texture_height) &&
+	    (input_texture.texture == new_input_texture)) {
+		return;
+	}
 
+	input_texture.size    = {input_texture_width, input_texture_height};
+	input_texture.texture = new_input_texture;
+
+	if (IsPipelineComplete()) {
+		DestroyPipeline();
+		CreatePipeline();
+	}
+}
+
+void ShaderPipeline::NotifyVideoModeChanged(const VideoMode& new_video_mode)
+{
+	if (video_mode == new_video_mode) {
+		return;
+	}
+
+	video_mode = new_video_mode;
+
+	if (IsPipelineComplete()) {
+		DestroyPipeline();
+		CreatePipeline();
+	}
+}
+
+void ShaderPipeline::CreatePipeline()
+{
+	assert(IsPipelineComplete());
+
+	LoadAndAddInternalPasses();
+
+	SetPassOutputSizes();
+	CreatePassOutputTextures();
+
+	// Update uniforms
+	UpdatePassTextureUniforms();
+	UpdateMainShaderPassUniforms();
+	UpdateImageAdjustmentsPassUniforms();
+
+	if (config.dedithering_enabled) {
+		UpdateDeditherPassUniforms();
+	}
+}
+
+void ShaderPipeline::LoadAndAddInternalPasses()
+{
+	if (config.dedithering_enabled) {
+		// Resize the input image (the rendered image) to the size of
+		// the video mode. This can perform width and/or halving.
+		LoadAndAddInternalPassOrExit("integer-downscale");
+
+		// Checkerboard dedither
+		LoadAndAddInternalPassOrExit("checkerboard-dedither-linearize");
+		LoadAndAddInternalPassOrExit("checkerboard-dedither-pass1");
+		LoadAndAddInternalPassOrExit("checkerboard-dedither-pass2");
+		LoadAndAddInternalPassOrExit("checkerboard-dedither-pass3");
+	}
+
+	// The image adjustments pass is always the first; it cannot be disabled
+	// as it performs the colour space transforms as well.
+	LoadAndAddInternalPassOrExit("image-adjustments");
+
+	if (config.dedithering_enabled) {
+		// Resize the image to the size of the rendered imge. This can
+		// perform width and/or doubling.
+		LoadAndAddInternalPassOrExit("integer-upscale");
+	}
+
+	// Main shader pass (e.g., a CRT shader, the sharp shader, an upscaler,
+	// etc.)
+	ShaderPass main_pass1            = {};
+	main_pass1.shader.info.pass_name = "Main_Pass1";
+
+	assert(main_shader);
+	main_pass1.shader = *main_shader;
+
+	shader_passes.push_back(main_pass1);
+}
+
+void ShaderPipeline::SetPassOutputSizes()
+{
 	for (auto it = shader_passes.begin(); it != shader_passes.end(); ++it) {
 		auto& pass = *it;
 
-		if (pass.out_fbo != 0) {
-			if (pass.out_texture) {
-				glDeleteTextures(1, &pass.out_texture);
+		auto [width, height] = [&]() -> std::pair<float, float> {
+			using enum ShaderOutputSize;
+			switch (pass.shader.info.output_size) {
+			case Previous: {
+				const auto [_, size] = GetPreviousPassOutputTexture(it);
+				return {size.w, size.h};
 			}
 
+			case Rendered:
+				return {input_texture.size.w, input_texture.size.h};
+
+			case VideoMode:
+				return {video_mode.width, video_mode.height};
+
+			case Viewport: return {viewport.w, viewport.h};
+
+			default:
+				assertm(false, "Invalid ShaderOutputSize value");
+				return {};
+			}
+		}();
+
+		if (std::next(it) == shader_passes.end()) {
+			// The last pass is rendered directly to the window's
+			// framebuffer
+			pass.out_size = viewport;
+		} else {
+			pass.out_size = {width, height};
+		}
+	}
+}
+
+void ShaderPipeline::CreatePassOutputTextures()
+{
+	for (auto it = shader_passes.begin(); it != shader_passes.end(); ++it) {
+		auto& pass = *it;
+
+		// The last pass is rendered directly to the window's
+		// framebuffer, so we don't need to create an output texture for
+		// it
+		if (std::next(it) != shader_passes.end()) {
+
+			// Create output texture
 			const auto& preset = pass.shader.info.default_preset;
 
-			pass.out_texture = CreateTexture(input_texture.width,
-			                                 input_texture.height,
-			                                 preset.settings.texture_filter_mode);
-
-			pass.viewport = {0,
-			                 0,
-			                 input_texture.width,
-			                 input_texture.height};
+			pass.out_texture = CreateTexture(pass.out_size,
+			                                 preset.settings.float_output_texture);
 
 			// Set up off-screen framebuffer
+			glGenFramebuffers(1, &pass.out_fbo);
 			glBindFramebuffer(GL_FRAMEBUFFER, pass.out_fbo);
 
 			glFramebufferTexture2D(GL_FRAMEBUFFER,
@@ -127,15 +263,44 @@ void ShaderPipeline::NotifyRenderSizeChanged(const int input_texture_width,
 			}
 			glBindFramebuffer(GL_FRAMEBUFFER, 0);
 		}
-
-		UpdateTextureUniforms(it);
 	}
-
-	UpdateMainShaderPassUniforms();
 }
 
-GLuint ShaderPipeline::CreateTexture(const int width, const int height,
-                                     const TextureFilterMode filter_mode) const
+void ShaderPipeline::LoadAndAddInternalPassOrExit(const std::string& shader_name)
+{
+	const auto path = std_fs::path("_internal") / shader_name;
+
+	const auto maybe_shader = ShaderManager::GetInstance().LoadShader(
+	        path.string());
+
+	if (!maybe_shader) {
+		E_Exit("OPENGL: Cannot load shader pass '%s' shader, exiting",
+		       path.string().c_str());
+	}
+
+	ShaderPass pass = {};
+	pass.shader     = *maybe_shader;
+
+	shader_passes.push_back(pass);
+}
+
+void ShaderPipeline::DestroyPipeline()
+{
+	for (auto& pass : shader_passes) {
+		if (pass.out_texture != 0) {
+			glDeleteTextures(1, &pass.out_texture);
+			pass.out_texture = 0;
+		}
+		if (pass.out_fbo != 0) {
+			glDeleteFramebuffers(1, &pass.out_fbo);
+		}
+	}
+
+	shader_passes.clear();
+}
+
+GLuint ShaderPipeline::CreateTexture(const DosBox::Rect& size,
+                                     const bool float_texture) const
 {
 	GLuint texture = 0;
 
@@ -144,20 +309,25 @@ GLuint ShaderPipeline::CreateTexture(const int width, const int height,
 	glActiveTexture(GL_TEXTURE0);
 	glBindTexture(GL_TEXTURE_2D, texture);
 
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
 
-	SetTextureFiltering(texture, filter_mode);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+
+	const auto internal_format = (float_texture ? GL_RGBA32F : GL_RGBA8);
+	const auto pixel_data_type = (float_texture ? GL_FLOAT : GL_UNSIGNED_BYTE);
 
 	glTexImage2D(GL_TEXTURE_2D,
-	             0,         // mimap level (0 = base image)
-	             GL_RGB32F, // internal format
-	             width,     // width
-	             height,    // height
-	             0,         // border (must be always 0)
-	             GL_BGRA,   // pixel data format
-	             GL_FLOAT,  // pixel data type
-	             nullptr);  // pointer to image data
+	             0, // mimap level (0 = base image)
+	             internal_format,
+	             static_cast<GLsizei>(size.w), // width
+	             static_cast<GLsizei>(size.h), // height
+	             0,                            // border (must be always 0)
+	             GL_BGRA,                      // pixel data format
+	             pixel_data_type,
+	             nullptr // pointer to image data
+	);
 
 	glBindTexture(GL_TEXTURE_2D, 0);
 
@@ -166,72 +336,85 @@ GLuint ShaderPipeline::CreateTexture(const int width, const int height,
 
 void ShaderPipeline::SetMainShader(const Shader& shader)
 {
-	auto& main_pass  = GetShaderPass(ShaderPassId::Main);
-	main_pass.shader = shader;
-
+	main_shader        = shader;
 	main_shader_preset = shader.info.default_preset;
 
-	// The texture filtering mode might have changed
-	const auto& pass = GetShaderPass(ShaderPassId::ImageAdjustments);
-
-	SetTextureFiltering(pass.out_texture,
-	                    main_shader_preset.settings.texture_filter_mode);
-
-	UpdateMainShaderPassUniforms();
+	if (IsPipelineComplete()) {
+		DestroyPipeline();
+		CreatePipeline();
+	}
 }
 
 void ShaderPipeline::SetMainShaderPreset(const ShaderPreset& preset)
 {
 	main_shader_preset = preset;
-	UpdateMainShaderPassUniforms();
+
+	if (IsPipelineComplete()) {
+		UpdateMainShaderPassUniforms();
+	}
 }
 
 void ShaderPipeline::SetColorSpace(const ColorSpace _color_space)
 {
 	color_space = _color_space;
-	UpdateImageAdjustmentsPassUniforms();
+
+	if (IsPipelineComplete()) {
+		UpdateImageAdjustmentsPassUniforms();
+	}
 }
 
 void ShaderPipeline::EnableImageAdjustments(const bool enable)
 {
 	enable_image_adjustments = enable;
-	UpdateImageAdjustmentsPassUniforms();
+
+	if (IsPipelineComplete()) {
+		UpdateImageAdjustmentsPassUniforms();
+	}
 }
 
 void ShaderPipeline::SetImageAdjustmentSettings(const ImageAdjustmentSettings& settings)
 {
 	image_adjustment_settings = settings;
-	UpdateImageAdjustmentsPassUniforms();
+
+	if (IsPipelineComplete()) {
+		UpdateImageAdjustmentsPassUniforms();
+	}
 }
 
-void ShaderPipeline::SetTextureFiltering(const GLuint texture,
-                                         const TextureFilterMode filter_mode) const
+void ShaderPipeline::SetDeditheringStrength(const float strength)
 {
-	glBindTexture(GL_TEXTURE_2D, texture);
+	dedithering_strength = strength;
 
-	const int filter_param = [&] {
-		switch (filter_mode) {
-		case TextureFilterMode::NearestNeighbour: return GL_NEAREST;
-		case TextureFilterMode::Bilinear: return GL_LINEAR;
-		default: assertm(false, "Invalid TextureFilterMode"); return 0;
-		}
-	}();
+	if (!IsPipelineComplete()) {
+		return;
+	}
 
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter_param);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter_param);
+	const auto enable_dedithering = (strength > 0.0f);
+
+	if (config.dedithering_enabled != enable_dedithering) {
+		config.dedithering_enabled = enable_dedithering;
+
+		DestroyPipeline();
+		CreatePipeline();
+
+	} else if (config.dedithering_enabled) {
+		UpdateDeditherPassUniforms();
+	}
 }
 
 void ShaderPipeline::Render(const GLuint vertex_array_object) const
 {
+	assert(IsPipelineComplete());
+
 	for (const auto& pass : shader_passes) {
 		RenderPass(pass, vertex_array_object);
 	}
 }
 
-ShaderPass& ShaderPipeline::GetShaderPass(const ShaderPassId id)
+ShaderPass& ShaderPipeline::GetShaderPass(const std::string& name)
 {
 	for (auto& pass : shader_passes) {
-		if (pass.id == id) {
+		if (pass.shader.info.pass_name == name) {
 			return pass;
 		}
 	}
@@ -252,13 +435,30 @@ void ShaderPipeline::RenderPass(const ShaderPass& pass,
 	for (size_t i = 0; i < pass.in_textures.size(); ++i) {
 		glActiveTexture(GL_TEXTURE0 + check_cast<GLenum>(i));
 		glBindTexture(GL_TEXTURE_2D, pass.in_textures[i]);
+
+		// Bind sampler with the requested filter mode to the texture unit
+		const auto& preset = pass.shader.info.default_preset;
+
+		const auto texture_unit = check_cast<GLuint>(i);
+
+		switch (preset.settings.texture_filter_mode) {
+		case TextureFilterMode::NearestNeighbour:
+			glBindSampler(texture_unit, nearest_sampler);
+			break;
+
+		case TextureFilterMode::Bilinear:
+			glBindSampler(texture_unit, linear_sampler);
+			break;
+
+		default: assertm(false, "Invalid TextureFilterMode");
+		}
 	}
 
 	// Set up viewport
-	glViewport(static_cast<GLsizei>(pass.viewport.x),
-	           static_cast<GLsizei>(pass.viewport.y),
-	           static_cast<GLsizei>(pass.viewport.w),
-	           static_cast<GLsizei>(pass.viewport.h));
+	glViewport(static_cast<GLsizei>(pass.out_size.x),
+	           static_cast<GLsizei>(pass.out_size.y),
+	           static_cast<GLsizei>(pass.out_size.w),
+	           static_cast<GLsizei>(pass.out_size.h));
 
 	// Apply shader by drawing an oversized triangle
 	glBindVertexArray(vertex_array_object);
@@ -272,32 +472,24 @@ void ShaderPipeline::RenderPass(const ShaderPass& pass,
 
 void ShaderPipeline::UpdateTextureUniforms(const std::vector<ShaderPass>::iterator pass) const
 {
-	glUseProgram(pass->shader.program_object);
+	const auto shader = pass->shader;
+
+	glUseProgram(shader.program_object);
 
 	pass->in_textures.clear();
 
-	for (size_t i = 0; i < pass->in_texture_ids.size(); ++i) {
-		const auto pass_id = pass->in_texture_ids[i];
+	for (size_t i = 0; i < shader.info.input_ids.size(); ++i) {
+		const auto pass_id = shader.info.input_ids[i];
 
-		GLfloat width     = 0;
-		GLfloat height    = 0;
-		GLuint in_texture = 0;
+		GLuint in_texture            = 0;
+		DosBox::Rect in_texture_size = {};
 
-		if (pass_id == ShaderPassId::Previous) {
-			if (pass == shader_passes.begin()) {
-				width = static_cast<GLfloat>(input_texture.width);
-				height = static_cast<GLfloat>(input_texture.height);
+		if (pass_id == "Previous") {
+			const auto [texture,
+			            size] = GetPreviousPassOutputTexture(pass);
 
-				in_texture = input_texture.texture;
-
-			} else {
-				const auto prev_pass = std::prev(pass);
-				width = static_cast<GLfloat>(prev_pass->viewport.w);
-				height = static_cast<GLfloat>(
-				        prev_pass->viewport.h);
-
-				in_texture = prev_pass->out_texture;
-			}
+			in_texture      = texture;
+			in_texture_size = size;
 
 		} else {
 			// Only specifying the outputs of previous passes is
@@ -309,43 +501,64 @@ void ShaderPipeline::UpdateTextureUniforms(const std::vector<ShaderPass>::iterat
 				it = std::prev(it);
 
 				const auto p = *it;
-				if (p.id == pass_id) {
-					width = static_cast<GLfloat>(p.viewport.w);
-					height = static_cast<GLfloat>(p.viewport.h);
-
-					in_texture = p.out_texture;
+				if (p.shader.info.pass_name == pass_id) {
+					in_texture      = p.out_texture;
+					in_texture_size = p.out_size;
 
 					found = true;
 					break;
 				}
 			}
 			if (!found) {
-				assertm(false,
-				        format_str("Invalid shader pass ID for input texture %d: %d",
-				                   i,
-				                   pass_id));
+				LOG_ERR("RENDER: Invalid shader pass ID for input texture %zu: %s",
+				        i,
+				        pass_id.c_str());
+				return;
 			}
 		}
 
-		const auto input_texture_name = format_str("INPUT_TEXTURE_%d", i);
-		pass->shader.SetUniform1i(input_texture_name.c_str(),
+		const auto in_texture_name = format_str("INPUT_TEXTURE_%d", i);
+		pass->shader.SetUniform1i(in_texture_name.c_str(),
 		                          check_cast<GLint>(i));
 
-		const auto input_texture_size_name = format_str("INPUT_TEXTURE_SIZE_%d",
-		                                                i);
-		pass->shader.SetUniform2f(input_texture_size_name.c_str(), width, height);
+		const auto in_texture_size_name = format_str("INPUT_TEXTURE_SIZE_%d",
+		                                             i);
+
+		pass->shader.SetUniform2f(in_texture_size_name.c_str(),
+		                          in_texture_size.w,
+		                          in_texture_size.h);
 
 		pass->in_textures.emplace_back(in_texture);
 	}
 
-	pass->shader.SetUniform2f("OUTPUT_TEXTURE_SIZE",
-	                          pass->viewport.w,
-	                          pass->viewport.h);
+	shader.SetUniform2f("OUTPUT_TEXTURE_SIZE",
+	                    pass->out_size.w,
+	                    pass->out_size.h);
+}
+
+void ShaderPipeline::UpdatePassTextureUniforms()
+{
+	for (auto it = shader_passes.begin(); it != shader_passes.end(); ++it) {
+		UpdateTextureUniforms(it);
+	}
+}
+
+std::pair<GLuint, DosBox::Rect> ShaderPipeline::GetPreviousPassOutputTexture(
+        const std::vector<ShaderPass>::iterator pass) const
+{
+	if (pass == shader_passes.begin()) {
+		return {input_texture.texture, input_texture.size};
+
+	} else {
+		const auto prev_pass = std::prev(pass);
+
+		return {prev_pass->out_texture, prev_pass->out_size};
+	}
 }
 
 void ShaderPipeline::UpdateMainShaderPassUniforms()
 {
-	auto& pass         = GetShaderPass(ShaderPassId::Main);
+	const auto& pass   = GetShaderPass("Main_Pass1");
 	const auto& shader = pass.shader;
 
 	glUseProgram(shader.program_object);
@@ -357,7 +570,7 @@ void ShaderPipeline::UpdateMainShaderPassUniforms()
 
 void ShaderPipeline::UpdateImageAdjustmentsPassUniforms()
 {
-	auto& pass         = GetShaderPass(ShaderPassId::ImageAdjustments);
+	const auto& pass   = GetShaderPass("ImageAdjustments");
 	const auto& s      = image_adjustment_settings;
 	const auto& shader = pass.shader;
 
@@ -381,8 +594,7 @@ void ShaderPipeline::UpdateImageAdjustmentsPassUniforms()
 	shader.SetUniform1f("BLACK_LEVEL", s.black_level);
 	shader.SetUniform1f("SATURATION", s.saturation);
 
-	shader.SetUniform1f("COLOR_TEMPERATURE_KELVIN",
-	                    static_cast<float>(s.color_temperature_kelvin));
+	shader.SetUniform1f("COLOR_TEMPERATURE_KELVIN", s.color_temperature_kelvin);
 
 	shader.SetUniform1f("COLOR_TEMPERATURE_LUMA_PRESERVE",
 	                    s.color_temperature_luma_preserve);
@@ -390,4 +602,48 @@ void ShaderPipeline::UpdateImageAdjustmentsPassUniforms()
 	shader.SetUniform1f("RED_GAIN", s.red_gain);
 	shader.SetUniform1f("GREEN_GAIN", s.green_gain);
 	shader.SetUniform1f("BLUE_GAIN", s.blue_gain);
+}
+
+void ShaderPipeline::UpdateDeditherPassUniforms()
+{
+	static std::vector<std::string> names = {"CheckerboardDedither_Linearize",
+	                                         "CheckerboardDedither_Pass1",
+	                                         "CheckerboardDedither_Pass2",
+	                                         "CheckerboardDedither_Pass3"};
+
+	for (const auto& name : names) {
+		const auto& pass   = GetShaderPass(name);
+		const auto& shader = pass.shader;
+
+		glUseProgram(shader.program_object);
+
+		// Always on (we set the strength to zero, or remove the
+		// dedithering passes from the pipeline to disable it)
+		//
+		shader.SetUniform1f("CD_BLEND_OPTION", 1.0f);
+
+		// Enable gamma correction to ensure correct luminosity of the
+		// dedithered areas (one way to test this is to A/B compare the
+		// original and deithered images while squinting; the dithered
+		// areas should have the same perceptual brightness in both
+		// images).
+		//
+		shader.SetUniform1f("CD_USE_GAMMA", 1.0f);
+
+		// We just use the blend factor to set the dedithering "strength".
+		shader.SetUniform1f("CD_BLEND_LEVEL", dedithering_strength);
+
+		// These options yield the best results for typical dither
+		// patterns in DOS games. Enabling CD_MITIG_LINES is important
+		// to ensure sharp 1px text and 45-degree diagonals. Raising
+		// CD_MITIG_NEIGHBOURS above 1.0 only results in more stray
+		// pixels in non-checkerboard dither patterns, so 1.0 is ideal.
+		//
+		shader.SetUniform1f("CD_MITIG_NEIGHBOURS", 1.0f);
+		shader.SetUniform1f("CD_MITIG_LINES", 1.0f);
+
+		// Always off (this is a diagnostic option to show the
+		// only dedithering mask).
+		shader.SetUniform1f("CD_ADJUST_VIEW", 0.0f);
+	}
 }
