@@ -1635,8 +1635,8 @@ void SHELL_AlternativeRun()
     image_info.video_mode.is_double_scanned_mode = true;
     image_info.video_mode.pixel_aspect_ratio = Fraction(1, 1);
     vga.draw.lines_scaled = 1;
-    RENDER_SetSize(image_info, 60.);
     VGA_SetupDrawing(0);
+    RENDER_SetSize(image_info, 60.);
 
     shell_networkinit = false;
 
