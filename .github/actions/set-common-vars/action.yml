@@ -3,7 +3,7 @@ name: Set common env vars
 # Assumes the repo has already been checked out
 
 runs:
-  using: "composite"
+  using: composite
   steps:
     - name: Set version vars
       shell: bash
@@ -17,4 +17,4 @@ runs:
         echo "NUKED_SC55_CLAP_VERSION=v0.11.0" >> $GITHUB_ENV
 
         # For release notes generation - set to previous release publish time
-        echo "RELEASE_START_TIME=2024-10-23T07:37:53Z" >> $GITHUB_ENV
+        echo "RELEASE_START_TIME=2026-05-11T00:00:00Z" >> $GITHUB_ENV

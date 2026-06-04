@@ -12,6 +12,7 @@
 /*
 
 #pragma name        CheckerboardDedither_Pass1
+#pragma wrap_mode0  ClampToEdge
 #pragma output_size VideoMode
 
 #pragma linear_filtering off
@@ -53,7 +54,7 @@ in vec2 v_texCoord;
 
 out vec4 FragColor;
 
-uniform vec2 INPUT_TEXTURE_SIZE_0;
+uniform vec2 INPUT_SIZE_0;
 uniform sampler2D INPUT_TEXTURE_0;
 
 uniform float CD_BLEND_OPTION;
@@ -61,17 +62,17 @@ uniform float CD_BLEND_LEVEL;
 
 void main()
 {
-	vec2 ps = vec2(1.0) / INPUT_TEXTURE_SIZE_0.xy;
+	vec2 ps = vec2(1.0) / INPUT_SIZE_0.xy;
 
 	vec2 dx = vec2(1.0, 0.0) * ps.xy;
 	vec2 dy = vec2(0.0, 1.0) * ps.xy;
 
 	// Reading the texels
-	vec3 C  = texture(INPUT_TEXTURE_0, v_texCoord).xyz;
-	vec3 L  = texture(INPUT_TEXTURE_0, v_texCoord - dx).xyz;
-	vec3 R  = texture(INPUT_TEXTURE_0, v_texCoord + dx).xyz;
-	vec3 U  = texture(INPUT_TEXTURE_0, v_texCoord - dy).xyz;
-	vec3 D  = texture(INPUT_TEXTURE_0, v_texCoord + dy).xyz;
+	vec3 C = texture(INPUT_TEXTURE_0, v_texCoord).xyz;
+	vec3 L = texture(INPUT_TEXTURE_0, v_texCoord - dx).xyz;
+	vec3 R = texture(INPUT_TEXTURE_0, v_texCoord + dx).xyz;
+	vec3 U = texture(INPUT_TEXTURE_0, v_texCoord - dy).xyz;
+	vec3 D = texture(INPUT_TEXTURE_0, v_texCoord + dy).xyz;
 
 	vec3 color = C;
 

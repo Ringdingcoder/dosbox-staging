@@ -4,6 +4,7 @@
 
 # Other
 compile
+documentation
 build.log
 clean.log
 make.log
@@ -12,9 +13,8 @@ make.log
 *.defines
 missed.txt
 
-# Common names for meson build dirs
+# Default CMake build dir
 /build
-/builddir
 
 # VCPKG
 vcpkg_installed
@@ -97,3 +97,6 @@ cmake-build-*/
 
 # VS Code CMake Tools test discovery cache
 cmake_test_discovery_*.json
+
+# Python
+__pycache__

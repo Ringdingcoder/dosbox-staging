@@ -116,7 +116,9 @@ static Bitu normal_loop()
 
 	while (true) {
 		if (PIC_RunQueue()) {
-			Webserver::DebugBridge::Instance().ProcessRequests();
+			if (WEBSERVER_IsEnabled()) {
+				Webserver::Bridge::Instance().ProcessRequests();
+			}
 
 			ret = (*cpudecoder)();
 			if (ret < 0) {
@@ -415,22 +417,23 @@ void DOSBOX_SetNormalLoop()
 	loop = normal_loop;
 }
 
-static bool is_shutdown_requested = false;
+static std::atomic<bool> is_shutdown_requested = false;
 
 void DOSBOX_RunMachine()
 {
-	while ((*loop)() == 0 && !is_shutdown_requested)
-		;
+	while ((*loop)() == 0 &&
+	       !is_shutdown_requested.load(std::memory_order_relaxed)) {
+	};
 }
 
 void DOSBOX_RequestShutdown()
 {
-	is_shutdown_requested = true;
+	is_shutdown_requested.store(true, std::memory_order_relaxed);
 }
 
 bool DOSBOX_IsShutdownRequested()
 {
-	return is_shutdown_requested;
+	return is_shutdown_requested.load(std::memory_order_relaxed);
 }
 
 static void DOSBOX_UnlockSpeed(bool pressed)

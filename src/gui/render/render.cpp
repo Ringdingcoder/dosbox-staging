@@ -879,7 +879,7 @@ void RENDER_SetSize(const ImageInfo& image_info, const double frames_per_second)
 // The same reasoning applies to nearest-neighbour interpolation in texture
 // output mode.
 //
-static void set_scan_and_pixel_doubling()
+void RENDER_SetScanAndPixelDoubling()
 {
 	bool force_vga_single_scan   = false;
 	bool force_no_pixel_doubling = false;
@@ -907,6 +907,7 @@ static void set_scan_and_pixel_doubling()
 	VGA_AllowPixelDoubling(!force_no_pixel_doubling);
 }
 
+static ColorSpace curr_color_space                            = {};
 static ImageAdjustmentSettings curr_image_adjustment_settings = {};
 
 static void set_image_adjustment_settings()
@@ -987,6 +988,7 @@ static void handle_auto_image_adjustment_settings(const VideoMode& video_mode)
 	        AutoImageAdjustmentsManager::GetInstance().GetSettings(
 	                machine,
 	                video_mode,
+	                curr_color_space,
 	                GFX_GetRenderer()->GetCurrentShaderDescriptor());
 
 	if (maybe_auto_settings) {
@@ -1020,8 +1022,8 @@ static void handle_auto_image_adjustment_settings(const VideoMode& video_mode)
 				        settings.black_level;
 				set_image_adjustment_settings();
 
-				LOG_INFO("RENDER: Auto-switched to %g black level",
-				         settings.black_level);
+				LOG_INFO("RENDER: Auto-switched to %d black level",
+				         iround(settings.black_level * 100));
 			}
 		}
 
@@ -1061,7 +1063,7 @@ static bool handle_shader_auto_switching(const VideoMode& video_mode,
 		return false;
 	}
 
-	set_scan_and_pixel_doubling();
+	RENDER_SetScanAndPixelDoubling();
 
 	if (reinit_renderer) {
 		// No need to reinit the renderer if the double scaning
@@ -1134,11 +1136,11 @@ static bool set_shader(const std::string& descriptor)
 		                      descriptor.c_str(),
 		                      ShaderName::Sharp);
 
-		set_scan_and_pixel_doubling();
+		RENDER_SetScanAndPixelDoubling();
 		return true;
 
 	case Ok:
-		set_scan_and_pixel_doubling();
+		RENDER_SetScanAndPixelDoubling();
 		handle_auto_image_adjustment_settings(VGA_GetCurrentVideoMode());
 		set_image_adjustment_settings();
 		return true;
@@ -1188,7 +1190,7 @@ static void reload_shader([[maybe_unused]] const bool pressed)
 
 	GFX_GetRenderer()->ForceReloadCurrentShader();
 
-	set_scan_and_pixel_doubling();
+	RENDER_SetScanAndPixelDoubling();
 
 	// The shader settings might have been changed (e.g. force_single_scan,
 	// force_no_pixel_doubling), so force re-rendering the image using the
@@ -1518,9 +1520,9 @@ static void set_deinterlacing(const SectionProp& section)
 {
 	using enum DeinterlacingStrength;
 
-	render.deinterlacing_strength = [&]() {
-		const std::string pref = section.GetStringLowCase("deinterlacing");
+	const std::string pref = section.GetStringLowCase("deinterlacing");
 
+	render.deinterlacing_strength = [&]() {
 		if (has_false(pref)) {
 			return Off;
 
@@ -1553,6 +1555,11 @@ static void set_deinterlacing(const SectionProp& section)
 			return Off;
 		}
 	}();
+
+	LOG_INFO("RENDER: Deinterlacing %s",
+	         (render.deinterlacing_strength == Off)
+	                 ? "disabled"
+	                 : format_str("enabled ('%s' strength)", pref.c_str()).c_str());
 }
 
 constexpr int DeditheringStrengthMin = 0;
@@ -1607,7 +1614,15 @@ static float get_dedithering_strength()
 
 static void set_dedithering()
 {
-	GFX_GetRenderer()->SetDeditheringStrength(get_dedithering_strength());
+	const auto strength = get_dedithering_strength();
+
+	GFX_GetRenderer()->SetDeditheringStrength(strength);
+
+	LOG_INFO("RENDER: Dedithering %s",
+	         (strength == 0.0f) ? "disabled"
+	                            : format_str("enabled (%d strength)",
+	                                         iround(strength * 100))
+	                                      .c_str());
 }
 
 DosBox::Rect RENDER_CalcRestrictedViewportSizeInPixels(const DosBox::Rect& canvas_size_px)
@@ -1742,9 +1757,9 @@ DosBox::Rect RENDER_CalcDrawRectInPixels(const DosBox::Rect& canvas_size_px,
 			        integer_scale_factor);
 		}
 
-		// Handles the `sharp` shader fallback when the viewport
-		// is is too small for CRT shaders; integer scaling is
-		// then disabled.
+		// Non-CRT shader (including the `sharp` shader fallback
+		// when the viewport is too small for CRT shaders);
+		// integer scaling is then disabled.
 		return draw_size_fit_px;
 	};
 
@@ -1964,10 +1979,6 @@ static void init_render_settings(SectionProp& section)
 	        "             aspect ratios (this is less of an issue on high resolution\n"
 	        "             monitors).\n"
 	        "\n"
-	        "  jinc2:     Upscale the image using jinc 2-lobe interpolation with anti-ringing.\n"
-	        "             This blends together dithered color patterns at the cost of image\n"
-	        "             sharpness.\n"
-	        "\n"
 	        "Start DOSBox Staging with the '--list-shaders' command line option to see the\n"
 	        "full list of available shaders. You can also use an absolute or relative path to\n"
 	        "a file. In all cases, you may omit the shader's '.glsl' file extension.");
@@ -2014,19 +2025,22 @@ static void init_render_settings(SectionProp& section)
 	        "other dimension. If the image is larger than the viewport, the integer scaling\n"
 	        "constraint is auto-disabled (same as 'off'). Possible values:\n"
 	        "\n"
-	        "  auto:        A special vertical mode auto-enabled only for the adaptive CRT\n"
-	        "               shaders (see `shader`). This mode has refinements over standard\n"
-	        "               vertical integer scaling: 3.5x and 4.5x scaling factors are also\n"
-	        "               allowed, and integer scaling is disabled above 5.0x scaling.\n"
+	        "  auto:        A special vertical mode auto-enabled only for the CRT shaders\n"
+	        "               (see `shader`). This mode has refinements over standard vertical\n"
+	        "               integer scaling: 3.5x and 4.5x scaling factors are also allowed,\n"
+	        "               and integer scaling is disabled above 5.0x scaling.\n"
 	        "\n"
-	        "  vertical:    Constrain the vertical scaling factor to integer values.\n"
-	        "               This is the recommended setting for third-party shaders to avoid\n"
-	        "               uneven scanlines and interference artifacts.\n"
+	        "  vertical:    Constrain the vertical scaling factor to integer values. This is\n"
+	        "               the recommended setting for 3rd party CRT shaders with scanline\n"
+	        "               simulation to avoid uneven scanlines and interference artifacts.\n"
+	        "               For the built-in CRT shaders, use 'auto'.\n"
 	        "\n"
-	        "  horizontal:  Constrain the horizontal scaling factor to integer values.\n"
+	        "  horizontal:  Constrain the horizontal scaling factor to integer values. Might\n"
+	        "               be useful on low-resolution displays to optimise for horizontal\n"
+	        "               text sharpness.\n"
 	        "\n"
-	        "  off:         No integer scaling constraint is applied; the image fills the\n"
-	        "               viewport while maintaining the configured aspect ratio.");
+	        "  off:         Apply no integer scaling constraint; the image fills the viewport\n"
+	        "               while maintaining the configured aspect ratio.");
 
 	string_prop = section.AddString("viewport", Always, "fit");
 	string_prop->SetHelp(
@@ -2173,30 +2187,38 @@ static void init_render_settings(SectionProp& section)
 	        {"auto", "none", "ebu", "p22", "smpte-c", "philips", "trinitron"});
 	string_prop->SetHelp(
 	        "Set a CRT colour profile for more authentic video output emulation ('auto' by\n"
-	        "default). All profiles have a built-in colour temperature (white point) that you\n"
-	        "can tweak further with the 'color_temperature' setting. Possible values:\n"
+	        "default). Possible values:\n"
 	        "\n"
-	        "  auto:       Select an authentic colour profile for adaptive CRT shaders;\n"
-	        "              for any other shader, use 'none' (default).\n"
+	        "  auto:       Select an authentic colour profile appropriate for the currently\n"
+	        "              active adaptive CRT shader (e.g. 'crt-auto'), or the current\n"
+	        "              machine type for regular shaders (e.g., 'sharp').\n"
 	        "\n"
 	        "  none:       Display raw colours without any colour profile transforms.\n"
 	        "\n"
 	        "  ebu:        EBU standard phosphor emulation, used in high-end professional CRT\n"
-	        "              monitors, such as the Sony BVM/PVM series (6500K white point).\n"
+	        "              monitors, such as the Sony BVM/PVM series.\n"
 	        "\n"
-	        "  p22:        P22 phosphor emulation, the most commonly used in lower-end CRT\n"
-	        "              monitors (6500K white point).\n"
+	        "  p22:        P22 phosphor emulation, most commonly used in lower-end CRT\n"
+	        "              monitors.\n"
 	        "\n"
 	        "  smpte-c:    SMPT \"C\" phosphor emulation, the standard for American broadcast\n"
-	        "              video monitors (6500K white point).\n"
+	        "              video monitors.\n"
 	        "\n"
 	        "  philips:    Philips CRT monitor colours typical to 15 kHz home computer\n"
-	        "              monitors, such as the Commodore 1084S (~6100K white point).\n"
-	        "              Needs a wide gamut DCI-P3 display for the best results.\n"
+	        "              monitors (e.g. the Commodore 1084S). The intended use of this\n"
+	        "              profile is with 'color_temperature' set to 6500. The output then\n"
+	        "              will look yellowish due to the ~6100 K colour temperature typical\n"
+	        "              to Philips CRTs \"baked into\" this profile. You can still tweak \n"
+	        "              'color_temperature' to adjust the white balance. Needs a wide\n"
+	        "              gamut DCI-P3 display for the most accurate results.\n"
 	        "\n"
-	        "  trinitron:  Typical Sony Trinitron CRT TV and monitor colours (~9300K\n"
-	        "              white point). Needs a wide gamut DCI-P3 display for the best\n"
-	        "              results.");
+	        "  trinitron:  Typical Sony Trinitron CRT TV and monitor colours. The intended\n"
+	        "              use of this profile is with 'color_temperature' set to 6500. The\n"
+	        "              output then will look blueish due to the ~9300 K colour\n"
+	        "              temperature typical to Trinitron CRTs \"baked into\" this profile.\n"
+	        "              You can still tweak 'color_temperature' to adjust the relative\n"
+	        "              white balance. Needs a wide gamut DCI-P3 display for the most\n"
+	        "              accurate results.");
 
 	constexpr int DefaultBrightness = 45;
 	int_prop = section.AddInt("brightness", Always, DefaultBrightness);
@@ -2282,15 +2304,14 @@ static void init_render_settings(SectionProp& section)
 	        "Set the colour temperature (white point) of the video output ('%s' by\n"
 	        "default). Possible values:\n"
 	        "\n"
-	        "  auto:      Select an authentic colour temperature for adaptive CRT shaders;\n"
-	        "             for any other shader, use 6500 (default).\n"
-	        "\n"
+	        "  auto:      Select an authentic colour temperature appropriate for the\n"
+	        "             currently active adaptive CRT shader (e.g. 'crt-auto'), or the\n"
+	        "             current machine type for regular shaders (e.g., 'sharp').\n"
+	        "             \n"
 	        "  <number>:  Specify colour temperature in Kelvin (K). Valid range is %d to\n"
-	        "             %d. The Kelvin value only makes sense if 'crt_color_profile' is\n"
-	        "             set to 'none' or to one of the profiles with 6500K white point,\n"
-	        "             otherwise it acts as a relative colour temperature adjustment (less\n"
-	        "             then 6500 results in warmer colours, more than 6500 in cooler\n"
-	        "             colours).",
+	        "             %d. 6500 K is the neutral point for most modern displays. Values\n"
+	        "             below 6500 result in warmer colours, values above 6500 in cooler\n"
+	        "             colours.",
 	        DefaultColorTemperature,
 	        ColorTemperatureMin,
 	        ColorTemperatureMax));
@@ -2302,8 +2323,8 @@ static void init_render_settings(SectionProp& section)
 	int_prop->SetMinMax(ColorTemperatureLumaPreserveMin,
 	                    ColorTemperatureLumaPreserveMax);
 	int_prop->SetHelp(format_str(
-	        "Preserve image luminosity prior to colour temperature adjustment (%d by\n"
-	        "default). Valid range is %d to %d. 0 doesn't perform any luminosity\n"
+	        "Preserve luminosity of the video output prior to colour temperature adjustment\n"
+	        "(%d by default). Valid range is %d to %d. 0 doesn't perform any luminosity \n"
 	        "preservation, 100 fully preserves the luminosity. Values greater than 0 result\n"
 	        "in inaccurate colour temperatures in the brighter shades, so it's best to set\n"
 	        "this to 0 or close to 0 if your monitor is bright enough.",
@@ -2516,12 +2537,31 @@ static ColorSpace to_color_space_enum(const std::string& setting)
 	}
 }
 
+float get_gamma(const ColorSpace cs)
+{
+	using enum ColorSpace;
+
+	switch (cs) {
+	case Srgb:
+	case DisplayP3:
+	case ModernP3:
+	case AdobeRgb: return 2.2f;
+
+	case Rec2020: return 2.4f;
+
+	case DciP3:
+	case DciP3_D65: return 2.6f;
+
+	default: assertm(false, "Invalid ColorSpace enum value"); return 0.0f;
+	}
+}
+
 static void update_color_space_setting()
 {
-	const auto color_space = to_color_space_enum(
+	curr_color_space = to_color_space_enum(
 	        get_render_section().GetString("color_space"));
 
-	GFX_GetRenderer()->SetColorSpace(color_space);
+	GFX_GetRenderer()->SetColorSpace(curr_color_space);
 }
 
 static void update_enable_image_adjustments_setting()
@@ -2950,8 +2990,8 @@ static void adjust_image_setting(const Direction dir)
 		set_setting("black_level", format_str("%d", new_value));
 
 		update_black_level_setting();
-		handle_auto_image_adjustment_settings(VGA_GetCurrentVideoMode());
 		set_image_adjustment_settings();
+		handle_auto_image_adjustment_settings(VGA_GetCurrentVideoMode());
 	} break;
 
 	case Saturation:
@@ -3168,6 +3208,7 @@ static void notify_render_setting_updated(SectionProp& section,
 
 	} else if (prop_name == "color_space") {
 		update_color_space_setting();
+		handle_auto_image_adjustment_settings(VGA_GetCurrentVideoMode());
 
 	} else if (prop_name == "image_adjustments") {
 		update_enable_image_adjustments_setting();
@@ -3195,8 +3236,8 @@ static void notify_render_setting_updated(SectionProp& section,
 
 	} else if (prop_name == "black_level") {
 		update_black_level_setting();
-		handle_auto_image_adjustment_settings(VGA_GetCurrentVideoMode());
 		set_image_adjustment_settings();
+		handle_auto_image_adjustment_settings(VGA_GetCurrentVideoMode());
 
 	} else if (prop_name == "saturation") {
 		update_saturation_setting();
@@ -3204,8 +3245,8 @@ static void notify_render_setting_updated(SectionProp& section,
 
 	} else if (prop_name == "color_temperature") {
 		update_color_temperature_setting();
-		handle_auto_image_adjustment_settings(VGA_GetCurrentVideoMode());
 		set_image_adjustment_settings();
+		handle_auto_image_adjustment_settings(VGA_GetCurrentVideoMode());
 
 	} else if (prop_name == "color_temperature_luma_preserve") {
 		update_color_temperature_luma_preserve_setting();

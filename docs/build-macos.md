@@ -1,8 +1,12 @@
 # Building on macOS
 
-macOS builds can be created using the Meson buildsystem, compiled using the
-Clang or GCC compilers, and provided with dependencies using the Homebrew or
-MacPorts package managers.
+macOS builds can be created using the CMake build tool, compiled using the
+Clang compiler, and provided with dependencies using the Homebrew or MacPorts
+package managers.
+
+We recommend using CMake with presets because they're CI-tested and produce a
+binary using consistent compiler flags. Run `cmake --list-presets` to list the
+presets.
 
 We recommend using Homebrew and Clang because Apple's Core SDKs can be used
 only with Apple's fork of the Clang compiler.
@@ -30,6 +34,9 @@ Tools need to be installed and the license agreed to.
 
 3. Install build dependencies using either Homebrew or MacPorts.
 
+You might need to run `sudo xcodebuild -license` as well to accept the license
+agreements again if the CMake build step fails.
+
 
 ## Installing dependencies
 
@@ -40,8 +47,7 @@ Tools need to be installed and the license agreed to.
 2. Install the minimum set of dependencies and related tools:
 
     ```shell
-    brew install cmake ccache meson sdl2 asio opusfile \
-                 pkg-config python3
+    brew install cmake ccache pkg-config python3
     ```
 
 3. Add `brew` to your shell path:
@@ -58,20 +64,130 @@ Tools need to be installed and the license agreed to.
 2. Install the minimum set of dependencies and related tools:
 
     ```shell
-    sudo port install cmake ccache meson libsdl2 asio opusfile \
-                      glib2 pkgconfig python311
+    sudo port install cmake ccache pkgconfig python314
     ```
 
 ## Building
 
 Once you have dependencies installed using either environment, clone the
-repository and enter its directory:
+repository:
 
 ```shell
 git clone https://github.com/dosbox-staging/dosbox-staging.git
-cd dosbox-staging
-meson setup build
-meson compile -C build
+```
+
+To build the debug version, execute the following from the repo root:
+
+```shell
+cmake --preset=debug-macos
+cmake --build --preset=debug-macos
+```
+
+To build the release version:
+
+```shell
+cmake --preset=release-macos
+cmake --build --preset=release-macos
+```
+
+## Troubleshooting tips
+
+- **No CMAKE_C_COMPILER could be found.** --- Make sure you don't have any
+  pending Xcode updates that haven't been completed yet.
+
+- **Random CMake errors**. --- You might need to run `sudo xcodebuild
+  -license` to accept the license agreements again. This usually happens after
+  an Xcode upgrade.
+
+
+## Offline documentation
+
+Self-contained offline HTML documentation can optionally be built as part of the
+CMake build. The output appears in the build directory at
+`build/<preset>/Resources/docs/` — this is the same documentation bundled with
+the release packages.
+
+Documentation building is **off by default**. To enable it:
+
+```bash
+cmake --preset=debug-macos -DOPT_DOCUMENTATION=ON
+cmake --build --preset=debug-macos
+```
+
+To rebuild just the documentation after editing content:
+
+```bash
+cmake --build --preset debug-macos --target rebuild_documentation
+```
+
+### Prerequisites
+
+Python 3 with the `venv` module is required. Both ship with the Xcode Command
+Line Tools and Homebrew — no extra packages are needed on macOS.
+
+### Best-effort
+
+If Python is not available or is missing required modules (`venv`, `ensurepip`),
+the build proceeds normally without documentation — a warning is shown during
+CMake configuration, but the build is **never aborted**.
+
+### Caching
+
+There are two independent cache layers that make successive builds fast:
+
+1. **Python venv and pip packages** — stored in the build directory at
+   `_mkdocs_venv/`. The virtual environment is created once per build directory.
+   pip only re-runs when `extras/documentation/mkdocs-package-requirements.txt`
+   is modified.
+
+2. **Downloaded external assets** — the mkdocs-material privacy plugin caches
+   downloaded web fonts, images, and scripts in `website/.cache/` in the source
+   tree (this directory is git-ignored). Because it lives outside the build
+   directory, it persists across clean builds and across different build
+   configurations (debug, release, etc.).
+
+> [!IMPORTANT]
+> The privacy plugin only downloads assets from a small set of trusted
+> sources: **Google Fonts** (fonts.googleapis.com, fonts.gstatic.com),
+> **www.dosbox-staging.org** (our GitHub Pages website, completely under our
+> control), and a few well-known CDNs used by the MkDocs Material theme
+> (cdn.jsdelivr.net, unpkg.com, mirrors.creativecommons.org). No content from
+> untrusted origins is ever fetched. The build uses the system CA certificate
+> bundle instead of Python's built-in certifi bundle, so VPNs that perform
+> SSL inspection work without issues. If the build fails with certificate
+> errors, set the `SSL_CERT_FILE` environment variable to your
+> organisation's CA bundle path.
+
+### Rebuilding after documentation changes
+
+Changes to markdown files under `website/docs/` do not automatically trigger a
+rebuild — globbing hundreds of files into CMake's dependency tracking would be
+impractical. To rebuild after editing documentation content:
+
+```bash
+# Option 1: Use the dedicated rebuild target
+cmake --build --preset debug-macos --target rebuild_documentation
+
+# Option 2: Invalidate the build stamp (triggers rebuild on next normal build)
+touch website/mkdocs.yml
+```
+
+### Forcing a full rebuild
+
+To rebuild documentation from scratch, delete the build stamp from the build
+directory:
+
+```bash
+rm build/debug-macos/_mkdocs_build_stamp
+```
+
+### Cleaning all documentation caches
+
+To remove all MkDocs caches from the source tree (`website/.cache`,
+`website/__pycache__`, `website/site`):
+
+```bash
+cmake --build --preset debug-macos --target clean-manual
 ```
 
 
@@ -243,6 +359,7 @@ As sanitizer availability and performance are highly dependent on the concrete
 platform (CPU, OS, compiler), you might need to manually adapt the
 `SANITIZER_FLAGS` variable in the `CMakeLists.txt` file to suit your needs.
 
+
 ## Using FluidSynth and Slirp during local development
 
 FluidSynth and Slirp are difficult and time-consuming to build, therefore they
@@ -285,3 +402,72 @@ to the FluidSynth MIDI synth or NE2000 networking via Slirp.
 
 You'll only need to do this once after a successful build. If you delete the
 CMake build folder, redo step 4.
+
+
+## Setting up local dev environment for code signing
+
+The prerequisite for code signing is an Apple Developer membership. The
+following steps describe how to set up the necessary certificates and
+credentials in the Keychain for the [notarizer
+script](/scripts/packaging/macos/notarize-macos-dmg.sh) for local code
+signing.
+
+### Import the dev certificates into the Keychain
+
+1. Start XCode, then go to **Settings / Accounts**.
+
+2. Click on the **+** button in the bottom left corner and select **Apple
+   Account**.
+
+3. Select the newly added account and click on **Manage Certificates** in the
+   bottom right corner.
+
+4. Click on the **+** button and add all available certificates (probably
+   **Apple Development Certificates** is only one needed, but it doesn't hurt
+   to add them all).
+
+5. Quit XCode, then open Keychain Access and verify the new certificates and
+   keys have been imported. Search for "developer" --- you should see a bunch
+   of entries, including **Developer ID Application: <Your Name>
+   (_<TEAM_ID>_)**. You might need to wait a minute or two for the entries to
+   show up in the Keychain.
+
+Your Team ID is the 10-character alphanumeric code in parentheses on your
+certificate, e.g. **Developer ID Application: Your Name (X4MF6H9XZ6)**
+
+
+### Store the authentication credentials in the Keychain
+
+These instructions are adapted from [here](https://github.com/electron/notarize/blob/main/README.md).
+
+1. Generate an app-specific password for your Apple ID [as described here](https://support.apple.com/en-us/102654).
+
+2. Run the following command to store your credentials securely in the
+   Keychain (you can change the new keychain profile name from
+   `notary-tool-profile` to anything else you like):
+
+       xcrun notarytool store-credentials "notary-tool-profile" \
+           --apple-id "<your-apple-id>" \
+           --team-id "<10-char-team-id>"
+           --password "<app-specific-pw>"
+
+   You should get the following input if all went well:
+
+       Validating your credentials...
+       Success. Credentials validated.
+       Credentials saved to Keychain.
+       To use them, specify `--keychain-profile "notary-tool-profile"`
+
+3. **[Optional]** Create a new script to set the env vars required by the
+   [notarizer script](/scripts/packaging/macos/notarize-macos-dmg.sh) script:
+
+       export DEVELOPER_IDENTITY="Developer ID Application: Your Name (X4MF6H9XZ6)"
+       export KEYCHAIN_PROFILE="notary-tool-profile"
+
+
+## Code signing the application bundle
+
+Once the the local dev environment for code signing is set up, you can sign
+the application bundle built on GitHub CI with the [notarizer
+script](/scripts/packaging/macos/notarize-macos-dmg.sh).
+

@@ -24,6 +24,7 @@ add_executable(dosbox_tests
     rgb_tests.cpp
     ring_buffer_tests.cpp
     rwqueue_tests.cpp
+    shader_pragma_parser_tests.cpp
     shell_cmds_tests.cpp
     shell_redirection_tests.cpp
     string_utils_tests.cpp
@@ -34,13 +35,13 @@ add_executable(dosbox_tests
 )
 
 # Disable some warnings for deliberately flawed test cases
-if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU" AND NOT MSVC)
+if (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU" AND NOT MSVC)
     target_compile_options(dosbox_tests PRIVATE
         "-Wno-effc++"
         "-Wno-gnu-zero-variadic-macro-arguments"
     )
     # Clang does not support -Wno-format-overflow
-    if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
         target_compile_options(dosbox_tests PRIVATE
             "-Wno-format-overflow"
         )
@@ -49,7 +50,7 @@ endif()
 
 target_link_libraries(dosbox_tests PRIVATE
     GTest::gmock_main
-    libdosboxcommon
+    dosboxcommon
     $<IF:$<TARGET_EXISTS:SDL2::SDL2>,SDL2::SDL2,SDL2::SDL2-static>
     PkgConfig::lz4
 )

@@ -1,4 +1,4 @@
-target_sources(libdosboxcommon PRIVATE
+target_sources(dosboxcommon PRIVATE
   clipboard.cpp
   mapper.cpp
   sdl_gui.cpp
@@ -14,8 +14,11 @@ target_sources(libdosboxcommon PRIVATE
   render/shader.cpp
   render/shader_manager.cpp
   render/shader_pipeline.cpp
+  render/shader_pragma_parser.cpp
 )
 
-target_link_libraries(libdosboxcommon PRIVATE
-  OpenGL::GL
-  $<IF:$<BOOL:${C_OPENGL}>,libglad,>)
+target_link_libraries(dosboxcommon PRIVATE OpenGL::GL simpleini)
+
+if (C_OPENGL)
+  target_link_libraries(dosboxcommon PRIVATE glad)
+endif()

@@ -27,7 +27,7 @@ concurrency:
 jobs:
   generate_release_notes:
     name:    Generate release notes
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     if:      github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
     steps:
       - name: Check out repository
@@ -56,7 +56,7 @@ jobs:
     name:  Release ${{ matrix.conf.debugger && 'w/ debugger' || '' }} (${{ matrix.conf.arch }})
     if:    github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
     needs: generate_release_notes
-    runs-on: windows-2022
+    runs-on: windows-2025-vs2026
     strategy:
       matrix:
         conf:
@@ -86,6 +86,7 @@ jobs:
           set -x
           echo "BUILD_DIR=build/release-windows/Release" >> $GITHUB_ENV
           echo "PACKAGE_DIR=dosbox-staging-windows-${{ matrix.conf.arch }}-$DOSBOX_VERSION_AND_HASH" >> $GITHUB_ENV
+          echo "DOSBOX_DEBUGGER_EXE=dosbox_with_debugger.exe" >> $GITHUB_ENV
 
       - name: Set up vcpkg
         uses: ./.github/actions/setup-vcpkg
@@ -94,7 +95,7 @@ jobs:
           arch: "${{ matrix.conf.arch }}"
 
       - name: Set up CMake
-        uses: lukka/get-cmake@v4.2.3
+        uses: lukka/get-cmake@591817e96fcad43505fb4eae36172462abb3a42e # v4.3.3
 
       - name:  Log environment
         shell: pwsh
@@ -104,20 +105,20 @@ jobs:
         if:    ${{ !matrix.conf.debugger }}
         shell: pwsh
         run: |
-          cmake --preset release-windows
+          cmake -DOPT_DOCUMENTATION=ON --preset release-windows
           cmake --build --preset release-windows 2>&1 | Tee-Object -FilePath build.log
 
       - name:  Run tests
         if:    ${{ !matrix.conf.debugger }}
         shell: pwsh
         run: |
-          ctest --preset release-windows 2>&1 | Tee-Object -FilePath tests.log
+          ctest -j 4 --preset release-windows 2>&1 | Tee-Object -FilePath tests.log
 
       - name:  Build release with debugger
         if:    ${{ matrix.conf.debugger }}
         shell: pwsh
         run: |
-          cmake --preset release-windows -DOPT_DEBUGGER=ON -DOPT_HEAVY_DEBUGGER=ON
+          cmake -DOPT_DOCUMENTATION=ON --preset release-windows -DOPT_DEBUGGER=ON -DOPT_HEAVY_DEBUGGER=ON
           cmake --build --preset release-windows 2>&1 | Tee-Object -FilePath build.log
 
       - name: Summarize warnings
@@ -131,8 +132,8 @@ jobs:
         run: |
           set -x
           # Construct VC_REDIST_DIR
-          readonly VC_REDIST_BASE="C:/Program Files/Microsoft Visual Studio/2022/Enterprise/VC/Redist/MSVC"
-          readonly VC_REDIST_CRT_VERSION="Microsoft.VC143.CRT"
+          readonly VC_REDIST_BASE="C:/Program Files/Microsoft Visual Studio/18/Enterprise/VC/Redist/MSVC"
+          readonly VC_REDIST_CRT_VERSION="Microsoft.VC145.CRT"
 
           for ENTRY in "$VC_REDIST_BASE"/*
           do
@@ -201,14 +202,14 @@ jobs:
           mkdir -p "$PACKAGE_DIR"
           # Move the debugger build into the release area
           ls "$BUILD_DIR"
-          cp "$BUILD_DIR/dosbox.exe" "$PACKAGE_DIR/dosbox_with_debugger.exe"
+          cp "$BUILD_DIR/$DOSBOX_DEBUGGER_EXE" "$PACKAGE_DIR/$DOSBOX_DEBUGGER_EXE"
 
       - name: Upload debugger artifact
         if:   ${{ matrix.conf.debugger }}
         uses: actions/upload-artifact@v7
         with:
           name: ${{ env.PACKAGE_DIR }}-with-debugger
-          path: ${{ env.PACKAGE_DIR }}/dosbox_with_debugger.exe
+          path: ${{ env.PACKAGE_DIR }}/${{ env.DOSBOX_DEBUGGER_EXE }}
           overwrite: true
 
 
@@ -216,7 +217,7 @@ jobs:
     name: Merge release & debugger artifacts (${{ matrix.arch }} )
     needs: build_windows_release
 
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     strategy:
       matrix:
         # TODO reinstate ARM64 build at some point, but we'll need to build the
@@ -244,7 +245,7 @@ jobs:
   build_installer:
     name:    Build installer (${{ matrix.arch }} )
     needs:   merge_artifacts
-    runs-on: windows-2022
+    runs-on: windows-2025-vs2026
     strategy:
       matrix:
         # We only provide x64 installers as ARM64 support is experimental
@@ -299,7 +300,6 @@ jobs:
 
           mv $PACKAGE_DIR/*          out/program
           mv out/program/dosbox*.exe out
-
 
       - name: Build Windows installer
         shell: pwsh

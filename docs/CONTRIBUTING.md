@@ -5,6 +5,7 @@ ways to participate, and we appreciate all of them.
 
 - [Feature requests and bug reports](#feature-requests-and-bug-reports)
 - [Find something to work on](#find-something-to-work-on)
+- [Policy on the use of generative AI tools](#policy-on-the-use-of-generative-ai-tools)
 - [Contributing code](#contributing-code)
   - [Language standard](#language-standard)
   - [Code formatting](#code-formatting)
@@ -68,6 +69,51 @@ discuss it with us early, e.g., by creating a new issue ticket.
 [pvs]: https://github.com/dosbox-staging/dosbox-staging/actions/workflows/pvs-studio.yml
 
 
+## Policy on the use of generative AI tools
+
+We welcome all useful contributions, including those developed with the
+assistance of generative AI tools, also known as LLMs or coding agents.
+However, the use of such tools does not change our expectations for
+contributor responsibility, engagement, or code quality. The following apply
+to all contributions:
+
+- You are responsible for all submitted content, regardless of whether
+  generative AI tools were used.
+
+- Only submit changes you understand and can justify.
+
+- You must be able to explain all your changes, edge cases, and your thought
+  process.
+
+- You are expected to actively engage with reviewer feedback _yourself_.
+  Blindly copy-pasting replies to/from a generative AI tool does _not_ count
+  as engaging with the reviewer! If we have a reason to suspect you only act
+  as a message courier between us and a coding agent, we will close the PR and
+  probably ban you from the project. Believe us — we will know.
+
+- You must verify the accuracy of any AI-generated text you include in the PR
+  description or review discussion comments. Same story: it's very easy to
+  generate unlimited explanations, arguments, and walls of text with
+  generative AI tools that sound plausible. We simply don't have time to argue
+  with generative tools that never get tired — we want to engage with a human
+  who takes responsibility for their changes.
+
+- Autonomous coding agents without a human in the loop will be banned swiftly
+  from the project with _extreme prejudice_.
+
+- You may use generative tools to update the user manual, but all the above
+  points apply.
+
+- You must ensure all submitted code is compatible with the project's GPL-2.0
+  license, regardless of how it was produced.
+
+Again, we are not against AI tools; we use them frequently ourselves. We want
+to enforce certain behaviours, not how you got there. If you submit a pull
+request with code changes you do not understand, it does not matter whether it
+was entirely produced by you or a coding agent — the PR is problematic,
+regardless. Use AI tools as accelerators, not substitutes for skill, knowledge, or judgement, and then all will be well.
+
+
 ## Contributing code
 
 These rules apply to code in `src/` and `include/` directories. They don't
@@ -78,7 +124,7 @@ The rules outlined below apply to new code landing in the `main` branch.
 
 ### Language standard
 
-We use C++20 while avoiding the more complex areas of C++ and object-oriented
+We use C++23 while avoiding the more complex areas of C++ and object-oriented
 design. To clarify:
 
 - Avoid designing your code in a complex object-oriented style. This does not
@@ -86,7 +132,7 @@ design. To clarify:
   inheritance, overblown class hierarchies, operator overloading, iostreams
   for stdout/stderr, etc".
 
-- C++20 has a [rich standard library](https://en.cppreference.com/w/cpp/20),
+- C++23 has a [rich standard library](https://en.cppreference.com/w/cpp/23),
   use it. We use [STL
   containers](https://en.cppreference.com/w/cpp/container),
   [std::filesystem](https://en.cppreference.com/w/cpp/filesystem), and various

@@ -173,17 +173,17 @@ double GFX_GetHostRefreshRate()
 
 	if (display_in_use < 0) {
 		LOG_ERR("SDL: Could not get the current window index: %s",
-				SDL_GetError());
+		        SDL_GetError());
 		return DefaultHostRefreshRateHz;
 	}
 	if (SDL_GetCurrentDisplayMode(display_in_use, &mode) != 0) {
 		LOG_ERR("SDL: Could not get the current display mode: %s",
-				SDL_GetError());
+		        SDL_GetError());
 		return DefaultHostRefreshRateHz;
 	}
 	if (mode.refresh_rate < RefreshRateMin) {
 		LOG_WARNING("SDL: Got a strange refresh rate of %d Hz",
-					mode.refresh_rate);
+		            mode.refresh_rate);
 		return DefaultHostRefreshRateHz;
 	}
 
@@ -294,19 +294,51 @@ void GFX_RequestExit(const bool pressed)
 	}
 }
 
-#if defined(MACOSX)
-static bool is_command_pressed(const SDL_Event event)
+static bool is_unpause_event(const SDL_Event event, const SDL_Keysym unpause_key)
 {
-	return (event.key.keysym.mod == KMOD_RGUI ||
-	        event.key.keysym.mod == KMOD_LGUI);
-}
+	if (event.type != SDL_KEYDOWN) {
+		return false;
+	}
+
+	if (event.key.keysym.sym == unpause_key.sym) {
+		// These are the only mods we're going to care about.
+		// Others mods include caps lock and num lock which we should
+		// not look at.
+		constexpr uint16_t ModMask = KMOD_CTRL | KMOD_SHIFT | KMOD_ALT |
+		                             KMOD_GUI;
+		const uint16_t unpause_mod = unpause_key.mod & ModMask;
+		if ((event.key.keysym.mod & unpause_mod) == unpause_mod) {
+			return true;
+		}
+	}
+
+// Also check previously hard-coded Alt+Pause on Windows/Linux
+// and Command+P on Mac to ensure we don't have regressions.
+#if defined(MACOSX)
+	constexpr uint16_t DefaultMod = KMOD_GUI;
+	constexpr int32_t DefaultKey  = SDLK_p;
+#else
+	constexpr uint16_t DefaultMod = KMOD_ALT;
+	constexpr int32_t DefaultKey  = SDLK_PAUSE;
 #endif
+	return event.key.keysym.sym == DefaultKey &&
+	       (event.key.keysym.mod & DefaultMod);
+}
 
 [[maybe_unused]] static void pause_emulation(bool pressed)
 {
 	if (!pressed) {
 		return;
 	}
+
+	// Bit of a hack but this is the key that was used to pause so let's
+	// also check it to unpause. We should really be relying on
+	// MAPPER_CheckEvent() but that is not possible inside this janky pause
+	// loop.
+	// TODO: In the future, re-work pause logic so we use the main event
+	// loop all the time.
+	const auto unpause_key = MAPPER_GetLastKeyPressed();
+
 	const auto inkeymod = static_cast<uint16_t>(SDL_GetModState());
 
 	sdl.is_paused = true;
@@ -341,15 +373,7 @@ static bool is_command_pressed(const SDL_Event event)
 			break;
 
 		case SDL_KEYDOWN:
-#if defined(MACOSX)
-			// Pause/unpause is hardcoded to Command+P on macOS
-			if (is_command_pressed(event) &&
-			    event.key.keysym.sym == SDLK_p) {
-#else
-			// Pause/unpause is hardcoded to Alt+Pause on Window &
-			// Linux
-			if (event.key.keysym.sym == SDLK_PAUSE) {
-#endif
+			if (is_unpause_event(event, unpause_key)) {
 				const uint16_t outkeymod = event.key.keysym.mod;
 				if (inkeymod != outkeymod) {
 					KEYBOARD_ClrBuffer();
@@ -457,6 +481,8 @@ static void maybe_log_display_properties()
 	assert(sdl.renderer);
 	assert(sdl.draw.render_width_px > 0 && sdl.draw.render_height_px > 0);
 
+	static DosBox::Rect last_draw_size_px = {};
+
 	const auto canvas_size_px = sdl.renderer->GetCanvasSizeInPixels();
 	const auto draw_size_px   = GFX_CalcDrawRectInPixels(canvas_size_px);
 
@@ -470,7 +496,6 @@ static void maybe_log_display_properties()
 		static VideoMode last_video_mode               = {};
 		static double last_refresh_rate                = 0.0;
 		static PresentationMode last_presentation_mode = {};
-		static DosBox::Rect last_draw_size_px          = {};
 		static bool last_width_was_doubled             = false;
 		static bool last_height_was_doubled            = false;
 		static Fraction last_pixel_aspect_ratio        = {};
@@ -508,9 +533,19 @@ static void maybe_log_display_properties()
 		}
 
 	} else {
-		LOG_MSG("SDL: Window size initialized to %dx%d pixels",
-		        iroundf(draw_size_px.w),
-		        iroundf(draw_size_px.h));
+		if (last_draw_size_px.w != draw_size_px.w ||
+		    last_draw_size_px.h != draw_size_px.h) {
+
+			LOG_MSG("DISPLAY: Unknown video mode at %2.5g Hz, "
+			        "scaled to %dx%d pixels",
+			        refresh_rate,
+			        iroundf(draw_size_px.w),
+			        iroundf(draw_size_px.h));
+
+			maybe_log_presentation_and_vsync_mode();
+
+			last_draw_size_px = draw_size_px;
+		}
 	}
 
 #if 0
@@ -617,7 +652,7 @@ static void set_minimum_window_size()
 
 	constexpr auto MinimumWidth = 640;
 
-	minimum_window_size  = {iround(MinimumWidth), iround(minimum_height)};
+	minimum_window_size = {iround(MinimumWidth), iround(minimum_height)};
 
 	// The SDL documentation is incorrect; this will set the minimum window
 	// size in logical units, not pixels.
@@ -1444,6 +1479,32 @@ static void save_window_size(const int w, const int h)
 		sdl.windowed.canvas_size.w = w;
 		sdl.windowed.canvas_size.h = h;
 	}
+
+	set_section_property_value("sdl", "window_size", format_str("%dx%d", w, h));
+}
+
+static void handle_window_size_pref_after_config_load()
+{
+	assert(control);
+
+	constexpr auto SectionName    = "sdl";
+	constexpr auto LegacyPrefName = "windowresolution";
+	constexpr auto NewPrefName    = "window_size";
+
+	const auto legacy_pref_order = control->GetSettingParseOrder(SectionName,
+	                                                             LegacyPrefName);
+
+	const auto new_pref_order = control->GetSettingParseOrder(SectionName,
+	                                                          NewPrefName);
+
+	if (legacy_pref_order > new_pref_order) {
+		const auto legacy_pref = get_sdl_section()->GetString(LegacyPrefName);
+
+		// Move setting from the legacy setting into the new one
+		set_section_property_value(SectionName, NewPrefName, legacy_pref);
+	}
+
+	set_section_property_value(SectionName, LegacyPrefName, "");
 }
 
 // Takes in:
@@ -1458,15 +1519,7 @@ static void save_window_size(const int w, const int h)
 //
 static void configure_window_size()
 {
-	const auto window_size_pref = []() {
-		const auto legacy_pref = get_sdl_section()->GetString(
-		        "windowresolution");
-		if (!legacy_pref.empty()) {
-			set_section_property_value("sdl", "windowresolution", "");
-			set_section_property_value("sdl", "window_size", legacy_pref);
-		}
-		return get_sdl_section()->GetString("window_size");
-	}();
+	const auto window_size_pref = get_sdl_section()->GetString("window_size");
 
 	// Get the coarse resolution from the users setting, and adjust
 	// refined scaling mode if an exact resolution is desired.
@@ -1502,6 +1555,19 @@ static void configure_window_size()
 	        refined_size.x,
 	        refined_size.y,
 	        sdl.display_number);
+}
+
+static void set_window_size()
+{
+	if (sdl.fullscreen.mode == FullscreenMode::ForcedBorderless &&
+	    sdl.is_fullscreen) {
+
+		sdl.fullscreen.prev_window.width = sdl.windowed.width;
+
+		sdl.fullscreen.prev_window.height = sdl.windowed.height;
+	} else {
+		SDL_SetWindowSize(sdl.window, sdl.windowed.width, sdl.windowed.height);
+	}
 }
 
 static void save_window_position_from_conf()
@@ -1809,7 +1875,8 @@ void GFX_InitSdl()
 
 	// Initialise SDL (timer is needed for title bar animations)
 	if (SDL_InitSubSystem(SDL_INIT_VIDEO | SDL_INIT_TIMER) < 0) {
-		E_Exit("SDL: Failed to init SDL video and timer: %s", SDL_GetError());
+		E_Exit("SDL: Failed to init SDL video and timer: %s",
+		       SDL_GetError());
 	}
 
 	if (is_using_kmsdrm_driver() && !check_kmsdrm_setting()) {
@@ -1837,7 +1904,8 @@ void GFX_InitSdl()
 	// Check for .dosbox document packages dropped from Finder
 	// (double-click to open or drag-and-drop onto the app icon)
 
-	// Sleep briefly to allow the OS time to queue the drop event before we poll.
+	// Sleep briefly to allow the OS time to queue the drop event before we
+	// poll.
 	SDL_Delay(100);
 
 	SDL_Event event;
@@ -1865,6 +1933,8 @@ void GFX_InitAndStartGui()
 	configure_renderer();
 
 	save_window_position_from_conf();
+
+	handle_window_size_pref_after_config_load();
 	configure_window_size();
 
 	sdl.draw.render_width_px  = minimum_window_size.x;
@@ -1997,6 +2067,8 @@ static void notify_sdl_setting_updated(SectionProp& section,
 
 #if C_OPENGL && defined(MACOSX)
 		update_viewport();
+		RENDER_SetScanAndPixelDoubling();
+		GFX_ResetScreen();
 #endif
 
 	} else if (prop_name == "window_position") {
@@ -2010,18 +2082,20 @@ static void notify_sdl_setting_updated(SectionProp& section,
 
 	} else if (prop_name == "window_size") {
 		configure_window_size();
+		set_window_size();
 
-		if (sdl.fullscreen.mode == FullscreenMode::ForcedBorderless &&
-		    sdl.is_fullscreen) {
+	} else if (prop_name == "windowresolution") {
+		// Move setting from the legacy setting into the new one
+		constexpr auto LegacyPrefName = "windowresolution";
+		constexpr auto NewPrefName    = "window_size";
 
-			sdl.fullscreen.prev_window.width = sdl.windowed.width;
+		const auto legacy_pref = get_sdl_section()->GetString(LegacyPrefName);
 
-			sdl.fullscreen.prev_window.height = sdl.windowed.height;
-		} else {
-			SDL_SetWindowSize(sdl.window,
-			                  sdl.windowed.width,
-			                  sdl.windowed.height);
-		}
+		set_section_property_value("sdl", LegacyPrefName, "");
+		set_section_property_value("sdl", NewPrefName, legacy_pref);
+
+		configure_window_size();
+		set_window_size();
 
 	} else if (prop_name == "window_titlebar") {
 		TITLEBAR_ReadConfig();
@@ -2032,7 +2106,8 @@ static void notify_sdl_setting_updated(SectionProp& section,
 		}
 
 	} else {
-		LOG_WARNING("SDL: Runtime change unhandled for property: '%s'", prop_name.c_str());
+		LOG_WARNING("SDL: Runtime change unhandled for property: '%s'",
+		            prop_name.c_str());
 	}
 }
 
@@ -2226,10 +2301,6 @@ bool handle_sdl_windowevent(const SDL_Event& event)
 
 		if (!sdl.is_fullscreen) {
 			save_window_size(width, height);
-
-			set_section_property_value("sdl",
-			                           "window_size",
-			                           format_str("%dx%d", width, height));
 		}
 
 		if (width != last_width && height != last_height) {
@@ -2336,6 +2407,9 @@ bool handle_sdl_windowevent(const SDL_Event& event)
 		sdl.display_number = new_display_number;
 
 		update_viewport();
+		RENDER_SetScanAndPixelDoubling();
+		GFX_ResetScreen();
+
 		notify_new_mouse_screen_params();
 		return true;
 	}
@@ -2345,10 +2419,13 @@ bool handle_sdl_windowevent(const SDL_Event& event)
 
 		// The window size has changed either as a result of an API call
 		// or through the system or user changing the window size.
-		const auto new_width  = event.window.data1;
+		const auto new_width = event.window.data1;
 
 		check_and_handle_dpi_change(sdl.window, new_width);
 		update_viewport();
+		RENDER_SetScanAndPixelDoubling();
+		GFX_ResetScreen();
+
 		notify_new_mouse_screen_params();
 		return true;
 	}
@@ -2693,11 +2770,12 @@ static void init_sdl_config_settings(SectionProp& section)
 	        "                      borderless mode might result in decreased performance\n"
 	        "                      and slightly worse frame pacing (e.g., scrolling in 2D\n"
 	        "                      games not appearing perfectly smooth).");
-	pstring->SetValues({"standard",
+	pstring->SetValues({
+	        "standard",
 #ifdef WIN32
-	                    "forced-borderless",
+	        "forced-borderless",
 #endif
-	                    });
+	});
 
 	pstring->SetDeprecatedWithAlternateValue("desktop", "standard");
 
@@ -2850,7 +2928,7 @@ static void init_sdl_config_settings(SectionProp& section)
 	pbool->SetHelp(
 	        "Capture system keyboard shortcuts ('off' by default).\n"
 	        "When enabled, most system shortcuts such as Alt+Tab are captured and sent to\n"
-	        "DOSBox Staging. This is useful for Windows 3.1x and some DOS programs with\n"
+	        "DOSBox Staging. This is useful for Windows 3.1 and some DOS programs with\n"
 	        "unchangeable keyboard shortcuts that conflict with system shortcuts.");
 
 	pstring = section.AddPath("mapperfile", Always, MAPPERFILE);
@@ -2859,7 +2937,7 @@ static void init_sdl_config_settings(SectionProp& section)
 	        "current version). Pre-configured maps are bundled in 'resources/mapperfiles'.\n"
 	        "These can be loaded by name, e.g., with 'mapperfile = xbox/xenon2.map'.\n"
 	        "\n"
-	        "Note: The '--resetmapper' command line option only deletes the default mapper\n"
+	        "Note: The '--erasemapper' command line option only deletes the default mapper\n"
 	        "      file.");
 
 	pstring = section.AddString("screensaver", Always, "auto");
@@ -2892,7 +2970,7 @@ void GFX_Quit()
 	// Renderer must be destoryed before SDL_Quit() is called.
 	// Otherwise we can get segfaults and sadness.
 	sdl.renderer = {};
-	sdl.window = nullptr;
+	sdl.window   = nullptr;
 
 	SDL_Quit();
 #endif

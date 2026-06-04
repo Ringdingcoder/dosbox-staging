@@ -27,7 +27,7 @@ concurrency:
 jobs:
   generate_release_notes:
     name:    Generate release notes
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     if:      github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
     steps:
       - name: Check out repository
@@ -78,7 +78,7 @@ jobs:
         uses: ./.github/actions/set-common-vars
 
       - name: Set up CMake
-        uses: lukka/get-cmake@f176ccd3f28bda569c43aae4894f06b2435a3375 # v4.2.3
+        uses: lukka/get-cmake@591817e96fcad43505fb4eae36172462abb3a42e # v4.3.3
 
       - name: Set up vcpkg
         uses: ./.github/actions/setup-vcpkg
@@ -92,13 +92,13 @@ jobs:
       - name: Build release
         run: |
           set -xo pipefail
-          cmake --preset release-macos-${{ matrix.conf.arch }}
+          cmake -DOPT_DOCUMENTATION=ON --preset release-macos-${{ matrix.conf.arch }}
           cmake --build --preset release-macos-${{ matrix.conf.arch }} 2>&1 | tee build.log
 
       - name: Run tests
         run: |
           set -xo pipefail
-          ctest --preset release-macos-${{ matrix.conf.arch }} 2>&1 | tee tests.log
+          ctest -j 4 --preset release-macos-${{ matrix.conf.arch }} 2>&1 | tee tests.log
 
       - name: Dump workspace contents
         run: find $RUNNER_WORKSPACE
@@ -145,8 +145,11 @@ jobs:
       - name: Install brew depedencies
         run: HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1 brew install --overwrite librsvg
 
-      - name: Download binaries
+      - name: Download all temporary artifacts
         uses: actions/download-artifact@v8
+
+      - name: Dump workspace contents
+        run: find $RUNNER_WORKSPACE
 
       - name: Package
         run: |
@@ -183,6 +186,7 @@ jobs:
           mkdir "$PLUGINS_DIR"
           cp -R nuked-sc55-clap/* "$PLUGINS_DIR"
 
+
       - name: Create DMG disk image
         run: |
           ln -s /Applications dist/
@@ -195,11 +199,6 @@ jobs:
               -ov \
               -format UDZO "dosbox-staging-macOS-universal-$DOSBOX_VERSION_AND_HASH.dmg"
 
-
-      - name: Download release notes HTML
-        uses: actions/download-artifact@v8
-        with:
-          name: release-notes-html
 
       - name: Upload DMG disk image
         uses: actions/upload-artifact@v7

@@ -1,5 +1,5 @@
 export class DOSBoxApi {
-    constructor(baseUrl = '/api') {
+    constructor(baseUrl = '/api/v1') {
         this.baseUrl = baseUrl.replace(/\/$/, '');
     }
 
@@ -12,7 +12,7 @@ export class DOSBoxApi {
     }
 
     async getCpu() {
-        const res = await this._request('/cpu');
+        const res = await this._request('/cpu/state');
         return await res.json();
     }
 
@@ -110,7 +110,13 @@ export class DOSBoxApi {
     }
 
     async getDosInfo() {
-        const res = await this._request('dos');
+        const res = await this._request('dos/internals');
         return await res.json();
+    }
+
+    async shutdown()  {
+        await this._request('dosbox/shutdown', {
+            method: 'POST'
+        });
     }
 }

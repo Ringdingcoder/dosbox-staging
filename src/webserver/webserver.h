@@ -9,14 +9,14 @@
 #include <limits>
 #include <string>
 
-#include <libs/http/http.h>
-#include <libs/json/json.h>
+#include "http/http.h"
+#include "json/json.h"
 
 #include "config/config.h"
 
 namespace Webserver {
 
-constexpr auto TypeJson = "application/json";
+constexpr auto TypeJson   = "application/json";
 constexpr auto TypeBinary = "application/octet-stream";
 
 enum class Source {
@@ -72,5 +72,6 @@ void send_json(httplib::Response& res, const nlohmann::json& j);
 void WEBSERVER_Init();
 void WEBSERVER_Destroy();
 void WEBSERVER_AddConfigSection(const ConfigPtr& conf);
+bool WEBSERVER_IsEnabled();
 
 #endif // DOSBOX_WEBSERVER_H

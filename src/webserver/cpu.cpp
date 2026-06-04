@@ -1,13 +1,13 @@
 // SPDX-FileCopyrightText:  2026-2026 The DOSBox Staging Team
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#include "cpu.h"
-#include "bridge.h"
 #include "webserver.h"
+#include "bridge.h"
+#include "private/cpu.h"
 
-#include "libs/base64/base64.h"
-#include "libs/http/http.h"
-#include "libs/json/json.h"
+#include "base64/base64.h"
+#include "http/http.h"
+#include "json/json.h"
 
 #include "cpu/registers.h"
 
@@ -35,15 +35,15 @@ void Registers::load()
 	this->gs    = SegValue(SegNames::gs);
 }
 
-void CpuInfoCommand::Execute()
+void CpuStateCommand::Execute()
 {
 	regs.load();
-	LOG_DEBUG("API: CpuInfoCommand()");
+	LOG_DEBUG("API: CpuStateCommand()");
 }
 
-void CpuInfoCommand::Get(const httplib::Request&, httplib::Response& res)
+void CpuStateCommand::Get(const httplib::Request&, httplib::Response& res)
 {
-	CpuInfoCommand cmd;
+	CpuStateCommand cmd;
 	cmd.WaitForCompletion();
 
 	json j;
