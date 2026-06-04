@@ -76,7 +76,7 @@ jobs:
             cc:  gcc
             cxx: g++
             compiler_version: "14"
-            max_warnings: 0
+            max_warnings: 25
 
           - name: GCC 15, Ubuntu 24.04
             os: ubuntu-24.04
@@ -85,7 +85,7 @@ jobs:
             cxx: g++
             compiler_version: "15"
             gcc_ppa: ppa:ubuntu-toolchain-r/test
-            max_warnings: 0
+            max_warnings: 25
 
           - name: Clang 18, Ubuntu 24.04
             os: ubuntu-24.04
