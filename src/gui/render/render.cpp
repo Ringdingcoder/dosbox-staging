@@ -66,7 +66,7 @@ static void pr_error()
 #endif
 }
 
-static int sock, sock_kbd;
+static int sock;
 static LZ4_streamHC_t stream_uh, stream_lh;
 
 static bool sock_init(int *sock, int port)
@@ -103,8 +103,6 @@ static int kbd_reader_thread(void *);
 static bool send_init()
 {
     if (!sock_init(&sock, 5677))
-        return false;
-    if (!sock_init(&sock_kbd, 5678))
         return false;
 
     if (!SDL_CreateThread(kbd_reader_thread, "kbd render", 0))
@@ -155,7 +153,7 @@ static int kbd_reader_thread(void *)
 {
     for (;;) {
         uint8_t buf[8];
-        if (complete_read(sock_kbd, (char*) buf, 8))
+        if (complete_read(sock, (char*) buf, 8))
             return 1;
 
         printf("received kbd event!\n");

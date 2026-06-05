@@ -1646,16 +1646,8 @@ void SHELL_AlternativeRun()
     if (sock_comm < 0)
         return;
 
-    int sock_kbd_comm = listen_prepare(5678);
-    if (sock_kbd_comm < 0)
-        return;
-
     sock_comm = full_accept(sock_comm);
     if (sock_comm < 0)
-        return;
-
-    sock_kbd_comm = full_accept(sock_kbd_comm);
-    if (sock_kbd_comm < 0)
         return;
 
     shell_networkinit = true;
@@ -1710,7 +1702,7 @@ void SHELL_AlternativeRun()
                     buf[1] = e.key.keysym.scancode;
                     memcpy(buf+2, &e.key.keysym.sym, 4);
                     memcpy(buf+6, &e.key.keysym.mod, 2);
-                    if (complete_write(sock_kbd_comm, (char*) buf, 8))
+                    if (complete_write(sock_comm, (char*) buf, 8))
                         quit = true;
                     printf("wrote kbd event!\n");
                 }
