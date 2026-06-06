@@ -17,6 +17,16 @@
 #ifdef WIN32
 #include <process.h>
 #include <windows.h>
+
+#include <winsock2.h>
+#include <ws2tcpip.h>
+// Windows doesn't define socklen_t
+typedef int socklen_t;
+#else
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+#include <arpa/inet.h>
 #endif
 
 #include "config/config.h"
@@ -574,6 +584,78 @@ static void wait_for_pid(const int wait_pid)
 #endif
 }
 
+static void pr_error(const char *s)
+{
+#ifdef WIN32
+    int wsa_error = WSAGetLastError();
+    fprintf(stderr, "Error %s: WSA error code %d\n", s, wsa_error);
+#else
+    std::string err = safe_strerror(errno);
+    fprintf(stderr, "Error %s: %s\n", s, err.c_str());
+#endif
+}
+
+static int listen_prepare()
+{
+    int port = 5677;
+    int sock;
+    struct sockaddr_in servaddr;
+    int val = 1;
+
+    sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) {
+        pr_error("socket");
+        return -1;
+    }
+
+    if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, (const char*) &val, sizeof(val)) != 0) {
+        pr_error("setsockopt");
+        return -1;
+    }
+
+    memset(&servaddr, 0, sizeof(servaddr));
+
+    servaddr.sin_family = AF_INET;
+    servaddr.sin_addr.s_addr = 0;
+    servaddr.sin_port = htons(port);
+
+    if (bind(sock, (struct sockaddr *) &servaddr, sizeof(servaddr)) != 0) {
+        pr_error("bind");
+        return -1;
+    }
+
+    if (listen(sock, 128) != 0) {
+        pr_error("listen");
+        return -1;
+    }
+
+    return sock;
+}
+
+static int full_accept(int sock)
+{
+    struct sockaddr_in servaddr;
+    socklen_t addrlen = sizeof(servaddr);
+#if defined(WIN32) || defined(MACOSX)
+    int sock_comm = accept(sock, (struct sockaddr *) &servaddr, &addrlen);
+#else
+    int sock_comm = accept4(sock, (struct sockaddr *) &servaddr, &addrlen, SOCK_CLOEXEC);
+#endif
+
+    if (sock_comm < 0) {
+        pr_error("accept");
+        return sock_comm;
+    }
+
+    int delayval = 1;
+    if (setsockopt(sock_comm, IPPROTO_TCP, TCP_NODELAY, (const char*) &delayval, sizeof(int)) < 0) {
+        pr_error("nodelay");
+        return -1;
+    }
+
+    return sock_comm;
+}
+
 int main(int argc, char* argv[])
 {
 	// Ensure we perform SDL cleanup and restore console settings at exit
@@ -684,6 +766,18 @@ int main(int argc, char* argv[])
 
 		DOSBOX_InitModules();
 		GFX_InitAndStartGui();
+                if (shell_ishost) {
+                    // Will run normal loop -> accept connection
+                    int sock_comm = listen_prepare();
+                    if (sock_comm < 0)
+                        return 1;
+
+                    sock_comm = full_accept(sock_comm);
+                    if (sock_comm < 0)
+                        return 1;
+
+                    RENDER_SetSock(sock_comm);
+                }
 
 		// All subsystems' hotkeys need to be registered at this point
 		// to ensure their hotkeys appear in the graphical mapper.
@@ -696,8 +790,8 @@ int main(int argc, char* argv[])
 		// Start emulation
                 if (shell_isaccepter) {
                     SHELL_AlternativeRun();
-                    if (!shell_networkinit)
-                        printf("network init error!\n");
+                    if (shell_networkinit)
+                        printf("network init!\n");
                 } else
                     SHELL_InitAndRun();
 

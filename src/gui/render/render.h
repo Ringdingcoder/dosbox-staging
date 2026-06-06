@@ -245,6 +245,7 @@ extern ScalerLineHandler RENDER_DrawLine;
 
 void RENDER_Init();
 void RENDER_Reinit();
+void RENDER_SetSock(int);
 
 void RENDER_AddConfigSection(const ConfigPtr& conf);
 

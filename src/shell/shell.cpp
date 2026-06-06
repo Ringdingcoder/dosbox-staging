@@ -1558,64 +1558,34 @@ static uint8_t decomp_buf[3*MAX_SEND_SIZE], decomp_buf_lh[3*MAX_SEND_SIZE];
 static int decomp_pos, decomp_pos_lh;
 static char real_sendbuf[140000];
 
-static int listen_prepare(int port)
+bool sock_init(int *sock)
 {
-    int sock;
     struct sockaddr_in servaddr;
-    int val = 1;
+    int port = 5677;
 
-    sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (sock < 0) {
+    *sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (*sock < 0) {
         pr_error("socket");
-        return -1;
+        return false;
     }
 
-    if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, (const char*) &val, sizeof(val)) != 0) {
+    int delayval = 1;
+    if (setsockopt(*sock, IPPROTO_TCP, TCP_NODELAY, (const char*) &delayval, sizeof(int)) < 0) {
         pr_error("setsockopt");
-        return -1;
+        return false;
     }
 
     memset(&servaddr, 0, sizeof(servaddr));
 
     servaddr.sin_family = AF_INET;
-    servaddr.sin_addr.s_addr = 0;
+    servaddr.sin_addr.s_addr = 0x0100007f;
     servaddr.sin_port = htons(port);
 
-    if (bind(sock, (struct sockaddr *) &servaddr, sizeof(servaddr)) != 0) {
-        pr_error("bind");
-        return -1;
+    if (connect(*sock, (struct sockaddr *) &servaddr, sizeof(servaddr)) != 0) {
+        pr_error("connect");
+        return false;
     }
-
-    if (listen(sock, 128) != 0) {
-        pr_error("listen");
-        return -1;
-    }
-
-    return sock;
-}
-
-static int full_accept(int sock)
-{
-    struct sockaddr_in servaddr;
-    socklen_t addrlen = sizeof(servaddr);
-#if defined(WIN32) || defined(MACOSX)
-    int sock_comm = accept(sock, (struct sockaddr *) &servaddr, &addrlen);
-#else
-    int sock_comm = accept4(sock, (struct sockaddr *) &servaddr, &addrlen, SOCK_CLOEXEC);
-#endif
-
-    if (sock_comm < 0) {
-        pr_error("accept");
-        return sock_comm;
-    }
-
-    int delayval = 1;
-    if (setsockopt(sock_comm, IPPROTO_TCP, TCP_NODELAY, (const char*) &delayval, sizeof(int)) < 0) {
-        pr_error("nodelay");
-        return -1;
-    }
-
-    return sock_comm;
+    return true;
 }
 
 bool shell_isaccepter;
@@ -1640,17 +1610,12 @@ void SHELL_AlternativeRun()
     VGA_SetupDrawing(0);
     RENDER_SetSize(image_info, 60.);
 
-    shell_networkinit = false;
-
-    int sock_comm = listen_prepare(5677);
-    if (sock_comm < 0)
-        return;
-
-    sock_comm = full_accept(sock_comm);
-    if (sock_comm < 0)
-        return;
-
+    int sock_comm;
     shell_networkinit = true;
+    // Connect to host
+    if (!sock_init(&sock_comm))
+        return;
+    shell_networkinit = false;
 
     stream_uh = LZ4_createStreamDecode();
     stream_lh = LZ4_createStreamDecode();

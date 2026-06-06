@@ -16,13 +16,8 @@
 
 #ifdef WIN32
 #include <winsock2.h>
-#include <ws2tcpip.h>
 #else
-#include <unistd.h>
 #include <sys/socket.h>
-#include <netinet/in.h>
-#include <netinet/tcp.h>
-#include <arpa/inet.h>
 #endif
 
 #include <lz4hc.h>
@@ -69,42 +64,10 @@ static void pr_error(const char *s)
 static int sock;
 static LZ4_streamHC_t stream_uh, stream_lh;
 
-static bool sock_init(int *sock, int port)
-{
-    struct sockaddr_in servaddr;
-
-    *sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (*sock < 0) {
-        pr_error("socket");
-        return false;
-    }
-
-    int delayval = 1;
-    if (setsockopt(*sock, IPPROTO_TCP, TCP_NODELAY, (const char*) &delayval, sizeof(int)) < 0) {
-        pr_error("setsockopt");
-        return false;
-    }
-
-    memset(&servaddr, 0, sizeof(servaddr));
-
-    servaddr.sin_family = AF_INET;
-    servaddr.sin_addr.s_addr = 0x0100007f;
-    servaddr.sin_port = htons(port);
-
-    if (connect(*sock, (struct sockaddr *) &servaddr, sizeof(servaddr)) != 0) {
-        pr_error("connect");
-        return false;
-    }
-    return true;
-}
-
 static int kbd_reader_thread(void *);
 
 static bool send_init()
 {
-    if (!sock_init(&sock, 5677))
-        return false;
-
     if (!SDL_CreateThread(kbd_reader_thread, "kbd render", 0))
         return false;
 
@@ -3112,12 +3075,16 @@ void RENDER_SyncMonochromePaletteSetting(const enum MonochromePalette palette)
 	set_image_adjustment_settings();
 }
 
+void RENDER_SetSock(int s)
+{
+    sock = s;
+
+    if (!send_init())
+        exit(1);
+}
+
 void RENDER_Init()
 {
-    if (shell_ishost)
-        if (!send_init())
-            exit(1);
-
     memset(prevScreen, 0, 320*224);
 
 	auto section = get_section("render");
