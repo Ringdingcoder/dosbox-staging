@@ -2714,12 +2714,12 @@ void MAPPER_CheckEvent(SDL_Event *event)
             if (update) {
                 virtual_joysticks[0].axis_pos[0] =
                     fake_joy[0].left_pressed == fake_joy[0].right_pressed ?
-                    16384 : (fake_joy[0].left_pressed ? 0 : 32767);
+                    0 : (fake_joy[0].left_pressed ? -32768 : 32767);
                 virtual_joysticks[0].button_pressed[0] = fake_joy[0].button0_pressed;
                 virtual_joysticks[0].button_pressed[1] = fake_joy[0].button1_pressed;
                 virtual_joysticks[1].axis_pos[0] =
                     fake_joy[1].left_pressed == fake_joy[1].right_pressed ?
-                    16384 : (fake_joy[1].left_pressed ? 0 : 32767);
+                    0 : (fake_joy[1].left_pressed ? -32768 : 32767);
                 virtual_joysticks[1].button_pressed[0] = fake_joy[1].button0_pressed;
                 printf("set j %d %d\n", virtual_joysticks[1].axis_pos[0], virtual_joysticks[1].button_pressed[0]);
             }
