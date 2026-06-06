@@ -55,14 +55,14 @@
 
 CHECK_NARROWING();
 
-static void pr_error()
+static void pr_error(const char *s)
 {
 #ifdef WIN32
     int wsa_error = WSAGetLastError();
-    fprintf(stderr, "Socket error: %d\n", wsa_error);
+    fprintf(stderr, "Error %s: WSA error code %d\n", s, wsa_error);
 #else
     std::string err = safe_strerror(errno);
-    fprintf(stderr, "Error: %s\n", err.c_str());
+    fprintf(stderr, "Error %s: %s\n", s, err.c_str());
 #endif
 }
 
@@ -75,13 +75,13 @@ static bool sock_init(int *sock, int port)
 
     *sock = socket(AF_INET, SOCK_STREAM, 0);
     if (*sock < 0) {
-        pr_error();
+        pr_error("socket");
         return false;
     }
 
     int delayval = 1;
     if (setsockopt(*sock, IPPROTO_TCP, TCP_NODELAY, (const char*) &delayval, sizeof(int)) < 0) {
-        pr_error();
+        pr_error("setsockopt");
         return false;
     }
 
@@ -92,7 +92,7 @@ static bool sock_init(int *sock, int port)
     servaddr.sin_port = htons(port);
 
     if (connect(*sock, (struct sockaddr *) &servaddr, sizeof(servaddr)) != 0) {
-        pr_error();
+        pr_error("connect");
         return false;
     }
     return true;
@@ -695,7 +695,7 @@ void RENDER_EndUpdate([[maybe_unused]] bool abort)
             memcpy(real_sendbuf+2, &sendlen_lh, 2);
             int ret = complete_write(sock, (const char*) real_sendbuf, (unsigned) sendlen_uh+sendlen_lh+4);
             if (ret < 0)
-                pr_error();
+                pr_error("write");
             if (ret != 0)
                 exit(1);
             render.was_sending = true;
