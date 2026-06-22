@@ -1423,6 +1423,7 @@ send_audio_block::send_audio_block(const uint8_t *begin, const uint8_t *end):
 }
 
 static std::deque<send_audio_block> aqueue;
+static SDL_mutex *alock;
 
 static int decode_diff(uint8_t *tgt, uint8_t *src)
 {
@@ -1451,7 +1452,9 @@ static int decode_diff(uint8_t *tgt, uint8_t *src)
 static void audio_callback(void *_userdata, Uint8 *stream, int todo)
 {
     while (todo) {
+        SDL_mutexP(alock);
         if (aqueue.empty()) {
+            SDL_mutexV(alock);
             printf("gap!\n");
             memset(stream, 128, todo);
             return;
@@ -1469,6 +1472,7 @@ static void audio_callback(void *_userdata, Uint8 *stream, int todo)
             abuf.startpos += use_size;
         } else
             aqueue.pop_front();
+        SDL_mutexV(alock);
     }
 }
 
@@ -1622,6 +1626,7 @@ void SHELL_AlternativeRun()
     initPalette();
 
     SDL_AudioInit(nullptr);
+    alock = SDL_CreateMutex();
 
     SDL_AudioSpec want, have;
     SDL_zero(want);
@@ -1705,8 +1710,11 @@ void SHELL_AlternativeRun()
         decompsize = LZ4_decompress_safe_continue(stream_lh, real_sendbuf+sendlen_uh+4, (char*) lhbuf, sendlen_lh, MAX_SEND_SIZE);
         decomp_pos_lh += decompsize;
         decomp_pos_lh = (decomp_pos_lh + 15) & ~15;
-        if (decompsize)
+        if (decompsize) {
+            SDL_mutexP(alock);
             aqueue.push_back(send_audio_block(lhbuf, lhbuf+decompsize));
+            SDL_mutexV(alock);
+        }
         memcpy(&sendflags, decompbuf, 4);
         int16_t translate_x, translate_y;
         memcpy(&translate_x, decompbuf+4, 2);
