@@ -389,40 +389,56 @@ static void halt_render()
 	render.active             = false;
 }
 
-static void handle_capture_frame()
+// Returns a non-owning view into the latched source frame
+// (`render.last_complete_source`) -- never the live `render.scale.cache`,
+// so callers can't see a torn mid-scanout state. When deinterlacing is on,
+// the returned image is the deinterlacer's output (either in-place over the
+// latch for 32-bit BGRX, or in the deinterlacer's internal decode buffer
+// for other pixel formats).
+//
+// `image_data` is null until the first complete frame has been latched;
+// callers must check.
+//
+// Callers that need to outlive the next latched frame must deep-copy.
+//
+RenderedImage RENDER_GetCurrentImage()
 {
 	RenderedImage image = {};
 
-	image.params = render.src;
-	image.pitch  = render.scale.cache_pitch;
+	if (!render.last_complete_source.valid) {
+		return image;
+	}
 
-	image.image_data = reinterpret_cast<uint8_t*>(render.scale.cache.data());
+	image.params = render.last_complete_source.src;
+	image.pitch  = render.last_complete_source.pitch;
 
-	image.palette = render.palette.rgb;
+	image.image_data = reinterpret_cast<uint8_t*>(
+	        render.last_complete_source.cache.data());
 
-	const auto frames_per_second = static_cast<float>(render.fps);
+	image.palette = render.last_complete_source.palette.rgb;
 
 	if (is_deinterlacing()) {
-		// The pixel data in the returned new image points either to the
-		// input image's data (for 32-bit BGRX images), or to the
-		// deinterlacer's internal decode buffer (for any other pixel
-		// format). We *must not* call `free()` on `new_image` in either
-		// case as it doesn't own these pixel data buffers.
-		//
-		auto new_image = render.deinterlacer->Deinterlace(
-		        image, render.deinterlacing_strength);
-
-		// The image capturer will create its own deep copy the rendered
-		// image (and thus of the pixel data), and will free it when
-		// it's done with it.
-		//
-		// The video capturer doesn't create a copy, and consequently
-		// doesn't free the rendered image either.
-		CAPTURE_AddFrame(new_image, frames_per_second);
-
-	} else {
-		CAPTURE_AddFrame(image, frames_per_second);
+		return render.deinterlacer->Deinterlace(image,
+		                                        render.deinterlacing_strength);
 	}
+	return image;
+}
+
+static void handle_capture_frame()
+{
+	const auto image = RENDER_GetCurrentImage();
+	if (!image.image_data) {
+		return;
+	}
+
+	// The image capturer will create its own deep copy of the rendered
+	// image (and thus of the pixel data), and will free it when it's done
+	// with it.
+	//
+	// The video capturer doesn't create a copy, and consequently doesn't
+	// free the rendered image either.
+	//
+	CAPTURE_AddFrame(image, static_cast<float>(render.fps));
 }
 
 static void deinterlace_rendered_output()
@@ -582,7 +598,29 @@ static uint8_t *encode_diff(uint8_t *tgt, uint8_t *src)
     return tgt;
 }
 
-void RENDER_EndUpdate([[maybe_unused]] bool abort)
+// Latch the just-finished frame's source pixels into
+// `render.last_complete_source` so screenshots / video capture and pause-time
+// re-scale can read a clean, complete frame instead of the live
+// `render.scale.cache` (which can be in the middle of an update during a
+// scanout).
+//
+static void latch_last_complete_source()
+{
+	const auto bytes = static_cast<size_t>(render.scale.cache_pitch) *
+	                   static_cast<size_t>(render.src.height);
+
+	std::memcpy(render.last_complete_source.cache.data(),
+	            render.scale.cache.data(),
+	            bytes);
+
+	render.last_complete_source.src       = render.src;
+	render.last_complete_source.palette   = render.palette;
+	render.last_complete_source.pitch     = render.scale.cache_pitch;
+	render.last_complete_source.valid     = true;
+	render.last_complete_source.populated = true;
+}
+
+void RENDER_EndUpdate(const bool abort)
 {
 	if (!render.render_in_progress) {
 		return;
@@ -590,7 +628,27 @@ void RENDER_EndUpdate([[maybe_unused]] bool abort)
 
 	RENDER_DrawLine = empty_line_handler;
 
-	if (CAPTURE_IsCapturingImage() || CAPTURE_IsCapturingVideo()) {
+	// Latch the just-finished frame before any consumer (capture,
+	// deinterlace) runs, so anything that reads via the latch sees the fresh
+	// frame, not the previous one.
+	if (!abort) {
+		latch_last_complete_source();
+	}
+
+	// Two gates on captures:
+	//
+	//   * `!abort`: Aborted scanouts (vertical retrace cleanup,
+	//     `VGA_KillDrawing()`) leave a half-filled cache. Very rarely, such
+	//     a frame could end up in the video or image captures, resulting in
+	//     random garbage.
+	//
+	//   * `DOSBOX_IsRunning()`: synthetic frames produced by
+	//     `RENDER_RescaleLastFrame()` during a pause must not pollute an
+	//     active video capture.
+	//
+	if (!abort && DOSBOX_IsRunning() &&
+	    (CAPTURE_IsCapturingImage() || CAPTURE_IsCapturingVideo())) {
+
 		handle_capture_frame();
 	}
 
@@ -673,6 +731,84 @@ void RENDER_EndUpdate([[maybe_unused]] bool abort)
 
 	render.render_in_progress = false;
 	render.updating_frame     = false;
+}
+
+// Repaint the held frame at the current render geometry without
+// waiting for a fresh `VGA` scanout. Called from `GFX_ResetScreen()`
+// during pause to handle window-event recreates (resize, fullscreen
+// toggle, mapper close, DPI change).
+//
+// Two concrete cases drive the row mapping below. In both, the user
+// pauses, resizes the window, and the auto-shader picks a different
+// shader on the new canvas size:
+//
+//   1. `crt-hyllian` -> `sharp`. The double-scan -> single-scan flip
+//      retoggles `VGA` scan-doubling: latched cache holds 400 rows
+//      (each `VGA` line emitted twice), `render.src.height` is now
+//      200. We feed every other latched row.
+//
+//   2. `sharp` -> `crt-hyllian`. Single -> double: latched has 200,
+//      `render.src.height` is now 400. We feed each latched row twice.
+//
+// A resize that stays within the same shader family (e.g. an
+// `crt-hyllian` preset switch from 1400p to 4k) keeps the height and
+// runs the loop as a 1:1 copy.
+//
+// Pause-only: the `VGA` palette is CPU-driven and frozen across pause,
+// so the live `render.palette` still matches the latched palette.
+// Outside pause this breaks.
+//
+void RENDER_RescaleLastFrame()
+{
+	if (!render.last_complete_source.populated || !render.active) {
+		return;
+	}
+	if (render.last_complete_source.src.width != render.src.width ||
+	    render.last_complete_source.src.pixel_format != render.src.pixel_format) {
+		return;
+	}
+
+	const auto latched_height = render.last_complete_source.src.height;
+	const auto render_height  = render.src.height;
+
+	// Heights must match one of: 1:1 (same-family resize), latched is
+	// double (case 1 above), or render is double (case 2). Anything
+	// else is an actual `VGA` mode change -- impossible during pause
+	// since the emulated CPU is frozen, so just bail.
+	if (latched_height != render_height && latched_height != render_height * 2 &&
+	    latched_height * 2 != render_height) {
+		return;
+	}
+
+	// Tear down any in-flight scanout cleanly so `RENDER_StartUpdate()`
+	// below can take ownership. `abort = true` skips capture and the
+	// latch update -- both correct: we'd be re-latching the same data
+	// we're about to drive through.
+	if (render.render_in_progress) {
+		RENDER_EndUpdate(true);
+	}
+
+	// Force every line as changed so the scaler rewrites the full
+	// output (otherwise the per-line diff cache may skip lines).
+	render.scale.clear_cache = true;
+
+	if (!RENDER_StartUpdate()) {
+		return;
+	}
+
+	const auto pitch     = render.last_complete_source.pitch;
+	const auto* row_base = reinterpret_cast<const uint8_t*>(
+	        render.last_complete_source.cache.data());
+
+	// Pick the latched row to feed for each output row. The ratio
+	// `latched_height / render_height` is one of {1/1, 2/1, 1/2} per
+	// the check above, so `latched_y` always lands on an integer row.
+	for (int y = 0; y < render_height; ++y) {
+		const auto latched_y = (y * latched_height) / render_height;
+		RENDER_DrawLine(row_base + latched_y * pitch);
+	}
+
+	RENDER_EndUpdate(false);
 }
 
 static SectionProp& get_render_section()
@@ -812,6 +948,13 @@ static void render_callback(GFX_CallbackFunctions_t function)
 void RENDER_SetSize(const ImageInfo& image_info, const double frames_per_second)
 {
 	halt_render();
+
+	// Drop `valid` -- the latched bytes describe the previous source
+	// geometry, so screenshots / video capture must wait for a fresh
+	// `RENDER_EndUpdate(false)` to re-latch. Keep `populated`: the
+	// cache bytes survive (fixed-size embedded array) and
+	// `RENDER_RescaleLastFrame()` adapts them to the new geometry.
+	render.last_complete_source.valid = false;
 
 	if (image_info.width == 0 || image_info.height == 0 ||
 	    image_info.width > ScalerMaxWidth ||
@@ -1253,21 +1396,6 @@ static void log_invalid_viewport_setting_warning(
 		                      pref.c_str(),
 		                      DefaultValue);
 	}
-}
-
-std::optional<std::pair<int, int>> parse_int_dimensions(const std::string_view s)
-{
-	const auto parts = split(s, "x");
-	if (parts.size() == 2) {
-		const auto w = parse_int(parts[0]);
-		const auto h = parse_int(parts[1]);
-		if (w && h) {
-			return {
-			        {*w, *h}
-                        };
-		}
-	}
-	return {};
 }
 
 static std::optional<ViewportSettings> parse_fit_viewport_modes(const std::string& pref)
@@ -1884,8 +2012,9 @@ static void init_render_settings(SectionProp& section)
 	auto int_prop = section.AddInt("frameskip", Deprecated, 0);
 	int_prop->SetHelp(
 	        "The [color=light-green]'frameskip'[reset] setting has been removed; "
-	        "consider capping frame rates using the\n"
-	        "[color=light-green]'host_rate'[reset] setting instead.");
+	        "consider capping frame rates with\n"
+	        "[color=light-green]'presentation_mode'[reset] and "
+	        "[color=light-green]'dos_rate'[reset] instead.");
 
 	auto string_prop = section.AddString("glshader", DeprecatedButAllowed, "");
 	string_prop->SetHelp(
@@ -2099,18 +2228,8 @@ static void init_render_settings(SectionProp& section)
 	        "  dga16:         A modern take on the canonical CGA palette with dialed back\n"
 	        "                 contrast.\n"
 	        "\n"
-	        "You can also set custom colours by specifying 16 space or comma separated\n"
-	        "sRGB colour values, either as 3 or 6-digit hex codes (e.g., #f00 or #ff0000 for\n"
-	        "full red), or decimal RGB triplets (e.g., (255, 0, 255) for magenta). The 16\n"
-	        "colours are ordered as follows:\n"
-	        "\n"
-	        "  black, blue, green, cyan, red, magenta, brown, light-grey, dark-grey,\n"
-	        "  light-blue, light-green, light-cyan, light-red, light-magenta, yellow, white.\n"
-	        "\n"
-	        "Their default values, shown here in 6-digit hex code format, are:\n"
-	        "\n"
-	        "  #000000 #0000aa #00aa00 #00aaaa #aa0000 #aa00aa #aa5500 #aaaaaa\n"
-	        "  #555555 #5555ff #55ff55 #55ffff #ff5555 #ff55ff #ffff55 #ffffff");
+	        "Note: You can place custom palette configuration files inside the 'cga-colors'\n"
+	        "      resource folder and load them by name (without .preset extension).");
 
 	string_prop = section.AddString("scaler", Deprecated, "none");
 	string_prop->SetHelp(

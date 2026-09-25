@@ -116,11 +116,15 @@ constexpr auto NumVgaSequencerRegisters = 0x05;
 constexpr auto NumVgaGraphicsRegisters  = 0x09;
 constexpr auto NumVgaAttributeRegisters = 0x15;
 
-constexpr auto vesa_2_0_modes_start = 0x120;
+constexpr auto Vesa20ModesStart = 0x150;
 
 constexpr uint16_t EGA_HALF_CLOCK = 1 << 0;
 constexpr uint16_t EGA_LINE_DOUBLE = 1 << 1;
 constexpr uint16_t VGA_PIXEL_DOUBLE = 1 << 2;
+
+// Tags modes replaced via the 'vesa_custom_resolution' setting, only so we
+// can force square pixels for them
+constexpr uint16_t VESA_CUSTOM_RESOLUTION = 1 << 3;
 
 // Refresh rate constants
 constexpr auto RefreshRateMin        = 24;
@@ -303,12 +307,6 @@ struct VgaDraw {
 	// If false, no pixel doubling is performed; the content is always drawn
 	// at the "nomimal width" of the video mode.
 	bool pixel_doubling_allowed  = false;
-
-	// If true, non-VESA VGA modes are drawn per scanline. For a handful of
-	// games we need to disable this and drawn the screen in four parts
-	// (chunks) at a time, otherwise they'd crash at startup (this is a
-	// workaround for a deficiency in our VGA emulation code).
-	bool vga_render_per_scanline = true;
 
 	uint8_t font[64 * 1024] = {};
 	uint8_t* font_tables[2] = {nullptr, nullptr};

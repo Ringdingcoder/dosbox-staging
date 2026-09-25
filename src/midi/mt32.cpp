@@ -13,7 +13,7 @@
 #include <string>
 #include <vector>
 
-#include <SDL_endian.h>
+#include <SDL3/SDL_endian.h>
 
 #include "private/mt32_lasynth_model.h"
 
@@ -782,6 +782,11 @@ MidiDeviceMt32::~MidiDeviceMt32()
 	work_fifo.Stop();
 	audio_frame_fifo.Stop();
 
+	// Wake the renderer via the pauser's condvar if it's parked (stopping
+	// `work_fifo` alone does not notify it); once unblocked it sees
+	// `work_fifo` has stopped and exits its loop cleanly.
+	Resume();
+
 	// Wait for the rendering thread to finish
 	if (renderer.joinable()) {
 		renderer.join();
@@ -872,17 +877,19 @@ void MidiDeviceMt32::MixerCallback(const int requested_audio_frames)
 
 	static std::vector<AudioFrame> audio_frames = {};
 
-	const auto has_dequeued = audio_frame_fifo.BulkDequeue(audio_frames,
+	// A short read means the fifo was stopped for a pause (or a genuine
+	// underrun): add whatever we got and pad the shortfall with silence.
+	// Never hand `AddSamples_sfloat` fewer frames than it will read.
+	const auto num_dequeued = audio_frame_fifo.BulkDequeue(audio_frames,
 	                                                       requested_audio_frames);
 
-	if (has_dequeued) {
-		assert(check_cast<int>(audio_frames.size()) == requested_audio_frames);
-		channel->AddSamples_sfloat(requested_audio_frames,
+	if (num_dequeued > 0) {
+		channel->AddSamples_sfloat(check_cast<int>(num_dequeued),
 		                           &audio_frames[0][0]);
 
 		last_rendered_ms = PIC_AtomicIndex();
-	} else {
-		assert(!audio_frame_fifo.IsRunning());
+	}
+	if (check_cast<int>(num_dequeued) < requested_audio_frames) {
 		channel->AddSilence();
 	}
 }
@@ -948,9 +955,23 @@ void MidiDeviceMt32::ProcessWorkFromFifo()
 void MidiDeviceMt32::Render()
 {
 	while (work_fifo.IsRunning()) {
+		if (pauser.ParkIfPaused(audio_frame_fifo)) {
+			continue;
+		}
+
 		work_fifo.IsEmpty() ? RenderAudioFramesToFifo()
 		                    : ProcessWorkFromFifo();
 	}
+}
+
+void MidiDeviceMt32::Pause()
+{
+	pauser.Pause();
+}
+
+void MidiDeviceMt32::Resume()
+{
+	pauser.Resume();
 }
 
 ModelAndDir MidiDeviceMt32::GetModelAndDir()

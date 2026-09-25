@@ -31,7 +31,7 @@ jobs:
     if:      github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           submodules: false
 
@@ -72,7 +72,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           submodules: false
 
@@ -95,18 +95,25 @@ jobs:
           arch: "${{ matrix.conf.arch }}"
 
       - name: Set up CMake
-        uses: lukka/get-cmake@591817e96fcad43505fb4eae36172462abb3a42e # v4.3.3
+        uses: lukka/get-cmake@fffaaafeea488556c2c12dad60690008bc1caacb # v4.4.2
 
       - name:  Log environment
         shell: pwsh
         run:   .\scripts\ci\log-env.ps1
 
-      - name:  Build release
-        if:    ${{ !matrix.conf.debugger }}
-        shell: pwsh
-        run: |
-          cmake -DOPT_DOCUMENTATION=ON --preset release-windows
-          cmake --build --preset release-windows 2>&1 | Tee-Object -FilePath build.log
+      # Retried because the docs build (OPT_DOCUMENTATION=ON) downloads
+      # external assets via the MkDocs Material privacy plugin; a transient
+      # 5xx or DNS hiccup on any source crashes the whole build. Wrapping
+      # the entire step keeps the change minimal; the cmake build is
+      # incremental, so a docs-flake retry skips already-compiled artifacts.
+      - name: Build release
+        if:   ${{ !matrix.conf.debugger }}
+        uses: ./.github/actions/retry
+        with:
+          cmd: |
+            set -eo pipefail
+            cmake -DOPT_DOCUMENTATION=ON --preset release-windows
+            cmake --build --preset release-windows 2>&1 | tee build.log
 
       - name:  Run tests
         if:    ${{ !matrix.conf.debugger }}
@@ -114,12 +121,15 @@ jobs:
         run: |
           ctest -j 4 --preset release-windows 2>&1 | Tee-Object -FilePath tests.log
 
-      - name:  Build release with debugger
-        if:    ${{ matrix.conf.debugger }}
-        shell: pwsh
-        run: |
-          cmake -DOPT_DOCUMENTATION=ON --preset release-windows -DOPT_DEBUGGER=ON -DOPT_HEAVY_DEBUGGER=ON
-          cmake --build --preset release-windows 2>&1 | Tee-Object -FilePath build.log
+      # See the comment on "Build release" above re: why this is retried.
+      - name: Build release with debugger
+        if:   ${{ matrix.conf.debugger }}
+        uses: ./.github/actions/retry
+        with:
+          cmd: |
+            set -eo pipefail
+            cmake -DOPT_DOCUMENTATION=ON --preset release-windows -DOPT_DEBUGGER=ON -DOPT_HEAVY_DEBUGGER=ON
+            cmake --build --preset release-windows 2>&1 | tee build.log
 
       - name: Summarize warnings
         env:
@@ -159,7 +169,9 @@ jobs:
           set -x
           ZIP_NAME=dosbox-vcpkg-deps-windows-${{ matrix.conf.arch }}.zip
 
-          curl -L https://github.com/dosbox-staging/dosbox-staging-ext/releases/download/$VCPKG_EXT_DEPS_VERSION/$ZIP_NAME -o $ZIP_NAME
+          # Retry on transient GitHub release-asset CDN flakes.
+          curl -fL --retry 5 --retry-all-errors --retry-delay 10 \
+            https://github.com/dosbox-staging/dosbox-staging-ext/releases/download/$VCPKG_EXT_DEPS_VERSION/$ZIP_NAME -o $ZIP_NAME
           unzip $ZIP_NAME -d vcpkg-deps
 
           cp vcpkg-deps/release/* "$PACKAGE_DIR"
@@ -172,7 +184,9 @@ jobs:
           set -x
           ZIP_NAME=Nuked-SC55-CLAP-windows-${{ matrix.conf.arch }}-$NUKED_SC55_CLAP_VERSION.zip
 
-          curl -L https://github.com/johnnovak/Nuked-SC55-CLAP/releases/download/$NUKED_SC55_CLAP_VERSION/$ZIP_NAME -o $ZIP_NAME
+          # Retry on transient GitHub release-asset CDN flakes.
+          curl -fL --retry 5 --retry-all-errors --retry-delay 10 \
+            https://github.com/johnnovak/Nuked-SC55-CLAP/releases/download/$NUKED_SC55_CLAP_VERSION/$ZIP_NAME -o $ZIP_NAME
           unzip $ZIP_NAME -d nuked-sc55-clap
 
           PLUGINS_DIR="$PACKAGE_DIR/plugins"
@@ -212,6 +226,13 @@ jobs:
           path: ${{ env.PACKAGE_DIR }}/${{ env.DOSBOX_DEBUGGER_EXE }}
           overwrite: true
 
+      - name:  Report repo cache usage
+        if:    always()
+        shell: bash
+        run:   gh cache list --limit 50 --sort size_in_bytes --order desc
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
 
   merge_artifacts:
     name: Merge release & debugger artifacts (${{ matrix.arch }} )
@@ -227,7 +248,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           submodules: false
 
@@ -253,7 +274,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           submodules: false
 

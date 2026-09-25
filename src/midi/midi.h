@@ -220,6 +220,13 @@ void MIDI_RawOutByte(const uint8_t data);
 void MIDI_Mute();
 void MIDI_Unmute();
 
+// Pause hook: silence external MIDI (CC 7 = 0 per channel) so sustained
+// notes on hardware synths don't ring through the pause, and halt the
+// internal software synths' renderer threads so the synth clock doesn't
+// advance while paused.
+void MIDI_Pause();
+void MIDI_Resume();
+
 struct MidiWork {
 	std::vector<uint8_t> message = {};
 	int num_pending_audio_frames = 0;

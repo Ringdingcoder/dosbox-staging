@@ -107,6 +107,39 @@ struct Render {
 		int y_scale = 0;
 	} scale = {};
 
+	// Source-pixel snapshot of the last completed frame. Deep-copied from
+	// `scale.cache` at the end of every successful `RENDER_EndUpdate(false)`.
+	//
+	// Used as a clean source for screenshots and video capture, so consumers
+	// don't read the live, possibly mid-frame `scale.cache`, and as the input
+	// for `RENDER_RescaleLastFrame()` after a pause-time recreate.
+	struct {
+		alignas(uint64_t)
+		        std::array<uint32_t, ScalerMaxWidth * ScalerMaxHeight> cache = {};
+
+		ImageInfo src         = {};
+		RenderPalette palette = {};
+
+		int pitch = 0;
+
+		// `true` when the latched data matches `render.src` exactly
+		// (width, height, pixel format). Reset by `RENDER_SetSize()`,
+		// so e.g. a pause-time scan-doubling toggle (`crt-hyllian` ->
+		// `sharp` and back) drops it to false.
+		// `RENDER_GetCurrentImage()` gates on this so screenshots /
+		// video capture never pick up a frame at the previous geometry.
+		bool valid = false;
+
+		// `true` once any frame has ever been latched. *Not* reset by
+		// `RENDER_SetSize()` -- the cache lives in a fixed-size array
+		// embedded in this struct, so the bytes survive that reset.
+		// `RENDER_RescaleLastFrame()` reads via this flag during
+		// pause-time recreates: with no scanout coming to repopulate
+		// the latch, the held bytes are the only source we can
+		// replay through the freshly-configured scaler.
+		bool populated = false;
+	} last_complete_source = {};
+
 	RenderPalette palette = {};
 
 	uint32_t* dest = nullptr;
@@ -269,6 +302,19 @@ void RENDER_SetSize(const ImageInfo& image_info, const double frames_per_second)
 
 bool RENDER_StartUpdate();
 void RENDER_EndUpdate(bool abort);
+
+// Returns the last completed source-pixel frame as a non-owning
+// `RenderedImage`. Never returns a torn mid-scanout view -- the live
+// `render.scale.cache` is private to the scaler. `image_data` is null
+// until the first complete frame has been latched (e.g. right after a
+// video mode change); callers must check.
+RenderedImage RENDER_GetCurrentImage();
+
+// Rescale the latched source frame at the current output dimensions and
+// run it through `RENDER_EndUpdate(false)` so the renderer's
+// `last_framebuf` is refreshed. No effect on VGA timing or PIC -- the
+// emulator core stays paused. No-op if no frame has been latched yet.
+void RENDER_RescaleLastFrame();
 
 void RENDER_SetPalette(const uint8_t entry, const uint8_t red,
                        const uint8_t green, const uint8_t blue);

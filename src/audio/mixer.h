@@ -13,6 +13,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <string>
 #include <utility>
@@ -34,7 +35,53 @@
 // 48000 Hz, that's 48 frames.
 using MIXER_Handler = std::function<void(int frames)>;
 
-enum class MixerState { NoSound, On, Muted };
+// Mute FSM. Mirrors the structure of the pause FSM in `src/dosbox.cpp` --
+// two distinct mute causes (user / focus-loss) with overlapping behaviour
+// but separate ownership of the transition.
+//
+// Transitions:
+//   Audible    -> UserMuted    `MIXER_RequestUserMute()`
+//   Audible    -> AutoMuted    `MIXER_RequestAutoMute()`
+//   UserMuted  -> Audible      `MIXER_RequestUserUnmute()`
+//
+//   AutoMuted  -> Audible      `MIXER_RequestAutoUnmute()` /
+//                              `MIXER_RequestUserUnmute()`
+//
+//   AutoMuted  -> UserMuted    `MIXER_RequestUserMute()` (upgrade)
+//
+// No-ops (intentional):
+//
+//   UserMuted  -> AutoMuted    user-mute survives focus changes
+//   UserMuted  -> any via RequestAutoUnmute
+//
+// Pause is orthogonal to mute. The mixer is silent if EITHER
+// `DOSBOX_IsPaused()` OR `mute_state != Audible`. The
+// two axes don't share state, so toggling mute during pause is just a
+// normal mute transition.
+//
+enum class MixerMuteState {
+	// Output flows normally to SDL.
+	Audible,
+
+	// User toggled the mute via the hotkey or the HTTP API.
+	// Survives focus changes; only the user can clear it.
+	UserMuted,
+
+	// `mute_when_inactive` kicked in on focus loss.
+	// Cleared automatically on focus gain.
+	AutoMuted
+};
+
+// Intent signals that drive the mute FSM.
+enum class MuteRequest {
+	// Intent coming from the hotkey invocations / HTTP API
+	UserMute,
+	UserUnmute,
+
+	// Intent coming from the `mute_when_inactive` focus loss / gain path.
+	AutoMute,
+	AutoUnmute
+};
 
 static constexpr int MixerBufferByteSize = 16 * 1024;
 static constexpr int MixerBufferMask     = MixerBufferByteSize - 1;
@@ -288,8 +335,12 @@ public:
 		static constexpr auto DefaultWaitMs = 500;
 		static constexpr auto MaxWaitMs     = 5000;
 
-		AudioFrame last_frame          = {};
-		int64_t woken_at_ms            = {};
+		AudioFrame last_frame = {};
+		// Wakeup timestamp in PIC (emulator) milliseconds, not wall
+		// clock. The mixer pauses with `DOSBOX_IsPaused()`; PIC time
+		// freezes with it. Using `GetTicks()` would count the pause as
+		// "awake" and force a fade-out / sleep on resume.
+		double woken_at_pic_ms         = {};
 		float fadeout_level            = {};
 		float fadeout_decrement_per_ms = {};
 		int fadeout_or_sleep_after_ms  = {};
@@ -445,8 +496,8 @@ private:
 
 using MixerChannelPtr = std::shared_ptr<MixerChannel>;
 
-MixerChannelPtr MIXER_AddChannel(MIXER_Handler handler,
-                                 const int sample_rate_hz, const std::string& name,
+MixerChannelPtr MIXER_AddChannel(MIXER_Handler handler, const int sample_rate_hz,
+                                 const std::string& name,
                                  const std::set<ChannelFeature>& features);
 
 MixerChannelPtr MIXER_FindChannel(const char* name);
@@ -469,16 +520,41 @@ bool MIXER_FastForwardModeEnabled();
 const AudioFrame MIXER_GetMasterVolume();
 void MIXER_SetMasterVolume(const AudioFrame gain);
 
-void MIXER_Mute();
-void MIXER_Unmute();
+// Mute FSM. See the comment on `MixerMuteState` above for the state graph
+// and the rationale for orthogonal pause / mute states.
+MixerMuteState MIXER_GetMuteState();
+
+// Pure mute-transition policy: the next state for `request` in `current`, or
+// `nullopt` if the request is a no-op there. No side effects -- the
+// `MIXER_Request*()` functions below apply its result.
+std::optional<MixerMuteState> MIXER_NextMuteState(MixerMuteState current,
+                                                  MuteRequest request);
+
+// User-driven hotkey path. Overrides any AutoMuted state in effect.
+void MIXER_RequestUserMute();
+void MIXER_RequestUserUnmute();
+
+// `mute_when_inactive` focus-loss / focus-gain path. UserMuted survives
+// both -- user-initiated mute trumps focus changes.
+void MIXER_RequestAutoMute();
+void MIXER_RequestAutoUnmute();
+
+// Current fade-out/-in gain (0.0 = silent, 1.0 = full). Updated by the
+// mixer thread on each iteration. Read by the PausePending FSM in
+// dosbox.cpp to know when a fade-out has completed, so it can hand off
+// to the actually-paused state at the exact moment the audible fade
+// reaches zero.
+float MIXER_GetPlaybackGain();
 
 void MIXER_LockMixerThread();
 void MIXER_UnlockMixerThread();
 void MIXER_CloseAudioDevice();
 
-// Return true if the mixer was explicitly muted by the user (as opposed to
-// auto-muted when `mute_when_inactive` is enabled).
-bool MIXER_IsManuallyMuted();
+// Drop any leftover audio samples sitting in the capture queue between
+// recording sessions. Must be called BEFORE flipping a capture state from
+// `Off` to `Pending` so the mixer thread still sees `Off` and isn't
+// enqueueing fresh samples that this call would wipe.
+void MIXER_ClearCaptureQueue();
 
 CrossfeedPreset MIXER_GetCrossfeedPreset();
 void MIXER_SetCrossfeedPreset(const CrossfeedPreset new_preset);

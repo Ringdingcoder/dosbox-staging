@@ -25,6 +25,9 @@
 // Copyright string
 #define DOSBOX_COPYRIGHT "(C) " DOSBOX_TEAM
 
+// Website URL
+#define DOSBOX_WEBSITE "https://www.dosbox-staging.org"
+
 // Address to report bugs
 #define DOSBOX_BUGS_TO "https://github.com/dosbox-staging/dosbox-staging/issues"
 
@@ -43,6 +46,32 @@
 void DOSBOX_RequestShutdown();
 
 bool DOSBOX_IsShutdownRequested();
+
+// Pause API. The emulator is either running or paused. Pause requests come
+// from the user (via hotkeys today; an HTTP API pause endpoint is planned
+// but not yet implemented) and from host-window inactivity (when the
+// `pause_when_inactive` conf setting is enabled).
+//
+// We express only *intent* via these API calls; the actual implementation
+// decides the appropriate course of action (e.g., user pause trumps
+// auto-pausing, and auto-resume never resumes a user pause).
+//
+bool DOSBOX_IsRunning();
+bool DOSBOX_IsPaused();
+
+// True whenever a pause has been requested but not necessarily engaged
+// yet -- covers the SDL fade-out pending window as well as the actually-
+// paused states. Callers that want "user has asked to pause" semantics
+// (e.g. the mixer's fade-to-silence trigger) use this. Callers that care
+// about subsystem state (mixer thread's silence path, capture skip) use
+// `DOSBOX_IsPaused()` instead.
+bool DOSBOX_IsPauseRequested();
+
+void DOSBOX_RequestUserPause();
+void DOSBOX_RequestUserResume();
+
+void DOSBOX_RequestAutoPause();
+void DOSBOX_RequestAutoResume();
 
 // The E_Exit function throws an exception to quit. Call it in unexpected
 // circumstances.

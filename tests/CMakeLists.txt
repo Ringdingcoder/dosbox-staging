@@ -9,10 +9,12 @@ add_executable(dosbox_tests
     cmd_move_tests.cpp
     dos_files_tests.cpp
     dos_memory_struct_tests.cpp
+    dosbox_pause_fsm_tests.cpp
     dosbox_test_fixture.h
     drives_tests.cpp
     fraction_tests.cpp
     fs_utils_tests.cpp
+    image_decoder_tests.cpp
     int10_modes_tests.cpp
     language_territory_tests.cpp
     math_utils_tests.cpp
@@ -51,7 +53,7 @@ endif()
 target_link_libraries(dosbox_tests PRIVATE
     GTest::gmock_main
     dosboxcommon
-    $<IF:$<TARGET_EXISTS:SDL2::SDL2>,SDL2::SDL2,SDL2::SDL2-static>
+    SDL3::Headers
     PkgConfig::lz4
 )
 

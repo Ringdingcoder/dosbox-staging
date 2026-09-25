@@ -5,10 +5,10 @@
 #define DOSBOX_MT32_H
 
 #include "midi_device.h"
+#include "synth_render_pauser.h"
 
 #if C_MT32EMU
 
-#include <atomic>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -55,6 +55,9 @@ public:
 	void SendMidiMessage(const MidiMessage& msg) override;
 	void SendSysExMessage(uint8_t* sysex, size_t len) override;
 
+	void Pause() override;
+	void Resume() override;
+
 	void PrintStats();
 
 	ModelAndDir GetModelAndDir();
@@ -76,6 +79,9 @@ private:
 	std::mutex service_mutex                  = {};
 	std::unique_ptr<MT32Emu::Service> service = {};
 	std::thread renderer                      = {};
+
+	// Parks the renderer thread during a DOSBox pause.
+	SynthRenderPauser pauser = {};
 
 	ModelAndDir model_and_dir = {};
 

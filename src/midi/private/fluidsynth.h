@@ -5,8 +5,8 @@
 #define DOSBOX_FLUIDSYNTH_H
 
 #include "midi_device.h"
+#include "synth_render_pauser.h"
 
-#include <atomic>
 #include <fluidsynth.h>
 #include <memory>
 #include <optional>
@@ -101,6 +101,9 @@ public:
 	void SendMidiMessage(const MidiMessage& msg) override;
 	void SendSysExMessage(uint8_t* sysex, size_t len) override;
 
+	void Pause() override;
+	void Resume() override;
+
 	std_fs::path GetSoundFontPath();
 
 	void SetChorus();
@@ -136,6 +139,9 @@ private:
 	RWQueue<AudioFrame> audio_frame_fifo{1};
 	RWQueue<MidiWork> work_fifo{1};
 	std::thread renderer = {};
+
+	// Parks the renderer thread during a DOSBox pause.
+	SynthRenderPauser pauser = {};
 
 	std_fs::path soundfont_path = {};
 

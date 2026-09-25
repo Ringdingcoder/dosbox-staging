@@ -340,6 +340,7 @@ endif()
 option(OPT_MT32EMU "Enable Roland MT-32 emulation support" ON)
 if (OPT_MT32EMU)
   set(C_MT32EMU ON)
+  find_package(MT32Emu REQUIRED)
 endif()
 
 if (OPT_DEBUGGER)
@@ -483,12 +484,11 @@ endif()
 set(CMAKE_BUILD_WITH_INSTALL_RPATH ON)
 
 # Find common external dependencies
-find_package(SDL2 CONFIG REQUIRED)
-find_package(SDL2_image CONFIG REQUIRED)
+find_package(SDL3 REQUIRED CONFIG REQUIRED COMPONENTS SDL3)
+find_package(SDL3_image CONFIG REQUIRED)
 find_package(iir REQUIRED)
 find_package(PNG REQUIRED)
 find_package(OpenGL REQUIRED)
-find_package(MT32Emu REQUIRED)
 find_package(FluidSynth REQUIRED CONFIG)
 if (C_ALSA)
   find_package(ALSA REQUIRED)
@@ -581,8 +581,7 @@ target_link_libraries(dosboxcommon PRIVATE
 
 target_link_libraries(dosbox PRIVATE
   dosboxcommon
-  $<TARGET_NAME_IF_EXISTS:SDL2::SDL2main>
-  $<IF:$<TARGET_EXISTS:SDL2::SDL2>,SDL2::SDL2,SDL2::SDL2-static>
+  SDL3::Headers
   PkgConfig::lz4
 )
 

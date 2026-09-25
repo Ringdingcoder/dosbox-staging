@@ -341,7 +341,6 @@ bool localDrive::FindFirst(const char* _dir, DOS_DTA& dta, bool fcb_findfirst)
 bool localDrive::FindNext(DOS_DTA& dta)
 {
 	char* dir_ent;
-	struct stat stat_block;
 	char full_name[CROSS_LEN];
 	char dir_entcopy[CROSS_LEN];
 
@@ -369,9 +368,6 @@ bool localDrive::FindNext(DOS_DTA& dta)
 		safe_strcpy(dir_entcopy, dir_ent);
 		const char* temp_name = dirCache.GetExpandNameAndNormaliseCase(
 		        full_name);
-		if (stat(temp_name, &stat_block) != 0) {
-			continue; // No symlinks and such
-		}
 
 		if (is_hidden_by_host(temp_name)) {
 			continue; // No host-only hidden files
@@ -390,23 +386,22 @@ bool localDrive::FindNext(DOS_DTA& dta)
 
 		/*file is okay, setup everything to be copied in DTA Block */
 		char find_name[DOS_NAMELENGTH_ASCII] = "";
-		uint16_t find_date;
-		uint16_t find_time;
-		uint32_t find_size;
+		uint16_t find_date = 6;
+		uint16_t find_time = 4;
+		uint32_t find_size = 0;
 
 		if (safe_strlen(dir_entcopy) < DOS_NAMELENGTH_ASCII) {
 			safe_strcpy(find_name, dir_entcopy);
 			upcase(find_name);
 		}
 
-		find_size = (uint32_t)stat_block.st_size;
-		struct tm datetime;
-		if (cross::localtime_r(&stat_block.st_mtime, &datetime)) {
-			find_date = DOS_PackDate(datetime);
-			find_time = DOS_PackTime(datetime);
-		} else {
-			find_time = 6;
-			find_date = 4;
+		const auto handle = open_native_file(temp_name, false);
+		if (handle != InvalidNativeFileHandle) {
+			const auto time = get_dos_file_time(handle);
+			find_date = time.date;
+			find_time = time.time;
+			find_size = local_drive_get_file_size(handle);
+			close_native_file(handle);
 		}
 		dta.SetResult(find_name,
 		              find_size,
@@ -482,18 +477,16 @@ bool localDrive::RemoveDir(const char* dir)
 bool localDrive::TestDir(const char* dir)
 {
 	const std::string host_dir = MapDosToHostFilename(dir);
+	FatAttributeFlags attributes = {};
+	if (local_drive_get_attributes(host_dir.c_str(), attributes) != DOSERR_NONE) {
+		return false;
+	}
 	// Skip directory test, if "\"
 	if (!host_dir.empty() && host_dir.back() != '\\') {
 		// It has to be a directory !
-		struct stat test;
-		if (stat(host_dir.c_str(), &test)) {
-			return false;
-		}
-		if ((test.st_mode & S_IFDIR) == 0) {
-			return false;
-		}
+		return attributes.directory;
 	}
-	return local_drive_path_exists(host_dir.c_str());
+	return true;
 }
 
 bool localDrive::Rename(const char* oldname, const char* newname)
@@ -526,14 +519,11 @@ bool localDrive::AllocationInfo(uint16_t* _bytes_sector, uint8_t* _sectors_clust
 bool localDrive::FileExists(const char* name)
 {
 	const std::string host_filename = MapDosToHostFilename(name);
-	struct stat temp_stat;
-	if (stat(host_filename.c_str(), &temp_stat) != 0) {
+	FatAttributeFlags attributes = {};
+	if (local_drive_get_attributes(host_filename.c_str(), attributes) != DOSERR_NONE) {
 		return false;
 	}
-	if (temp_stat.st_mode & S_IFDIR) {
-		return false;
-	}
-	return true;
+	return !attributes.directory;
 }
 
 uint8_t localDrive::GetMediaByte(void)

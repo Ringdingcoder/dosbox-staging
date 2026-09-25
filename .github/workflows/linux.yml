@@ -31,7 +31,7 @@ jobs:
     if:      github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           submodules: false
 
@@ -98,7 +98,7 @@ jobs:
           - name: GCC 13, Ubuntu 24.04, debugger build
             os: ubuntu-24.04
             cmake_preset: debug-linux-vcpkg
-            cmake_flags: -DOPT_HEAVY_DEBUGGER=ON
+            cmake_flags: -DOPT_DEBUGGER=ON -DOPT_HEAVY_DEBUGGER=ON
             cc:  gcc
             cxx: g++
             compiler_version: "13"
@@ -106,7 +106,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           submodules: false
 
@@ -114,14 +114,19 @@ jobs:
         uses: ./.github/actions/set-common-vars
 
       - name: Set up CMake
-        uses: lukka/get-cmake@591817e96fcad43505fb4eae36172462abb3a42e # v4.3.3
+        uses: lukka/get-cmake@fffaaafeea488556c2c12dad60690008bc1caacb # v4.4.2
 
-      - name: Install dependencies
-        run: |
-          export DEBIAN_FRONTEND=noninteractive
-          sudo apt-get update
-          sudo apt-get install -y $(cat extras/linux/ubuntu-24.04-packages.txt)
+      - name: Load apt package list
+        id:   apt_pkgs
+        run:  echo "list=$(tr '\n' ' ' < extras/linux/ubuntu-24.04-packages.txt)" >> "$GITHUB_OUTPUT"
 
+      # See linting.yml for notes on this action.
+      - name: Install apt dependencies
+        id:   apt_cache
+        uses: awalsh128/cache-apt-pkgs-action@681749ae568c81c2037cb9185e38b709b261bd2f # v1.6.1
+        with:
+          packages: ${{ steps.apt_pkgs.outputs.list }}
+          version:  "1.0"
 
       - name: Install GCC ${{ matrix.conf.compiler_version }} and switch alternative
         if: ${{ matrix.conf.cc == 'gcc' && matrix.conf.compiler_version != '13' }}
@@ -145,6 +150,9 @@ jobs:
           g++ --version
 
 
+      - name: Report apt cache status
+        run:  echo "apt cache hit:" "${{ steps.apt_cache.outputs.cache-hit || 'false' }}"
+
       - name: Set up vcpkg
         uses: ./.github/actions/setup-vcpkg
         with:
@@ -156,13 +164,21 @@ jobs:
       - name: Log environment
         run: ./scripts/ci/log-env.sh
 
+      # Retried because the docs build (OPT_DOCUMENTATION=ON) downloads
+      # external assets via the MkDocs Material privacy plugin; a transient
+      # 5xx or DNS hiccup on any source crashes the whole build. Wrapping
+      # the entire step keeps the change minimal; the cmake build is
+      # incremental, so a docs-flake retry skips already-compiled artifacts.
       - name: Build
-        run: |
-          set -xo pipefail
-          export CC=${{ matrix.conf.cc }}
-          export CXX=${{ matrix.conf.cxx }}
-          cmake ${{ matrix.conf.cmake_flags }} -DOPT_DOCUMENTATION=ON --preset ${{ matrix.conf.cmake_preset }}
-          cmake --build --preset ${{ matrix.conf.cmake_preset }} 2>&1 | tee build.log
+        env:
+          CC:  ${{ matrix.conf.cc }}
+          CXX: ${{ matrix.conf.cxx }}
+        uses: ./.github/actions/retry
+        with:
+          cmd: |
+            set -xeo pipefail
+            cmake ${{ matrix.conf.cmake_flags }} -DOPT_DOCUMENTATION=ON --preset ${{ matrix.conf.cmake_preset }}
+            cmake --build --preset ${{ matrix.conf.cmake_preset }} 2>&1 | tee build.log
 
       - name: Run tests
         run: |
@@ -182,7 +198,7 @@ jobs:
     if:      github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           submodules: false
 
@@ -190,13 +206,22 @@ jobs:
         uses: ./.github/actions/set-common-vars
 
       - name: Set up CMake
-        uses: lukka/get-cmake@591817e96fcad43505fb4eae36172462abb3a42e # v4.3.3
+        uses: lukka/get-cmake@fffaaafeea488556c2c12dad60690008bc1caacb # v4.4.2
 
-      - name: Install all dependencies
-        run: |
-          export DEBIAN_FRONTEND=noninteractive
-          sudo apt-get update
-          sudo apt-get install -y $(cat extras/linux/ubuntu-24.04-packages.txt)
+      - name: Load apt package list
+        id:   apt_pkgs
+        run:  echo "list=$(tr '\n' ' ' < extras/linux/ubuntu-24.04-packages.txt)" >> "$GITHUB_OUTPUT"
+
+      # See linting.yml for notes on this action.
+      - name: Install apt dependencies
+        id:   apt_cache
+        uses: awalsh128/cache-apt-pkgs-action@681749ae568c81c2037cb9185e38b709b261bd2f # v1.6.1
+        with:
+          packages: ${{ steps.apt_pkgs.outputs.list }}
+          version:  "1.0"
+
+      - name: Report apt cache status
+        run:  echo "apt cache hit:" "${{ steps.apt_cache.outputs.cache-hit || 'false' }}"
 
       - name: Set up vcpkg
         uses: ./.github/actions/setup-vcpkg
@@ -208,11 +233,18 @@ jobs:
       - name: Log environment
         run: ./scripts/ci/log-env.sh
 
+      # Retried because the docs build (OPT_DOCUMENTATION=ON) downloads
+      # external assets via the MkDocs Material privacy plugin; a transient
+      # 5xx or DNS hiccup on any source crashes the whole build. Wrapping
+      # the entire step keeps the change minimal; the cmake build is
+      # incremental, so a docs-flake retry skips already-compiled artifacts.
       - name: Build release
-        run: |
-          set -x
-          cmake -DOPT_DOCUMENTATION=ON --preset release-linux-vcpkg
-          cmake --build --preset release-linux-vcpkg
+        uses: ./.github/actions/retry
+        with:
+          cmd: |
+            set -xe
+            cmake -DOPT_DOCUMENTATION=ON --preset release-linux-vcpkg
+            cmake --build --preset release-linux-vcpkg
 
       - name: Dump workspace contents
         run: find $RUNNER_WORKSPACE
@@ -238,7 +270,9 @@ jobs:
           set -x
           ZIP_NAME=dosbox-vcpkg-deps-linux-x86_64.zip
 
-          wget -nv https://github.com/dosbox-staging/dosbox-staging-ext/releases/download/$VCPKG_EXT_DEPS_VERSION/$ZIP_NAME
+          # Retry on transient GitHub release-asset CDN flakes.
+          wget -nv --tries=5 --waitretry=10 --retry-connrefused \
+            https://github.com/dosbox-staging/dosbox-staging-ext/releases/download/$VCPKG_EXT_DEPS_VERSION/$ZIP_NAME
           unzip $ZIP_NAME -d vcpkg-deps
 
           LIB_DIR="dosbox-staging-linux-x86_64-$DOSBOX_VERSION_AND_HASH/lib"
@@ -251,7 +285,9 @@ jobs:
           set -x
           ZIP_NAME=Nuked-SC55-CLAP-linux-x86_64-$NUKED_SC55_CLAP_VERSION.zip
 
-          curl -L https://github.com/johnnovak/Nuked-SC55-CLAP/releases/download/$NUKED_SC55_CLAP_VERSION/$ZIP_NAME -o $ZIP_NAME
+          # Retry on transient GitHub release-asset CDN flakes.
+          curl -fL --retry 5 --retry-all-errors --retry-delay 10 \
+            https://github.com/johnnovak/Nuked-SC55-CLAP/releases/download/$NUKED_SC55_CLAP_VERSION/$ZIP_NAME -o $ZIP_NAME
           unzip $ZIP_NAME -d nuked-sc55-clap
 
           PLUGINS_DIR="dosbox-staging-linux-x86_64-$DOSBOX_VERSION_AND_HASH/plugins"
@@ -276,3 +312,10 @@ jobs:
           name: dosbox-staging-linux-x86_64-${{ env.DOSBOX_VERSION_AND_HASH }}.tar.xz
           path: dosbox-staging-linux-x86_64-${{ env.DOSBOX_VERSION_AND_HASH }}.tar.xz
           archive: false
+
+      - name:  Report repo cache usage
+        if:    always()
+        shell: bash
+        run:   gh cache list --limit 50 --sort size_in_bytes --order desc
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

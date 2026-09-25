@@ -41,7 +41,7 @@ void ImageDecoder::GetNextRowAsIndexed8Pixels(std::vector<uint8_t>::iterator out
 
 		*out = palette_index;
 
-		++in_pos;
+		in_pos += (pixel_skip_count + 1);
 		++out;
 	}
 
@@ -72,7 +72,7 @@ void ImageDecoder::GetBgrx32RowFromIndexed8(std::vector<uint32_t>::iterator out)
 		const auto palette_index = *in_pos;
 		const auto color         = image.palette[palette_index];
 
-		*out = color;
+		*out = Bgrx8888{color.red, color.green, color.blue};
 
 		in_pos += (pixel_skip_count + 1);
 		++out;
