@@ -660,7 +660,7 @@ public:
 		        std::unique_ptr<SDL_JoystickID[], decltype(&SDL_free)>(
 		                SDL_GetJoysticks(&num_joysticks), SDL_free);
 
-		sdl_joystick = SDL_OpenJoystick(joysticks[0]);
+		sdl_joystick = nullptr;
 		stick_id     = SDL_GetJoystickID(sdl_joystick);
 
 		set_joystick_led(sdl_joystick, on_color);
@@ -2935,8 +2935,7 @@ static void QueryJoysticks()
 		SDL_Joystick* stick = SDL_OpenJoystick(joysticks[i]);
 		set_joystick_led(stick, marginal_color);
 
-		useable[i] = (SDL_GetNumJoystickAxes(stick) >= req_min_axis) ||
-		             (SDL_GetNumJoystickButtons(stick) > 0);
+		useable[i] = true;
 
 		set_joystick_led(stick, off_color);
 		SDL_CloseJoystick(stick);
