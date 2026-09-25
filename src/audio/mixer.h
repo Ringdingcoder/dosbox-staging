@@ -625,12 +625,12 @@ inline void MIXER_PullFromQueueCallback(const int frames_requested, DeviceType* 
 	}
 }
 
-struct SDL_mutex;
+struct SDL_Mutex;
 
 typedef std::vector<uint8_t> send_audio_block;
 
 struct mixer_send_feed {
-    SDL_mutex *lock;
+    SDL_Mutex *lock;
     std::vector<send_audio_block> buf;
 };
 

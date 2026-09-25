@@ -1449,7 +1449,7 @@ static const int SCREEN_HEIGHT = 448;
 static constexpr double NANOSECONDS_PER_SECOND = 1000000000.0;
 
 static LZ4_streamDecode_t *stream_uh, *stream_lh;
-SDL_AudioDeviceID adev;
+SDL_AudioStream *astream;
 
 struct send_audio_block {
     std::vector<uint8_t> data;
@@ -1465,7 +1465,7 @@ send_audio_block::send_audio_block(const uint8_t *begin, const uint8_t *end):
 }
 
 static std::deque<send_audio_block> aqueue;
-static SDL_mutex *alock;
+static SDL_Mutex *alock;
 
 static int decode_diff(uint8_t *tgt, uint8_t *src)
 {
@@ -1494,9 +1494,9 @@ static int decode_diff(uint8_t *tgt, uint8_t *src)
 static void audio_callback(void *_userdata, Uint8 *stream, int todo)
 {
     while (todo) {
-        SDL_mutexP(alock);
+        SDL_LockMutex(alock);
         if (aqueue.empty()) {
-            SDL_mutexV(alock);
+            SDL_UnlockMutex(alock);
             printf("gap!\n");
             memset(stream, 128, todo);
             return;
@@ -1514,7 +1514,19 @@ static void audio_callback(void *_userdata, Uint8 *stream, int todo)
             abuf.startpos += use_size;
         } else
             aqueue.pop_front();
-        SDL_mutexV(alock);
+        SDL_UnlockMutex(alock);
+    }
+}
+
+void MyNewAudioCallback(void *userdata, SDL_AudioStream *stream, int additional_amount, int total_amount)
+{
+    if (additional_amount > 0) {
+        Uint8 *data = SDL_stack_alloc(Uint8, additional_amount);
+        if (data) {
+            audio_callback(userdata, data, additional_amount);
+            SDL_PutAudioStreamData(stream, data, additional_amount);
+            SDL_stack_free(data);
+        }
     }
 }
 
@@ -1667,59 +1679,49 @@ void SHELL_AlternativeRun()
     stream_lh = LZ4_createStreamDecode();
     initPalette();
 
-    SDL_AudioInit(nullptr);
+    SDL_Init(SDL_INIT_AUDIO);
     alock = SDL_CreateMutex();
 
-    SDL_AudioSpec want, have;
-    SDL_zero(want);
-    want.freq = 12000;
-    want.format = AUDIO_U8;
-    want.channels = 1;
-    want.samples = 256;
-    want.callback = audio_callback;
-    want.userdata = nullptr;
-    // Instead of the callback, I could use SDL_QueueAudio!
-    adev = SDL_OpenAudioDevice(NULL, 0, &want, &have, 0);
-    if (!adev) {
+    const SDL_AudioSpec spec = { SDL_AUDIO_U8, 1, 12000 };
+    astream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, MyNewAudioCallback, nullptr);
+    if (!astream) {
         fprintf(stderr, "open audio\n");
         return;
     }
-    printf("samples: %d\n", have.samples);
-    SDL_PauseAudioDevice(adev, 0);
+    SDL_ResumeAudioDevice(SDL_GetAudioStreamDevice(astream));
 
     bool quit = false;
     while (!quit) {
         SDL_Event e;
 
         while( SDL_PollEvent( &e ) != 0 )
-            switch (e.type) {
-            case SDL_QUIT:
-            {
-                quit = true;
-                break;
-            }
-            case SDL_WINDOWEVENT: {
+            if (e.type >= SDL_EVENT_WINDOW_FIRST && e.type <= SDL_EVENT_WINDOW_LAST)
                 handle_sdl_windowevent(e);
-                break;
-            }
-
-            case SDL_KEYDOWN:
-            case SDL_KEYUP:
-            {
-                if (e.type == SDL_KEYDOWN && e.key.keysym.scancode == SDL_SCANCODE_RETURN && e.key.keysym.mod & KMOD_ALT)
-                    toggle_fullscreen();
-                else if (!e.key.repeat) {
-                    uint8_t buf[8];
-                    buf[0] = e.type == SDL_KEYDOWN;
-                    buf[1] = e.key.keysym.scancode;
-                    memcpy(buf+2, &e.key.keysym.sym, 4);
-                    memcpy(buf+6, &e.key.keysym.mod, 2);
-                    if (complete_write(sock_comm, (char*) buf, 8))
-                        quit = true;
-                    printf("wrote kbd event!\n");
+            else
+                switch (e.type) {
+                case SDL_EVENT_QUIT:
+                {
+                    quit = true;
+                    break;
                 }
-                break;
-            }
+
+                case SDL_EVENT_KEY_DOWN:
+                case SDL_EVENT_KEY_UP:
+                {
+                    if (e.type == SDL_EVENT_KEY_DOWN && e.key.scancode == SDL_SCANCODE_RETURN && e.key.mod & SDL_KMOD_ALT)
+                        toggle_fullscreen();
+                    else if (!e.key.repeat) {
+                        uint8_t buf[8];
+                        buf[0] = e.type == SDL_EVENT_KEY_DOWN;
+                        buf[1] = e.key.scancode;
+                        memcpy(buf+2, &e.key.key, 4);
+                        memcpy(buf+6, &e.key.mod, 2);
+                        if (complete_write(sock_comm, (char*) buf, 8))
+                            quit = true;
+                        printf("wrote kbd event!\n");
+                    }
+                    break;
+                }
             }
 
         if (!RENDER_StartUpdate())
@@ -1753,9 +1755,9 @@ void SHELL_AlternativeRun()
         decomp_pos_lh += decompsize;
         decomp_pos_lh = (decomp_pos_lh + 15) & ~15;
         if (decompsize) {
-            SDL_mutexP(alock);
+            SDL_LockMutex(alock);
             aqueue.push_back(send_audio_block(lhbuf, lhbuf+decompsize));
-            SDL_mutexV(alock);
+            SDL_UnlockMutex(alock);
         }
         memcpy(&sendflags, decompbuf, 4);
         int16_t translate_x, translate_y;

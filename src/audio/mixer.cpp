@@ -46,6 +46,7 @@
 
 // must be included after dosbox_config.h
 #include <SDL3/SDL.h>
+#include <SDL3/SDL_mutex.h>
 
 CHECK_NARROWING();
 
@@ -2569,10 +2570,10 @@ static void mix_samples(const int frames_requested)
             sbuf.push_back((uint8_t) (int) (v / 256 / 8) + 128);
         }
 
-        SDL_mutexP(sendfeed.lock);
+        SDL_LockMutex(sendfeed.lock);
         sendfeed.buf.push_back(send_audio_block());
         sendfeed.buf.back().swap(sbuf);
-        SDL_mutexV(sendfeed.lock);
+        SDL_UnlockMutex(sendfeed.lock);
 
 	// Normalize the final output before sending to SDL
 	for (auto& frame : mixer.output_buffer) {

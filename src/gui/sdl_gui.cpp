@@ -1974,7 +1974,7 @@ void GFX_InitAndStartGui()
 	}
 
         globl_kbd_exchange.lock = SDL_CreateMutex();
-        globl_kbd_exchange.cond = SDL_CreateCond();
+        globl_kbd_exchange.cond = SDL_CreateCondition();
         globl_kbd_exchange.turn = 1;
 
 	RENDER_Init();
@@ -2470,23 +2470,24 @@ void GFX_MaybePresentFrame()
 
 kbd_event_exchange globl_kbd_exchange;
 
+// TODO use SDL_PushEvent
 static bool replacement_poll_event(SDL_Event *event)
 {
     bool fakekey = false;
-    SDL_mutexP(globl_kbd_exchange.lock);
+    SDL_LockMutex(globl_kbd_exchange.lock);
     if (globl_kbd_exchange.turn == 0) {
         fakekey = true;
-        event->type = globl_kbd_exchange.state == 0 ? SDL_KEYUP : SDL_KEYDOWN;
-        event->key.type = event->type;
-        event->key.state = event->type == SDL_KEYUP ? SDL_RELEASED : SDL_PRESSED;
-        event->key.keysym.scancode = (SDL_Scancode) globl_kbd_exchange.scancode;
-        memcpy(&event->key.keysym.sym, &globl_kbd_exchange.sym, 4);
-        memcpy(&event->key.keysym.mod, &globl_kbd_exchange.mod, 2);
+        event->type = globl_kbd_exchange.state == 0 ? SDL_EVENT_KEY_UP : SDL_EVENT_KEY_DOWN;
+        event->key.type = (SDL_EventType) event->type;
+        event->key.down = event->type != SDL_EVENT_KEY_UP;
+        event->key.scancode = (SDL_Scancode) globl_kbd_exchange.scancode;
+        memcpy(&event->key.key, &globl_kbd_exchange.sym, 4);
+        memcpy(&event->key.mod, &globl_kbd_exchange.mod, 2);
 
         globl_kbd_exchange.turn = 1;
-        SDL_CondBroadcast(globl_kbd_exchange.cond);
+        SDL_BroadcastCondition(globl_kbd_exchange.cond);
     }
-    SDL_mutexV(globl_kbd_exchange.lock);
+    SDL_UnlockMutex(globl_kbd_exchange.lock);
 
     if (fakekey)
         return true;

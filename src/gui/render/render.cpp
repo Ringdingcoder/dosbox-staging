@@ -45,8 +45,8 @@
 #include "utils/math_utils.h"
 #include "utils/string_utils.h"
 
-#include "SDL_keyboard.h"
-#include "SDL_thread.h"
+#include "SDL3/SDL_keyboard.h"
+#include "SDL3/SDL_thread.h"
 
 CHECK_NARROWING();
 
@@ -121,17 +121,17 @@ static int kbd_reader_thread(void *)
 
         printf("received kbd event!\n");
 
-        SDL_mutexP(globl_kbd_exchange.lock);
+        SDL_LockMutex(globl_kbd_exchange.lock);
         while (globl_kbd_exchange.turn == 0)
-            SDL_CondWait(globl_kbd_exchange.cond, globl_kbd_exchange.lock);
+            SDL_WaitCondition(globl_kbd_exchange.cond, globl_kbd_exchange.lock);
         globl_kbd_exchange.turn = 0;
         globl_kbd_exchange.state = buf[0];
         globl_kbd_exchange.scancode = buf[1];
         // memcpy(&globl_kbd_exchange.sym, buf+2, 4);
         // memcpy(&globl_kbd_exchange.mod, buf+6, 2);
         globl_kbd_exchange.sym = SDLK_UNKNOWN;
-        globl_kbd_exchange.mod = KMOD_NONE;
-        SDL_mutexV(globl_kbd_exchange.lock);
+        globl_kbd_exchange.mod = SDL_KMOD_NONE;
+        SDL_UnlockMutex(globl_kbd_exchange.lock);
 
         printf("dispatched kbd event!\n");
     }
@@ -669,7 +669,7 @@ void RENDER_EndUpdate(const bool abort)
             uint8_t *sendbuf = input_buf + input_pos;
             uint8_t *lhbuf = input_buf_lh + input_pos_lh;
             uint32_t audiosize = 0;
-            SDL_mutexP(mixstuff->lock);
+            SDL_LockMutex(mixstuff->lock);
             if (render.was_sending)
                 for (auto& audiobuf : mixstuff->buf) {
                     memcpy(lhbuf + audiosize, &audiobuf.front(), audiobuf.size());
@@ -677,7 +677,7 @@ void RENDER_EndUpdate(const bool abort)
                     assert(audiosize < MAX_SEND_SIZE);
                 }
             mixstuff->buf.clear();
-            SDL_mutexV(mixstuff->lock);
+            SDL_UnlockMutex(mixstuff->lock);
             memcpy(sendbuf, &sendflags, 4);
             if (sendflags & 1) {
                 memcpy(sendbuf+32, &vga.dac.palette_map, 1024);

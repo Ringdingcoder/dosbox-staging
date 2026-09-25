@@ -2664,39 +2664,39 @@ void MAPPER_CheckEvent(SDL_Event *event)
 	default: break;
 	}
 
-        if (event->type == SDL_KEYDOWN || event->type == SDL_KEYUP) {
+        if (event->type == SDL_EVENT_KEY_DOWN || event->type == SDL_EVENT_KEY_UP) {
             bool update = false;
-            switch (event->key.keysym.scancode) {
+            switch (event->key.scancode) {
             case SDL_SCANCODE_E:
-                fake_joy[0].left_pressed = event->type == SDL_KEYDOWN;
+                fake_joy[0].left_pressed = event->type == SDL_EVENT_KEY_DOWN;
                 update = true;
                 break;
             case SDL_SCANCODE_R:
-                fake_joy[0].right_pressed = event->type == SDL_KEYDOWN;
+                fake_joy[0].right_pressed = event->type == SDL_EVENT_KEY_DOWN;
                 update = true;
                 break;
             case SDL_SCANCODE_Q:
-                fake_joy[0].button0_pressed = event->type == SDL_KEYDOWN;
+                fake_joy[0].button0_pressed = event->type == SDL_EVENT_KEY_DOWN;
                 update = true;
                 break;
             case SDL_SCANCODE_A:
-                fake_joy[0].button1_pressed = event->type == SDL_KEYDOWN;
+                fake_joy[0].button1_pressed = event->type == SDL_EVENT_KEY_DOWN;
                 update = true;
                 break;
             case SDL_SCANCODE_SEMICOLON:
-                fake_joy[1].left_pressed = event->type == SDL_KEYDOWN;
+                fake_joy[1].left_pressed = event->type == SDL_EVENT_KEY_DOWN;
                 update = true;
                 break;
             case SDL_SCANCODE_APOSTROPHE:
-                fake_joy[1].right_pressed = event->type == SDL_KEYDOWN;
+                fake_joy[1].right_pressed = event->type == SDL_EVENT_KEY_DOWN;
                 update = true;
                 break;
             case SDL_SCANCODE_K:
-                fake_joy[1].button0_pressed = event->type == SDL_KEYDOWN;
+                fake_joy[1].button0_pressed = event->type == SDL_EVENT_KEY_DOWN;
                 update = true;
                 break;
             case SDL_SCANCODE_COMMA:
-                fake_joy[1].button1_pressed = event->type == SDL_KEYDOWN;
+                fake_joy[1].button1_pressed = event->type == SDL_EVENT_KEY_DOWN;
                 update = true;
                 break;
             default:
