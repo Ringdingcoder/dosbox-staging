@@ -8,6 +8,8 @@
 // 0.81.1-alpha)
 #define DOSBOX_VERSION "${DOSBOX_VERSION}"
 
+#define DOSBOX_VERSION_SHORT "${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}"
+
 // Minimum 5-char long Git hash of the build; can be longer to guarantee
 // uniqueness (e.g., da3c5, c22ef8)
 #define BUILD_GIT_HASH "${BUILD_GIT_HASH}"
@@ -87,18 +89,6 @@
 // an assumption about availability based on OS type.
 #cmakedefine01 SUPPORT_XINPUT2
 
-// Compiler supports Core Audio headers
-#cmakedefine01 C_COREAUDIO
-
-// Compiler supports Core MIDI headers
-#cmakedefine01 C_COREMIDI
-
-// Compiler supports Core Foundation headers
-#cmakedefine01 C_COREFOUNDATION
-
-// Compiler supports Core Services headers
-#cmakedefine01 C_CORESERVICES
-
 // Define to 1 to enable ALSA MIDI support
 #cmakedefine01 C_ALSA
 
@@ -108,8 +98,8 @@
 // Sometimes available functions, structs, or struct fields differ slightly
 // between operating systems.
 
-// Define to 1 when zlib-ng support is provided by the system
-#cmakedefine01 C_SYSTEM_ZLIB_NG
+// Define to 1 when using the native zlib-ng API
+#cmakedefine01 C_ZLIB_NG
 
 // Defined if synchronous I/O multiplexing is available
 #cmakedefine HAVE_FD_ZERO

@@ -3,7 +3,7 @@
 ## Overview
 
 See the comment at the top of
-[src/hardware/video/vga_draw.cpp](src/hardware/video/vga_draw.cpp) for a
+[src/hardware/video/vga_draw.cpp](/src/hardware/video/vga_draw.cpp) for a
 high-level overview of the VGA rendering.
 
 
@@ -90,10 +90,16 @@ The following uniform are passed to the shader passes:
 - `INPUT_TEXTURE_N` — `sampler2D`; sampler object of the Nth input texture (N
   starts from 0). Every shader has at least one input.
 
-- `INPUT_SIZE_N` — `vec2`; size of the Nth input texture (N starts from 0)
+- `INPUT_SIZE_N` — `vec2`; size of the Nth input texture (N starts from 0).
 
-- `OUTPUT_SIZE` — `vec2`; size of the output texture, or the viewport
-  for the last pass (always present)
+- `OUTPUT_SIZE` — `vec2`; size of the output texture in pixels, or the viewport
+  for the last pass. This uniform is always present.
+
+- `OUTPUT_START_OFFSET` — `vec2`; start offset of the output texture in pixels
+  relative to the window's framebuffer for the last pass; (0,0) for all
+  previous intermediate passes. Useful for ensuring screen-space drawing
+  aligns with the output image (e.g., for pixel mask overlays for RGB phosphor
+  emulation in CRT shaders). This uniform is always present.
 
 The shader's parameters that can be customised in the presets are also set via
 uniforms; see the description of the `parameter` custom shader pragma below
@@ -273,4 +279,24 @@ Example:
 
 ```
 #pragma parameter PHOSPHOR_LAYOUT "PHOSPHOR LAYOUT" 2.0 0.0 19.0 1.0
+```
+
+#### wrap_modeN
+
+Specifies the wrap mode for the input texture with index N (see `inputN`).
+If unset, the setting defaults to `ClampToEdge`.
+
+Valid values:
+
+- `Repeat` — Corresponds to `GL_REPEAT`
+- `MirroredRepeat` —  Corresponds to `GL_MIRRORED_REPEAT`
+- `ClampToEdge` —  Corresponds to `GL_CLAMP_TO_EDGE`
+- `ClampToBorder` —  Corresponds to `GL_CLAMP_TO_BORDER`
+
+
+
+Example:
+
+```
+#pragma wrap_mode0 Repeat
 ```

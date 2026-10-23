@@ -18,8 +18,8 @@
 
 // Glad must be included before SDL
 #include "glad/gl.h"
-#include <SDL.h>
-#include <SDL_opengl.h>
+#include <SDL3/SDL.h>
+#include <SDL3/SDL_opengl.h>
 
 struct ShaderPass {
 	Shader shader = {};
@@ -29,7 +29,7 @@ struct ShaderPass {
 
 	// Output texture size for intermediate shader passes (width & height
 	// only), or the position and size of the viewport for the final pass.
-	DosBox::Rect out_size = {};
+	DosBox::Rect out_viewport = {};
 
 	// Textures and FBOs for intermediate shader passes. Both are 0 for the
 	// final pass that's rendered directly to the window's framebuffer.
@@ -84,7 +84,7 @@ private:
 
 	ShaderPass& GetShaderPass(const std::string& name);
 
-	std::pair<GLuint, DosBox::Rect> GetPreviousPassOutputTexture(
+	std::pair<GLuint, DosBox::Rect> GetPreviousPassOutputTextureAndViewport(
 	        const std::vector<ShaderPass>::iterator pass) const;
 
 	GLuint CreateTexture(const DosBox::Rect& size, const bool float_texture) const;
@@ -108,8 +108,14 @@ private:
 
 	std::optional<Shader> main_shader = {};
 
-	GLuint nearest_sampler = 0;
-	GLuint linear_sampler  = 0;
+	// Pre-created OpenGL sampler objects, one per (filter, wrap)
+	// combination. Indexed by [TextureFilterMode][TextureWrapMode].
+	static constexpr size_t NumFilterModes        = 2;
+	static constexpr size_t NumWrapModes          = 4;
+	GLuint samplers[NumFilterModes][NumWrapModes] = {};
+
+	GLuint GetSampler(const TextureFilterMode filter,
+	                  const TextureWrapMode wrap) const;
 
 	// ---------------------------------------------------------------------
 	// Shader passes

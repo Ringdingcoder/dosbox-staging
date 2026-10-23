@@ -61,6 +61,7 @@ constexpr auto EstimatedFileSeekIoOverheadInBytes     = 512;
 
 void DOS_NotifyBooting()
 {
+	DOS_UninstallInterruptStacks();
 	is_guest_booted = true;
 	DOS_ClearLaunchedProgramNames();
 }
@@ -137,8 +138,35 @@ static uint16_t DOS_GetAmount(void) {
 #include "cpu/cpu.h"
 #endif
 
+const char* to_string(const DiskType disk_type)
+{
+	switch (disk_type) {
+	case DiskType::Floppy: return "floppy";
+	case DiskType::HardDisk: return "hard disk";
+	case DiskType::CdRom: return "CD-ROM";
+	default: assertm(false, "Invalid DiskType"); return "unknown disk type";
+	}
+}
+
+const char* to_string(const DiskSpeed disk_speed)
+{
+	switch (disk_speed) {
+	case DiskSpeed::Maximum: return "maximum";
+	case DiskSpeed::Fast: return "fast";
+	case DiskSpeed::Medium: return "medium";
+	case DiskSpeed::Slow: return "slow";
+	default:
+		assertm(false, "Invalid DiskSpeed");
+		return "unknown disk speed";
+	}
+}
+
 void DOS_SetDiskSpeed(DiskSpeed disk_speed, DiskType disk_type)
 {
+	LOG_INFO("DOS: Setting %s disk speed to %s",
+	         to_string(disk_type),
+	         to_string(disk_speed));
+
 	switch (disk_type) {
 	case DiskType::Floppy: disk_settings.fdd_disk_speed = disk_speed; break;
 	case DiskType::HardDisk:
@@ -388,13 +416,13 @@ void DOS_PerformCdRomIoDelay(uint16_t data_transferred_bytes)
 
 static inline void modify_cycles(Bits value)
 {
-	if ((4 * value + 5) < CPU_Cycles) {
-		CPU_Cycles -= 4*value;
-		CPU_IODelayRemoved += 4*value;
-	} else {
-		CPU_IODelayRemoved += CPU_Cycles/*-5*/; //don't want to mess with negative
-		CPU_Cycles = 5;
-	}
+	// The delay is applied in full, unconditionally; `CPU_Cycles` may go
+	// negative, which the tick accounting absorbs (the remainder carries
+	// over into the subsequent CPU slices). Capping the delay at the
+	// remaining cycles of the current slice would make DOS I/O speed
+	// dependent on PIC event density (e.g., on the VGA drawing mode).
+	CPU_Cycles -= 4 * value;
+	CPU_IODelayRemoved += 4 * value;
 }
 #else
 static inline void modify_cycles(Bits /* value */) {
@@ -1752,6 +1780,8 @@ private:
 public:
 	DOS(Section* sec)
 	{
+		const auto section = static_cast<SectionProp*>(sec);
+
 		callback[0].Install(DOS_20Handler, CB_IRET, "DOS Int 20");
 		callback[0].Set_RealVec(0x20);
 
@@ -1791,6 +1821,9 @@ public:
 		DOS_SetupMemory();								/* Setup first MCB */
 		DOS_SetupPrograms();
 		DOS_SetupMisc();							/* Some additional dos interrupts */
+		if (DOS_ShouldUseInterruptStacks(*section)) {
+			DOS_InstallInterruptStacks(*section);
+		}
 		DOS_SDA(DOS_SDA_SEG,DOS_SDA_OFS).SetDrive(25); /* Else the next call gives a warning. */
 		DOS_SetDefaultDrive(25);
 
@@ -1799,7 +1832,6 @@ public:
 		dos.direct_output=false;
 		dos.internal_output=false;
 
-		const SectionProp* section = static_cast<SectionProp*>(sec);
 		std::string args = section->GetString("ver");
 		std::string word = strip_word(args);
 		const auto new_version = DOS_ParseVersion(word.c_str(), args.c_str());
@@ -1826,6 +1858,8 @@ public:
 		// without throwing an inevitable `DOS: Too many devices added`
 		// exception
 		DOS_ShutDownDevices();
+
+		DOS_UninstallInterruptStacks();
 
 		DOS_FreeTableMemory();
 	}
@@ -1867,16 +1901,35 @@ void DOS_Destroy()
 static void notify_dos_setting_updated(SectionProp& section,
                                        [[maybe_unused]] const std::string& prop_name)
 {
-	DOS_Locale_Destroy();
-	DOS_Locale_Init(section);
+	// Only restart the modules affected by the changed setting; every
+	// EMS & XMS restart permanently burns a few paragraphs of the DOS
+	// private memory pool and reinstalls the XMS & EMS interfaces.
+	//
+	if (prop_name == "locale_period" || prop_name == "country") {
+		DOS_Locale_Destroy();
+		DOS_Locale_Init(section);
 
-	DOS_Files_Init(section);
+	} else if (prop_name == "file_locking") {
+		DOS_Files_Init(section);
 
-	EMS_Destroy();
-	EMS_Init(section);
+	} else if (prop_name == "ems") {
+		EMS_Destroy();
+		EMS_Init(section);
 
-	XMS_Destroy();
-	XMS_Init(section);
+		// The UMB chain built by the XMS module depends on EMS
+		// availability
+		XMS_Destroy();
+		XMS_Init(section);
+
+	} else if (prop_name == "xms" || prop_name == "umb") {
+		XMS_Destroy();
+		XMS_Init(section);
+	}
+
+	// 'ver' only takes effect at startup (the VER command handles runtime
+	// changes) and 'expand_shell_variable' is evaluated on command
+	// execution.
+	//
 
 	// The MSCDEX, DRIVES, and CDROM_Image modules are only initalised
 	// once at startup.
@@ -1901,15 +1954,53 @@ static void init_dos_settings(SectionProp& section)
 	auto pbool = section.AddBool("xms", WhenIdle, true);
 	pbool->SetHelp("Enable XMS memory support ('on' by default).");
 
-	auto pstring = section.AddString("ems", WhenIdle, "true");
-	pstring->SetValues({"true", "emsboard", "emm386", "off"});
+	auto pstring = section.AddString("ems", WhenIdle, "on");
+	pstring->SetValues({"on", "emsboard", "emm386", "off"});
 	pstring->SetHelp(
-	        "Enable EMS support ('on' by default). Enabled provides the best compatibility\n"
-	        "but certain applications may run better with other choices, or require EMS\n"
-	        "support to be disabled to work at all.");
+	        "Enable EMS memory support ('on' by default). Possible values:\n"
+	        "\n"
+	        "  off:       Disable EMS entirely. INT 67h is not installed, so programs that\n"
+	        "             probe for it correctly detect it as absent.\n"
+	        "\n"
+	        "  on:        Standard LIM EMS via the INT 67h page-frame interface, without\n"
+	        "             emulating a protected-mode memory manager (default). Provides the\n"
+	        "             best compatibility with most software.\n"
+	        "\n"
+	        "  emsboard:  Emulates a physical EMS expansion board rather than a software\n"
+	        "             manager: real mode only, no VCPI. Useful for software that expects\n"
+	        "             board-style EMS behavior, or on pre-386 CPU types where EMM386-\n"
+	        "             style emulation isn't possible.\n"
+	        "\n"
+	        "  emm386:    Emulates EMS the way loading EMM386.EXE under real DOS would,\n"
+	        "             including VCPI support for DOS extenders that switch to protected\n"
+	        "             mode, and matching its DMA-wrapping behavior.");
 
 	pbool = section.AddBool("umb", WhenIdle, true);
 	pbool->SetHelp("Enable UMB memory support ('on' by default).");
+
+	pstring = section.AddString("stacks", OnlyAtStart, "auto");
+	pstring->SetHelp(
+	        "Use DOS-style private stacks for hardware interrupts ('auto' by default).\n"
+	        "When a wrapped hardware interrupt fires, DOSBox Staging switches to one\n"
+	        "stack from a private pool before invoking the previous handler. Disabling\n"
+	        "this means each running program must have enough stack space for hardware\n"
+	        "interrupts (and any chained handlers) itself. Most programs work correctly\n"
+	        "without it; a few legacy programs depend on it to avoid corrupting their\n"
+	        "own stack.\n"
+	        "\n"
+	        "Note: the current implementation wraps the timer interrupt (INT 08h, IRQ0)\n"
+	        "and the keyboard interrupt (INT 09h, IRQ1). MS-DOS's STACKS feature wraps\n"
+	        "additional hardware-IRQ vectors; coverage may be expanded in future versions.\n"
+	        "\n"
+	        "  auto:        Enable on AT-class machine types with the MS-DOS defaults\n"
+	        "               (9 stacks of 128 bytes each). Disable on PC/XT-class machine\n"
+	        "               types (e.g., cga, pcjr, tandy).\n"
+	        "\n"
+	        "  count,size:  Allocate `count` private stacks of `size` bytes each, e.g.\n"
+	        "               'stacks = 9,128'. Equivalent to the DOS 'STACKS=count,size'\n"
+	        "               setting; 'count' must be 8-64, 'size' must be 32-512.\n"
+	        "\n"
+	        "  0,0:         Disable; use the interrupted program's stack.");
 
 	pstring = section.AddString("pcjr_memory_config", OnlyAtStart, "expanded");
 	pstring->SetValues({"expanded", "standard"});

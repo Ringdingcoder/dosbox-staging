@@ -24,11 +24,17 @@ enum class ViewportMode { Fit, Relative };
 struct ViewportSettings {
 	ViewportMode mode = ViewportMode::Fit;
 
-	// Either parameter can be set in Fit mode (but not both at the
-	// same time), or none
+	// At most one of the parameters can be set in Fit mode.
+	//
+	// The size limit is kept in the unit it was specified in (`limit_size`
+	// in logical units, `limit_size_px` in pixels, `desktop_scale` relative
+	// to the desktop size), and it's converted to pixels when calculating
+	// the viewport. This way, the viewport always reflects the current
+	// display scale and desktop size.
 	struct {
-		std::optional<DosBox::Rect> limit_size = {};
-		std::optional<float> desktop_scale     = {};
+		std::optional<DosBox::Rect> limit_size    = {};
+		std::optional<DosBox::Rect> limit_size_px = {};
+		std::optional<float> desktop_scale        = {};
 	} fit = {};
 
 	struct {
@@ -39,6 +45,7 @@ struct ViewportSettings {
 	constexpr bool operator==(const ViewportSettings& that) const
 	{
 		return (mode == that.mode && fit.limit_size == that.fit.limit_size &&
+		        fit.limit_size_px == that.fit.limit_size_px &&
 		        fit.desktop_scale == that.fit.desktop_scale &&
 		        relative.height_scale == that.relative.height_scale &&
 		        relative.width_scale == that.relative.width_scale);
@@ -106,6 +113,39 @@ struct Render {
 
 		int y_scale = 0;
 	} scale = {};
+
+	// Source-pixel snapshot of the last completed frame. Deep-copied from
+	// `scale.cache` at the end of every successful `RENDER_EndUpdate(false)`.
+	//
+	// Used as a clean source for screenshots and video capture, so consumers
+	// don't read the live, possibly mid-frame `scale.cache`, and as the input
+	// for `RENDER_RescaleLastFrame()` after a pause-time recreate.
+	struct {
+		alignas(uint64_t)
+		        std::array<uint32_t, ScalerMaxWidth * ScalerMaxHeight> cache = {};
+
+		ImageInfo src         = {};
+		RenderPalette palette = {};
+
+		int pitch = 0;
+
+		// `true` when the latched data matches `render.src` exactly
+		// (width, height, pixel format). Reset by `RENDER_SetSize()`,
+		// so e.g. a pause-time scan-doubling toggle (`crt-hyllian` ->
+		// `sharp` and back) drops it to false.
+		// `RENDER_GetCurrentImage()` gates on this so screenshots /
+		// video capture never pick up a frame at the previous geometry.
+		bool valid = false;
+
+		// `true` once any frame has ever been latched. *Not* reset by
+		// `RENDER_SetSize()` -- the cache lives in a fixed-size array
+		// embedded in this struct, so the bytes survive that reset.
+		// `RENDER_RescaleLastFrame()` reads via this flag during
+		// pause-time recreates: with no scanout coming to repopulate
+		// the latch, the held bytes are the only source we can
+		// replay through the freshly-configured scaler.
+		bool populated = false;
+	} last_complete_source = {};
 
 	RenderPalette palette = {};
 
@@ -264,10 +304,25 @@ void RENDER_SetSize(const ImageInfo& image_info, const double frames_per_second)
 bool RENDER_StartUpdate();
 void RENDER_EndUpdate(bool abort);
 
+// Returns the last completed source-pixel frame as a non-owning
+// `RenderedImage`. Never returns a torn mid-scanout view -- the live
+// `render.scale.cache` is private to the scaler. `image_data` is null
+// until the first complete frame has been latched (e.g. right after a
+// video mode change); callers must check.
+RenderedImage RENDER_GetCurrentImage();
+
+// Rescale the latched source frame at the current output dimensions and
+// run it through `RENDER_EndUpdate(false)` so the renderer's
+// `last_framebuf` is refreshed. No effect on VGA timing or PIC -- the
+// emulator core stays paused. No-op if no frame has been latched yet.
+void RENDER_RescaleLastFrame();
+
 void RENDER_SetPalette(const uint8_t entry, const uint8_t red,
                        const uint8_t green, const uint8_t blue);
 
 bool RENDER_NotifyVideoModeChanged(const VideoMode& video_mode);
 void RENDER_NotifyEgaModeWithVgaPalette();
+
+void RENDER_SetScanAndPixelDoubling();
 
 #endif // DOSBOX_RENDER_H

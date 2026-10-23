@@ -387,13 +387,13 @@ Overlay_Drive::Overlay_Drive(const char *startdir,
 	// by explicitly converting to UTF-16 first.
 	#if defined(WIN32)
 	wchar_t utf16_path[MAX_PATH] = {};
-	if (!codepage437_to_utf16(startdir, utf16_path)) {
+	if (!windows_utf8_to_utf16(startdir, utf16_path)) {
 		error = -1;
 		return;
 	}
 	const bool is_absolute = std_fs::path(utf16_path).is_absolute();
 	memset(utf16_path, 0, sizeof(utf16_path));
-	if (!codepage437_to_utf16(overlay, utf16_path)) {
+	if (!windows_utf8_to_utf16(overlay, utf16_path)) {
 		error = -1;
 		return;
 	}
@@ -1112,6 +1112,7 @@ void Overlay_Drive::add_special_file_to_disk(const char* dosname, const char* op
 	}
 	if (!f) {
 		LOG_ERR("DOS: Failed to create overlay file '%s'", overlayname);
+		return;
 	}
 	char buf[5] = {'e','m','p','t','y'};
 	fwrite(buf,5,1,f);

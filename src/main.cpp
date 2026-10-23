@@ -60,6 +60,53 @@ static void restore_console_encoding()
 	}
 }
 
+/**
+ * Sets the console icon in a DPI-aware manner.
+ *
+ * While SDL does set the console icon autonomously, it doesn't take display
+ * scaling into account, which may result in poor icon clarity on scaled
+ * screens.
+ *
+ * This function can only set the console icon on systems that still use
+ * the legacy Windows Console Host. It does nothing if the system is
+ * configured to use the Windows Terminal.
+ */
+static void set_console_icon()
+{
+	const auto handle = GetConsoleWindow();
+	if (!handle) {
+		return;
+	}
+
+	const auto dpi = GetDpiForWindow(handle);
+
+	auto load_icon = [&](const int metric) {
+		const auto size = GetSystemMetricsForDpi(metric, dpi);
+		return LoadImageW(GetModuleHandleW(nullptr),
+		                  L"DOSBOX_ICO",
+		                  IMAGE_ICON,
+		                  size,
+		                  size,
+		                  LR_DEFAULTCOLOR);
+	};
+
+	// Loaded icons are never destroyed, they survive until the application
+	// is closed
+	if (const auto icon = load_icon(SM_CXSMICON)) {
+		SendMessageW(handle,
+		             WM_SETICON,
+		             ICON_SMALL,
+		             reinterpret_cast<LPARAM>(icon));
+	}
+
+	if (const auto icon = load_icon(SM_CXICON)) {
+		SendMessageW(handle,
+		             WM_SETICON,
+		             ICON_BIG,
+		             reinterpret_cast<LPARAM>(icon));
+	}
+}
+
 static BOOL WINAPI console_event_handler(DWORD event)
 {
 	switch (event) {
@@ -330,7 +377,11 @@ static void init_logger(const CommandLineArguments& args, int argc, char* argv[]
 		loguru::g_stderr_verbosity = loguru::Verbosity_WARNING;
 	}
 
-	loguru::init(argc, argv);
+	// Don't use loguru's crash handler for SIGTERM, just let SDL handle it
+	// to perform a clean shutdown.
+	loguru::Options options = {};
+	options.signal_options.sigterm = false;
+	loguru::init(argc, argv, options);
 }
 
 static void maybe_write_primary_config(const CommandLineArguments& args)
@@ -465,45 +516,12 @@ static void handle_cli_set_commands(const std::vector<std::string>& set_args)
 	}
 }
 
-#if defined(WIN32) && !(C_DEBUGGER)
-static void apply_windows_debugger_workaround(const bool is_console_disabled)
-{
-	// Can't disable the console with debugger enabled
-	if (is_console_disabled) {
-		FreeConsole();
-		// Redirect standard input and standard output
-		//
-		if (freopen(STDOUT_FILE, "w", stdout) == NULL) {
-			// No stdout so don't write messages
-			no_stdout = true;
-		}
-		freopen(STDERR_FILE, "w", stderr);
-
-		// Line buffered
-		setvbuf(stdout, NULL, _IOLBF, BUFSIZ);
-		// No buffering
-		setvbuf(stderr, NULL, _IONBF, BUFSIZ);
-
-	} else {
-		if (AllocConsole()) {
-			fclose(stdin);
-			fclose(stdout);
-			fclose(stderr);
-			freopen("CONIN$", "r", stdin);
-			freopen("CONOUT$", "w", stdout);
-			freopen("CONOUT$", "w", stderr);
-		}
-		SetConsoleTitle("DOSBox Status Window");
-	}
-}
-#endif
-
 static void maybe_create_resource_directories()
 {
 	auto try_create_resource_dir = [](std_fs::path const& dir) {
 		if (!create_dir_if_not_exist(dir)) {
 			LOG_WARNING("CONFIG: Can't create directory '%s'",
-						dir.string().c_str());
+			            dir.string().c_str());
 		}
 	};
 	const auto plugins_dir = get_config_dir() / PluginsDir;
@@ -570,6 +588,9 @@ static void wait_for_pid(const int wait_pid)
 #endif
 }
 
+#include <SDL3/SDL.h>
+#include <SDL3/SDL_main.h>
+
 int main(int argc, char* argv[])
 {
 	// Ensure we perform SDL cleanup and restore console settings at exit
@@ -586,13 +607,22 @@ int main(int argc, char* argv[])
 
 #ifdef WIN32
 	switch_console_to_utf8();
+	set_console_icon();
 #endif
 
 	// Set up logging after command line was parsed and trivial arguments
 	// have been handled.
 	init_logger(*arguments, argc, argv);
 
-	LOG_MSG("%s version %s", DOSBOX_PROJECT_NAME, DOSBOX_GetDetailedVersion());
+	const auto version_string = DOSBOX_GetDetailedVersion();
+
+	SDL_SetAppMetadataProperty(SDL_PROP_APP_METADATA_NAME_STRING, DOSBOX_PROJECT_NAME);			
+	SDL_SetAppMetadataProperty(SDL_PROP_APP_METADATA_VERSION_STRING, version_string);			
+	SDL_SetAppMetadataProperty(SDL_PROP_APP_METADATA_IDENTIFIER_STRING, DOSBOX_APP_ID);			
+	SDL_SetAppMetadataProperty(SDL_PROP_APP_METADATA_COPYRIGHT_STRING, DOSBOX_COPYRIGHT);			
+	SDL_SetAppMetadataProperty(SDL_PROP_APP_METADATA_URL_STRING, DOSBOX_WEBSITE);
+
+	LOG_MSG("%s version %s", DOSBOX_PROJECT_NAME, version_string);
 	LOG_MSG("---");
 
 	LOG_MSG("Loguru version %d.%d.%d initialised",
@@ -659,10 +689,6 @@ int main(int argc, char* argv[])
 			// Exit to the command line
 			return *return_code;
 		}
-
-#if defined(WIN32) && !(C_DEBUGGER)
-		apply_windows_debugger_workaround(arguments->noconsole);
-#endif
 
 #if defined(WIN32)
 		SetConsoleCtrlHandler((PHANDLER_ROUTINE)console_event_handler, TRUE);

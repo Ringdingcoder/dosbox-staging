@@ -54,7 +54,6 @@
 	#define cross_off_t __int64
 #else
 	// All other platforms should have POSIX fstream 'o' support
-	// Note: Meson automatically sets preprocessor defines for us
 
 	// Check that off_t is 64 bits
 	static_assert(sizeof(off_t) == sizeof(int64_t), "off_t not 64 bits");
@@ -107,9 +106,9 @@ std_fs::path resolve_home(const std::string &str) noexcept;
 #include <windows.h>
 
 typedef struct dir_struct {
-	HANDLE          handle;
-	char            base_path[MAX_PATH+4];
-	WIN32_FIND_DATA search_data;
+	HANDLE           handle;
+	char             base_path[MAX_PATH+4];
+	WIN32_FIND_DATAW search_data;
 } DirInformation;
 
 #else

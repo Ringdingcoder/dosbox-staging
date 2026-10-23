@@ -1,17 +1,21 @@
 {% extends "base.html" %}
 
+{% block extrahead %}
+  {{ super() }}
+  <link rel="icon" type="image/svg+xml" href="{{ 'assets/images/favicon.svg' | url }}">
+{% endblock %}
+
 {% block header %}
 
-<div class="banner dev-site">
+<div class="dev-site" hidden>
   <p>🔥🔥🔥 You are viewing a development version of the website. Things will blow up. 🔥🔥🔥</p>
-<p>Regular users, please <a href="https://www.dosbox-staging.org/">follow the exit signs</a>.</p>
-
+  <p>Regular users, please <a href="https://www.dosbox-staging.org/">follow the exit signs</a>.</p>
 </div>
 
 <script>
-	if (window.location.pathname.startsWith("/preview/")) {
-    document.getElementsByClassName("dev-site")[0].classList.add("show");
-	}
+  if (window.location.pathname.startsWith("/preview/")) {
+    document.querySelector(".dev-site").removeAttribute("hidden");
+  }
 </script>
 
 {% include "partials/header.html" %}

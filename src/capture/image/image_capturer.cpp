@@ -7,6 +7,7 @@
 #include <string>
 
 #include "config/setup.h"
+#include "dosbox.h"
 #include "misc/std_filesystem.h"
 #include "utils/checks.h"
 #include "utils/string_utils.h"
@@ -42,7 +43,7 @@ void ImageCapturer::ConfigureGroupedMode(const std::string& prefs)
 	grouped_mode.wants_upscaled = false;
 	grouped_mode.wants_rendered = false;
 
-	const auto formats = split_with_empties(prefs, ' ');
+	const auto formats = split_with_empties(prefs, " ");
 	if (formats.empty()) {
 		LOG_WARNING(
 		        "CAPTURE: 'default_image_capture_formats' not specified, "
@@ -98,10 +99,11 @@ bool ImageCapturer::IsCaptureRequested() const
 	       state.grouped != CaptureState::Off;
 }
 
-bool ImageCapturer::IsRenderedCaptureRequested() const
+bool ImageCapturer::IsRenderedCaptureInProgress() const
 {
-	return state.rendered != CaptureState::Off ||
-	       (state.grouped != CaptureState::Off && grouped_mode.wants_rendered);
+	return state.rendered == CaptureState::InProgress ||
+	       (state.grouped == CaptureState::InProgress &&
+	        grouped_mode.wants_rendered);
 }
 
 void ImageCapturer::MaybeCaptureImage(const RenderedImage& image)
@@ -121,13 +123,17 @@ void ImageCapturer::MaybeCaptureImage(const RenderedImage& image)
 		// We're in regular single image capture mode
 		capture_raw      = (state.raw != CaptureState::Off);
 		capture_upscaled = (state.upscaled != CaptureState::Off);
-		capture_rendered = (state.rendered != CaptureState::Off);
 
 		// Clear the state flags
 		state.raw      = CaptureState::Off;
 		state.upscaled = CaptureState::Off;
+
 		// The `rendered` state is cleared in the
-		// CAPTURE_AddPostRenderImage callback
+		// CapturePostRenderImage() callback
+		if (state.rendered == CaptureState::Pending) {
+			capture_rendered = true;
+			state.rendered   = CaptureState::InProgress;
+		}
 	} else {
 		assert(state.grouped == CaptureState::Pending);
 		state.grouped = CaptureState::InProgress;
@@ -155,6 +161,9 @@ void ImageCapturer::MaybeCaptureImage(const RenderedImage& image)
 	// We can pass in any of the image types; it doesn't matter which.
 	const auto index = get_next_capture_index(CaptureType::RawImage);
 	if (!index) {
+		// Nothing can be saved, so abandon all requests; otherwise an
+		// `InProgress` rendered or grouped capture would never complete.
+		state = {};
 		return;
 	}
 	if (capture_raw) {
@@ -194,12 +203,41 @@ ImageSaver& ImageCapturer::GetNextImageSaver()
 	return image_savers[current_image_saver_index];
 }
 
+// During pause, `RENDER_EndUpdate()` doesn't fire, so the normal vertical
+// retrace-driven `MaybeCaptureImage()` drain never runs and the request stays
+// in `Pending` forever (and a rendered capture would never be armed, so the
+// paused present wouldn't read back the framebuffer either).
+//
+// Drive the drain synchronously here using the source latch via
+// `RENDER_GetCurrentImage()`; each press allocates its own index inside
+// `MaybeCaptureImage()` so repeated capture actions produce distinct indexed
+// files. No effect outside pause.
+//
+void ImageCapturer::MaybeDrainOnPause()
+{
+	if (!DOSBOX_IsPaused()) {
+		return;
+	}
+
+	// If no frame has been completed yet (e.g., pause activated during
+	// startup before the first VGA scanout), the latched image is empty and
+	// there's nothing to capture.
+	const auto image = RENDER_GetCurrentImage();
+	if (!image.image_data) {
+		return;
+	}
+
+	MaybeCaptureImage(image);
+}
+
 void ImageCapturer::RequestRawCapture()
 {
 	if (state.raw != CaptureState::Off) {
 		return;
 	}
+
 	state.raw = CaptureState::Pending;
+	MaybeDrainOnPause();
 }
 
 void ImageCapturer::RequestUpscaledCapture()
@@ -207,7 +245,9 @@ void ImageCapturer::RequestUpscaledCapture()
 	if (state.upscaled != CaptureState::Off) {
 		return;
 	}
+
 	state.upscaled = CaptureState::Pending;
+	MaybeDrainOnPause();
 }
 
 void ImageCapturer::RequestRenderedCapture()
@@ -215,7 +255,9 @@ void ImageCapturer::RequestRenderedCapture()
 	if (state.rendered != CaptureState::Off) {
 		return;
 	}
+
 	state.rendered = CaptureState::Pending;
+	MaybeDrainOnPause();
 }
 
 void ImageCapturer::RequestGroupedCapture()
@@ -224,4 +266,5 @@ void ImageCapturer::RequestGroupedCapture()
 		return;
 	}
 	state.grouped = CaptureState::Pending;
+	MaybeDrainOnPause();
 }

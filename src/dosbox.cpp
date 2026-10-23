@@ -4,6 +4,8 @@
 
 #include "dosbox.h"
 
+#include <atomic>
+#include <cassert>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -32,10 +34,12 @@
 #include "dos/dos.h"
 #include "dos/dos_locale.h"
 #include "dos/programs.h"
+#include "dosbox_pause_fsm.h"
 #include "fpu/fpu.h"
 #include "gui/common.h"
 #include "gui/mapper.h"
 #include "gui/render/render.h"
+#include "gui/titlebar.h"
 #include "hardware/audio/gus.h"
 #include "hardware/audio/imfc.h"
 #include "hardware/audio/innovation.h"
@@ -72,13 +76,14 @@
 #include "shell/shell.h"
 #include "utils/math_utils.h"
 #include "utils/pinhacks.h"
-#include "webserver/webserver.h"
+#include "utils/string_utils.h"
 #include "webserver/bridge.h"
+#include "webserver/webserver.h"
 
-MachineType machine   = MachineType::None;
-SvgaType    svga_type = SvgaType::None;
+MachineType machine = MachineType::None;
+SvgaType svga_type  = SvgaType::None;
 
-static LoopHandler * loop;
+static LoopHandler* loop;
 
 static struct {
 	int64_t remain    = {};
@@ -88,6 +93,20 @@ static struct {
 	int64_t scheduled = {};
 	bool locked       = {};
 } ticks = {};
+
+// Reset wall-clock accounting on resume so `increase_ticks()` doesn't see
+// a multi-second gap from before pause and try to "catch up" by running
+// tens of seconds of emulation in a burst. PIC time is frozen across
+// pause; only the wall-clock counters need this rebase.
+//
+static void rebase_wall_clock_on_resume()
+{
+	ticks.last      = GetTicks();
+	ticks.remain    = 0;
+	ticks.added     = 0;
+	ticks.done      = 0;
+	ticks.scheduled = 0;
+}
 
 int64_t DOSBOX_GetTicksDone()
 {
@@ -104,8 +123,410 @@ void DOSBOX_SetTicksScheduled(const int64_t ticks_scheduled)
 	ticks.scheduled = ticks_scheduled;
 }
 
-void Null_Init([[maybe_unused]] Section *sec) {
+void Null_Init([[maybe_unused]] Section* sec)
+{
 	// do nothing
+}
+
+// ---------------------------------------------------------------------------
+// Pause state machine
+//
+// Mirrors the structure of `MixerMuteState` in `audio/mixer.h` --
+// user-initiated pause survives the auto-pausing (on focus loss); only the
+// auto-pausing can be auto-cleared.
+//
+// The pending states exist to give the SDL-side fade-out enough real audio
+// to work against. Without them, when pause was requested with a
+// nearly-drained `final_output` buffer (low prebuffer config, host CPU
+// contention, right after fast-forward), the fade would hit silence
+// midway and click. During pending we keep producing real audio, so the
+// fade always has ~5 ms of it to attenuate.
+//
+// Resume has no equivalent pending state because the fade-in works for
+// free: on resume the mixer thread immediately starts producing real
+// audio and ramps the fade-in gain up over it, in-buffer.
+//
+// All transitions go through `set_pause_state()` (validated against
+// `is_valid_transition()`). Public callers express intent via the four
+// `DOSBOX_Request{User,Auto}{Pause,Resume}()` API functions, each of which
+// consults the pure `NextPauseState()` policy in `dosbox_pause_fsm.h` and
+// applies the result. That policy is the single source of truth for what
+// each event does; it is exhaustively unit tested in isolation.
+//
+// THREADING: `pause_state` has a single writer, the main (emulation) thread.
+// Every mutator runs there: hotkeys and window events via the SDL event loop,
+// HTTP commands via the webserver bridge's `ProcessRequests()`, and the
+// pending-transition handler via the PIC ticker. All other threads (the mixer
+// and MIDI renderer threads) only *read* the state, via the `DOSBOX_Is*()`
+// query functions. With a single writer no lock is needed; the atomic exists
+// purely to make those cross-thread reads well-defined.
+//
+// The `PauseState` and `PauseEvent` enums and the pure `NextPauseState()`
+// transition table live in `dosbox_pause_fsm.h`.
+// ---------------------------------------------------------------------------
+
+// Single writer (the main thread; see THREADING above).
+// All other threads read only.
+static std::atomic<PauseState> pause_state{PauseState::Running};
+
+static const char* to_string(const PauseState s)
+{
+	using enum PauseState;
+
+	switch (s) {
+	case Running: return "Running";
+	case UserPausePending: return "UserPausePending";
+	case AutoPausePending: return "AutoPausePending";
+	case UserPaused: return "UserPaused";
+	case AutoPaused: return "AutoPaused";
+
+	default: assertm(false, "Invalid PauseState value"); return "";
+	}
+}
+
+static bool is_pending_state(const PauseState s)
+{
+	return (s == PauseState::UserPausePending ||
+	        s == PauseState::AutoPausePending);
+}
+
+static bool is_paused_state(const PauseState s)
+{
+	return (s == PauseState::UserPaused || s == PauseState::AutoPaused);
+}
+
+// Structural guard for the application layer: which edges the FSM permits at
+// all. Every state produced by `NextPauseState()` satisfies this, plus the
+// unconditional force-to-`Running` used on shutdown. `set_pause_state()`
+// asserts on it to catch a bad direct store.
+static bool is_valid_transition(const PauseState from, const PauseState to)
+{
+	using enum PauseState;
+
+	switch (from) {
+	case Running: return (to == UserPausePending || to == AutoPausePending);
+	case UserPausePending: return (to == UserPaused || to == Running);
+
+	case AutoPausePending:
+		return (to == AutoPaused || to == Running || to == UserPausePending);
+
+	case UserPaused: return (to == Running);
+	case AutoPaused: return (to == Running || to == UserPaused);
+
+	default: assertm(false, "Invalid PauseState value"); return false;
+	}
+}
+
+// Pure pause-transition policy; it just maps (current state, event) to the
+// next state, or `nullopt` for a no-op.
+//
+// The `DOSBOX_Request*()` API and `pending_pause_tick_handler()` below apply
+// its result. Exhaustively unit tested in `dosbox_pause_fsm_tests.cpp`.
+//
+std::optional<PauseState> NextPauseState(const PauseState current,
+                                         const PauseEvent event)
+{
+	using enum PauseState;
+
+	switch (event) {
+	case PauseEvent::UserPause:
+		// User pause trumps auto: it engages from Running, upgrades a
+		// pending/engaged auto-pause, and is idempotent once user-paused.
+		//
+		switch (current) {
+		case Running: return UserPausePending;
+		case AutoPausePending: return UserPausePending;
+		case AutoPaused: return UserPaused;
+
+		case UserPausePending:
+		case UserPaused: return {};
+
+		default:
+			assertm(false, "Invalid PauseState value");
+			return {};
+		}
+		break;
+
+	case PauseEvent::UserResume:
+		// Only clears a user pause; auto-pauses are left for auto-resume.
+		//
+		switch (current) {
+		case UserPausePending: return Running;
+		case UserPaused: return Running;
+
+		case Running:
+		case AutoPausePending:
+		case AutoPaused: return {};
+
+		default:
+			assertm(false, "Invalid PauseState value");
+			return {};
+		}
+		break;
+
+	case PauseEvent::AutoPause:
+		// Engages only from Running; a user-pause survives it and an
+		// existing auto-pause is idempotent.
+		switch (current) {
+		case Running: return AutoPausePending;
+
+		case UserPausePending:
+		case UserPaused:
+		case AutoPausePending:
+		case AutoPaused: return {};
+
+		default:
+			assertm(false, "Invalid PauseState value");
+			return {};
+		}
+		break;
+
+	case PauseEvent::AutoResume:
+		// Clears an auto-pause only; never resumes a user pause.
+		//
+		switch (current) {
+		case AutoPausePending: return Running;
+		case AutoPaused: return Running;
+
+		case Running:
+		case UserPausePending:
+		case UserPaused: return {};
+
+		default:
+			assertm(false, "Invalid PauseState value");
+			return {};
+		}
+		break;
+
+	case PauseEvent::FadeComplete:
+		// The audio fade-out reached zero -- engage the pending pause.
+		switch (current) {
+		case UserPausePending: return UserPaused;
+		case AutoPausePending: return AutoPaused;
+
+		case Running:
+		case UserPaused:
+		case AutoPaused: return {};
+
+		default:
+			assertm(false, "Invalid PauseState value");
+			return {};
+		}
+		break;
+	}
+
+	return {};
+}
+
+static PauseState get_pause_state()
+{
+	return pause_state.load(std::memory_order_relaxed);
+}
+
+bool DOSBOX_IsRunning()
+{
+	return get_pause_state() == PauseState::Running;
+}
+
+bool DOSBOX_IsPaused()
+{
+	// Only the actually-paused states -- pending states still have the
+	// emulator core, mixer, and MIDI renderer running so the fade has
+	// audio to work against. See the FSM header comment.
+	return is_paused_state(get_pause_state());
+}
+
+bool DOSBOX_IsPauseRequested()
+{
+	// True for any non-Running state (pending or paused). Callers that
+	// want "user has asked to pause" semantics -- e.g. the fade trigger,
+	// or the shutdown force-resume -- use this.
+	return get_pause_state() != PauseState::Running;
+}
+
+// Subsystem pause hook driven by the FSM. Called by `set_pause_state()` only
+// on the actually-paused edge. The mixer needs no hook here -- it reads
+// `DOSBOX_IsPaused()` at the top of its loop and skips `mix_samples()` while
+// paused. Only the MIDI synth renderers have to be actively halted, so their
+// internal clock doesn't advance while paused (see `MIDI_Pause()`).
+static void set_subsystems_paused(const bool paused)
+{
+	if (paused) {
+		MIDI_Pause();
+	} else {
+		MIDI_Resume();
+	}
+}
+
+// Applies a validated pause-state transition and drives the subsystem hooks.
+// Only ever called on the main thread (see THREADING above), so nothing has
+// to serialise concurrent transitions.
+static void set_pause_state(const PauseState new_state)
+{
+	using enum PauseState;
+
+	const auto prev_state = get_pause_state();
+
+	if (prev_state == new_state) {
+		return;
+	}
+
+	if (!is_valid_transition(prev_state, new_state)) {
+		LOG_WARNING("DOSBOX: Invalid pause transition %s -> %s", //-V510
+		            to_string(prev_state),
+		            to_string(new_state));
+
+		assertm(false, "Invalid PauseState transition");
+		return;
+	}
+
+	const auto was_paused_actual   = is_paused_state(prev_state);
+	const auto was_pause_requested = (prev_state != Running);
+
+	const auto now_paused_actual   = is_paused_state(new_state);
+	const auto now_pause_requested = (new_state != Running);
+	const auto now_running         = (new_state == Running);
+
+	const auto request_edge = (now_pause_requested != was_pause_requested);
+	const auto actual_edge  = (now_paused_actual != was_paused_actual);
+
+	pause_state.store(new_state, std::memory_order_relaxed);
+
+	if (was_paused_actual && now_running) {
+		rebase_wall_clock_on_resume();
+	}
+
+	// Halt / wake the subsystems only when the actually-paused status
+	// flips; the FSM guarantees this edge fires exactly once per pause
+	// and once per resume.
+	if (actual_edge) {
+		set_subsystems_paused(now_paused_actual);
+	}
+
+	// Refresh the titlebar on both the pause-request edge (so any UI
+	// that reflects "pause pending" updates instantly on user input)
+	// and on the actually-paused edge (which is when the paused
+	// indicator -- driven by `DOSBOX_IsPaused()` -- flips). Log only
+	// on the actually-paused edge so it reflects when subsystems
+	// really halted.
+	if (request_edge || actual_edge) {
+		TITLEBAR_RefreshTitle();
+	}
+
+	if (now_paused_actual && !was_paused_actual) {
+		LOG_MSG("DOSBOX: Paused");
+
+	} else if (was_paused_actual && now_running) {
+		LOG_MSG("DOSBOX: Resumed");
+	}
+}
+
+// Drives the `*Pending` -> `*Paused` transition. Runs on the emulator
+// thread via PIC's 1 kHz ticker so it fires from a context that's safe
+// to call `MIXER_LockMixerThread()` from.
+//
+// The transition is gated on the fade actually completing --
+// `MIXER_GetPlaybackGain()` reflects the ramp maintained by the mixer
+// thread, so we hand off to the actually-paused state exactly when
+// the audible fade-out reaches zero, not on a wall-clock deadline. No
+// timeout fallback: the fade completing IS the signal. Nosound-mode
+// works too because the mixer thread snaps the gain directly to
+// target when it hits the `no_sound` sleep path -- the FSM sees 0
+// immediately and transitions without waiting for a non-existent
+// audible fade.
+//
+static void pending_pause_tick_handler()
+{
+	using enum PauseState;
+
+	// Fast path: not in a pending state, nothing to do. This runs
+	// 1000 times a second regardless, so keep it cheap.
+	if (!is_pending_state(get_pause_state())) {
+		return;
+	}
+
+	if (MIXER_GetPlaybackGain() > 0.0f) {
+		return;
+	}
+
+	if (const auto next = NextPauseState(get_pause_state(),
+	                                     PauseEvent::FadeComplete)) {
+		set_pause_state(*next);
+	}
+}
+
+void DOSBOX_RequestUserPause()
+{
+	// Never engage a new pause once shutdown has been requested --
+	// `DOSBOX_RequestShutdown()` force-resumes so teardown runs from a
+	// known-running state, and a late pause request must not undo that
+	// between the shutdown request and the main loop exiting.
+	if (DOSBOX_IsShutdownRequested()) {
+		return;
+	}
+
+	if (const auto next = NextPauseState(get_pause_state(),
+	                                     PauseEvent::UserPause)) {
+		set_pause_state(*next);
+	}
+}
+
+void DOSBOX_RequestUserResume()
+{
+	if (const auto next = NextPauseState(get_pause_state(),
+	                                     PauseEvent::UserResume)) {
+		set_pause_state(*next);
+	}
+}
+
+void DOSBOX_RequestAutoPause()
+{
+	// Never engage a new pause after a shutdown request; see
+	// `DOSBOX_RequestUserPause()`.
+	if (DOSBOX_IsShutdownRequested()) {
+		return;
+	}
+
+	if (const auto next = NextPauseState(get_pause_state(),
+	                                     PauseEvent::AutoPause)) {
+		set_pause_state(*next);
+	}
+}
+
+void DOSBOX_RequestAutoResume()
+{
+	if (const auto next = NextPauseState(get_pause_state(),
+	                                     PauseEvent::AutoResume)) {
+		set_pause_state(*next);
+	}
+}
+
+// CPU-thread tick handler paused. Keeps presentation, host input pump,
+// mapper, and webserver bridge alive so hotkeys (fullscreen toggle,
+// screenshot, mapper, capture start/stop, config reload) and remote
+// commands keep working while the emulator core is frozen.
+//
+static Bitu paused_tick()
+{
+	if (DOSBOX_IsShutdownRequested()) {
+		return 1;
+	}
+
+	GFX_MaybePresentFrame();
+
+	if (!GFX_PollAndHandleEvents()) {
+		return 0;
+	}
+
+	if (WEBSERVER_IsEnabled()) {
+		Webserver::Bridge::Instance().ProcessRequests();
+	}
+
+	MAPPER_RunPending();
+
+	constexpr uint64_t one_ms_ns = 1'000'000;
+	SDL_DelayPrecise(one_ms_ns);
+	return 0;
 }
 
 scrollhack pinhack;
@@ -126,11 +547,17 @@ static void increase_ticks();
 
 static Bitu normal_loop()
 {
+	if (DOSBOX_IsPaused()) {
+		return paused_tick();
+	}
+
 	Bits ret;
 
 	while (true) {
 		if (PIC_RunQueue()) {
-			Webserver::DebugBridge::Instance().ProcessRequests();
+			if (WEBSERVER_IsEnabled()) {
+				Webserver::Bridge::Instance().ProcessRequests();
+			}
 
 			ret = (*cpudecoder)();
 			if (ret < 0) {
@@ -170,12 +597,27 @@ static Bitu normal_loop()
 				GFX_MaybePresentFrame();
 			}
 
+			MAPPER_RunPending();
+
 			if (!GFX_PollAndHandleEvents()) {
 				return 0;
 			}
 			if (ticks.remain > 0) {
 				TIMER_AddTick();
 				--ticks.remain;
+
+				// `pending_pause_tick_handler()` may have just
+				// engaged the pause inside `TIMER_AddTick()`.
+				// Bail out right away instead of emulating the
+				// rest of the tick budget (up to 20 ms):
+				// subsystems are already parked, so a MIDI
+				// burst in that window could fill the synth's
+				// `work_fifo` and deadlock the main thread on
+				// its blocking enqueue (the consumer -- the synth
+				// renderer thread -- was just halted).
+				if (DOSBOX_IsPaused()) {
+					return 0;
+				}
 			} else {
 				increase_ticks();
 				return 0;
@@ -214,8 +656,13 @@ static void increase_ticks()
 
 		static int64_t cumulative_time_slept_us = 0;
 
-		constexpr auto sleep_duration = std::chrono::microseconds(1000);
-		std::this_thread::sleep_for(sleep_duration);
+		// Sleep until the next millisecond tick boundary rather than a
+		// flat 1ms, to wake up as close to the next tick as possible.
+		const auto next_tick_us = (ticks.last + 1) * MicrosInMillisecond;
+		const auto sleep_us = next_tick_us - ticks_new_us;
+		if (sleep_us > 0) {
+			SDL_DelayPrecise(static_cast<uint64_t>(sleep_us) * 1000);
+		}
 
 		const auto time_slept_us = GetTicksUsSince(ticks_new_us);
 		cumulative_time_slept_us += time_slept_us;
@@ -335,7 +782,8 @@ static void increase_ticks()
 					         (ratio_not_removed +
 					          1024.0 / (static_cast<double>(ratio)));
 
-					new_cycle_max = static_cast<int>(CPU_CycleMax * r + 1);
+					new_cycle_max = static_cast<int>(
+					        CPU_CycleMax * r + 1);
 				} else {
 					auto ratio_with_removed = static_cast<int64_t>(
 					        ((static_cast<double>(ratio) - 1024.0) *
@@ -429,27 +877,46 @@ void DOSBOX_SetNormalLoop()
 	loop = normal_loop;
 }
 
-static bool is_shutdown_requested = false;
+static std::atomic<bool> is_shutdown_requested = false;
 
 void DOSBOX_RunMachine()
 {
-	while ((*loop)() == 0 && !is_shutdown_requested)
-		;
+	while ((*loop)() == 0 &&
+	       !is_shutdown_requested.load(std::memory_order_relaxed)) {
+	};
 }
 
 void DOSBOX_RequestShutdown()
 {
-	is_shutdown_requested = true;
+	is_shutdown_requested.store(true, std::memory_order_relaxed);
+
+	// Force-resume so `paused_tick()` exits and subsystem teardown happens
+	// from a known-running state. Without this, teardown would block on
+	// the mixer / synth threads that are parked in their pause hooks.
+	// Covers pending states too so the fade-out timer doesn't fire into
+	// a subsystem that's already tearing down.
+	if (DOSBOX_IsPauseRequested()) {
+		set_pause_state(PauseState::Running);
+	}
 }
 
 bool DOSBOX_IsShutdownRequested()
 {
-	return is_shutdown_requested;
+	return is_shutdown_requested.load(std::memory_order_relaxed);
 }
 
 static void DOSBOX_UnlockSpeed(bool pressed)
 {
 	static bool autoadjust = false;
+
+	// Fast-forward requires PIC + CPU to be running. It's the one feature
+	// whose trigger is suppressed during pause; everything else (mapper,
+	// screenshot, capture, fullscreen, window resize, shader auto-switch,
+	// config reload) keeps working.
+	if (pressed && !DOSBOX_IsRunning()) {
+		LOG_MSG("Fast Forward is unavailable while paused");
+		return;
+	}
 
 	if (pressed) {
 		LOG_MSG("Fast Forward ON");
@@ -457,10 +924,12 @@ static void DOSBOX_UnlockSpeed(bool pressed)
 		MIXER_EnableFastForwardMode();
 
 		if (CPU_CycleAutoAdjust) {
-			autoadjust = true;
+			autoadjust          = true;
 			CPU_CycleAutoAdjust = false;
 			CPU_CycleMax /= 3;
-			if (CPU_CycleMax<1000) CPU_CycleMax=1000;
+			if (CPU_CycleMax < 1000) {
+				CPU_CycleMax = 1000;
+			}
 		}
 	} else {
 		LOG_MSG("Fast Forward OFF");
@@ -468,7 +937,7 @@ static void DOSBOX_UnlockSpeed(bool pressed)
 		MIXER_DisableFastForwardMode();
 
 		if (autoadjust) {
-			autoadjust = false;
+			autoadjust          = false;
 			CPU_CycleAutoAdjust = true;
 		}
 	}
@@ -478,7 +947,8 @@ void DOSBOX_SetMachineTypeFromConfig(SectionProp& section)
 {
 	const auto arguments = &control->arguments;
 	if (!arguments->machine.empty()) {
-		//update value in config (else no matching against suggested values
+		// update value in config (else no matching against suggested
+		// values
 		section.HandleInputLine(std::string("machine=") + arguments->machine);
 	}
 
@@ -517,7 +987,7 @@ void DOSBOX_SetMachineTypeFromConfig(SectionProp& section)
 		int10.vesa_nolfb = true;
 	} else if (machine_str == "vesa_oldvbe") {
 
-		svga_type = SvgaType::S3;
+		svga_type         = SvgaType::S3;
 		int10.vesa_oldvbe = true;
 
 	} else if (machine_str == "svga_et3000") {
@@ -682,6 +1152,44 @@ void DOSBOX_Restart(std::vector<std::string>& parameters)
 #endif // WIN32
 }
 
+static std::optional<VesaCustomResolution> parse_vesa_custom_resolution(
+        const std::string& pref)
+{
+	if (pref.empty() || has_false(pref)) {
+		return {};
+	}
+
+	constexpr auto MinWidth  = 320;
+	constexpr auto MinHeight = 200;
+	constexpr auto MaxWidth  = 1920;
+	constexpr auto MaxHeight = 1440;
+
+	if (const auto dimensions = parse_int_dimensions(pref)) {
+		const auto [width, height] = *dimensions;
+
+		const auto is_out_of_bounds = (width < MinWidth || width > MaxWidth ||
+		                               height < MinHeight ||
+		                               height > MaxHeight);
+
+		const auto is_valid_width = ((width % 8) == 0);
+
+		if (!is_out_of_bounds && is_valid_width) {
+			return VesaCustomResolution{width, height};
+		}
+	}
+
+	LOG_WARNING(
+	        "VIDEO: Invalid 'vesa_custom_resolution' setting: '%s'; "
+	        "must be from %dx%d to %dx%d with the width a multiple of 8, "
+	        "using 'none'",
+	        pref.c_str(),
+	        MinWidth,
+	        MinHeight,
+	        MaxWidth,
+	        MaxHeight);
+	return {};
+}
+
 static void dosbox_realinit(SectionProp& section)
 {
 	// Initialize some dosbox internals
@@ -717,6 +1225,9 @@ static void dosbox_realinit(SectionProp& section)
 	} else {
 		int10.vesa_modes = VesaModes::All;
 	}
+
+	int10.vesa_custom_resolution = parse_vesa_custom_resolution(
+	        section.GetString("vesa_custom_resolution"));
 
 	VGA_SetRefreshRateMode(section.GetString("dos_rate"));
 
@@ -762,6 +1273,10 @@ void DOSBOX_Init()
 	PROGRAMS_Init();
 	TIMER_Init();
 	CMOS_Init();
+
+	// Register the PIC-tick handler that completes pending pauses once
+	// the fade-out has reached zero. See `pending_pause_tick_handler`.
+	TIMER_AddTickHandler(pending_pause_tick_handler);
 }
 
 void DOSBOX_Destroy()
@@ -834,8 +1349,8 @@ static void notify_dosbox_setting_updated(const SectionProp& section,
 		VGA_SetRefreshRateMode(section.GetString("dos_rate"));
 
 	} else if (prop_name == "shell_config_shortcuts") {
-		// No need to re-init anything; the setting is always queried when
-		// executing a command.
+		// No need to re-init anything; the setting is always queried
+		// when executing a command.
 	}
 }
 
@@ -1078,14 +1593,32 @@ static void add_dosbox_config_section(const ConfigPtr& conf)
 	        "               modes available in this mode are often required by late '90s\n"
 	        "               demoscene productions.");
 
+	pstring = section->AddString("vesa_custom_resolution", OnlyAtStart, "none");
+	pstring->SetHelp(
+	        "Replace the 1152x864 VESA resolution with a custom one ('none' by default).\n"
+	        "Useful for playing games in widescreen that support custom VESA resolutions\n"
+	        "(e.g., Quake and Build Engine games such as Duke Nukem 3D and Blood), or for\n"
+	        "running Windows 3.1 in widescreen with the VBESVGA driver. Custom resolutions\n"
+	        "always use square pixels. Possible values:\n"
+	        "\n"
+	        "  none:  Don't replace the 1152x864 VESA resolution.\n"
+	        "\n"
+	        "  WxH:   Replacement resolution in WxH format (e.g., 1920x1080, 960x540,\n"
+	        "         480x270). Valid range is 320x200 to 1920x1440; width must be a multiple\n"
+	        "         of 8. Colour depth variants that don't fit into the video memory are\n"
+	        "         skipped with a warning in the logs; increase 'vmemsize' to fit them\n"
+	        "         (e.g., 1920x1080 32-bit needs 8 MB).\n"
+	        "\n"
+	        "Note: The feature only works with the `svga_s3` machine type; any other `svga_*`\n"
+	        "      and `vesa_*` machine types are not supported.");
+
 	pbool = section->AddBool("vga_8dot_font", OnlyAtStart, false);
 	pbool->SetHelp("Use 8-pixel-wide fonts on VGA adapters ('off' by default).");
 
-	pbool = section->AddBool("vga_render_per_scanline", OnlyAtStart, true);
-	pbool->SetHelp(
-	        "Emulate accurate per-scanline VGA rendering ('on' by default). Currently, you\n"
-	        "need to disable this for a few games, otherwise they will crash at startup\n"
-	        "(e.g., Deus, Ishar 3, Robinson's Requiem, Time Warriors).");
+	pstring = section->AddString("vga_render_per_scanline", Deprecated, "");
+	pstring->SetHelp(
+	        "The [color=light-green]'vga_render_per_scanline'[reset] setting has been removed;\n"
+	        "it's no longer necessary.");
 
 	pstring = section->AddString("autoexec_section", OnlyAtStart, "join");
 	pstring->SetValues({"join", "overwrite"});

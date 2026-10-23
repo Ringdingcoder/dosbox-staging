@@ -17,8 +17,6 @@ CHECK_NARROWING();
 Cms::Cms(const int port_choice, const std::string& card_choice,
          const std::string& filter_choice)
 {
-	using namespace std::placeholders;
-
 	MIXER_LockMixerThread();
 
 	is_standalone_gameblaster = (card_choice == "gb");
@@ -48,16 +46,15 @@ Cms::Cms(const int port_choice, const std::string& card_choice,
 	// compatibility, and the Sound Blaster 2.0 had sockets for them as
 	// optional add-ons. Therefore, we always set up these handlers, even if
 	// the card type isn't a Game Blaster.
-	const auto data_to_left = std::bind(&Cms::WriteDataToLeftDevice, this, _1, _2, _3);
+	const auto data_to_left = std::bind_front(&Cms::WriteDataToLeftDevice, this);
 
-	const auto control_to_left =
-	        std::bind(&Cms::WriteControlToLeftDevice, this, _1, _2, _3);
+	const auto control_to_left = std::bind_front(&Cms::WriteControlToLeftDevice,
+	                                             this);
 
-	const auto data_to_right =
-	        std::bind(&Cms::WriteDataToRightDevice, this, _1, _2, _3);
+	const auto data_to_right = std::bind_front(&Cms::WriteDataToRightDevice, this);
 
-	const auto control_to_right =
-	        std::bind(&Cms::WriteControlToRightDevice, this, _1, _2, _3);
+	const auto control_to_right = std::bind_front(&Cms::WriteControlToRightDevice,
+	                                              this);
 
 	write_handlers[0].Install(base_port, data_to_left, io_width_t::byte);
 	write_handlers[1].Install(base_port + 1, control_to_left, io_width_t::byte);
@@ -70,10 +67,10 @@ Cms::Cms(const int port_choice, const std::string& card_choice,
 	// Blaster:
 	if (is_standalone_gameblaster) {
 		const auto read_from_detection_port =
-		        std::bind(&Cms::ReadFromDetectionPort, this, _1, _2);
+		        std::bind_front(&Cms::ReadFromDetectionPort, this);
 
 		const auto write_to_detection_port =
-		        std::bind(&Cms::WriteToDetectionPort, this, _1, _2, _3);
+		        std::bind_front(&Cms::WriteToDetectionPort, this);
 
 		read_handler_for_detection.Install(base_port,
 		                                   read_from_detection_port,
@@ -87,7 +84,7 @@ Cms::Cms(const int port_choice, const std::string& card_choice,
 	}
 
 	// Set up the mixer and level controls
-	const auto audio_callback = std::bind(&Cms::AudioCallback, this, _1);
+	const auto audio_callback = std::bind_front(&Cms::AudioCallback, this);
 
 	channel = MIXER_AddChannel(audio_callback,
 	                           RenderRateHz,
@@ -247,20 +244,25 @@ void Cms::AudioCallback(const int requested_frames)
 	}
 #endif
 
+	render_buf.clear();
+
 	auto frames_remaining = requested_frames;
 
-	// First, add any frames we've queued since the last callback
+	// Drain any cycle-accurate frames queued by RenderUpToNow
 	while (frames_remaining && fifo.size()) {
-		channel->AddSamples_sfloat(1, &fifo.front()[0]);
+		render_buf.push_back(fifo.front());
 		fifo.pop();
 		--frames_remaining;
 	}
-	// If the queue's run dry, render the remainder and sync-up our time datum
+	// Render the remainder
 	while (frames_remaining) {
-		auto frame = RenderFrame();
-		channel->AddSamples_sfloat(1, &frame[0]);
+		render_buf.emplace_back(RenderFrame());
 		--frames_remaining;
 	}
+
+	// Submit the whole batch at once so the speex resampler processes
+	// one block instead of one frame per call.
+	channel->AddAudioFrames(render_buf);
 	last_rendered_ms = PIC_AtomicIndex();
 }
 

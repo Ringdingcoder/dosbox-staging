@@ -442,20 +442,24 @@ void Opl::AudioCallback(const int requested_frames)
 		        fifo.size());
 	}
 #endif
+
+	render_buf.clear();
+
 	auto frames_remaining = requested_frames;
 
-	// First, send any frames we've queued since the last callback
+	// Drain any cycle-accurate frames queued by RenderUpToNow
 	while (frames_remaining && fifo.size()) {
-		channel->AddSamples_sfloat(1, &fifo.front()[0]);
+		render_buf.push_back(fifo.front());
 		fifo.pop();
 		--frames_remaining;
 	}
-	// If the queue's run dry, render the remainder and sync-up our time datum
+	// Render the remainder
 	while (frames_remaining) {
-		const auto frame = RenderFrame();
-		channel->AddSamples_sfloat(1, &frame[0]);
+		render_buf.emplace_back(RenderFrame());
 		--frames_remaining;
 	}
+
+	channel->AddAudioFrames(render_buf);
 	last_rendered_ms = PIC_AtomicIndex();
 }
 
@@ -835,9 +839,7 @@ Opl::Opl(Section* configuration, const OplMode _opl_mode)
 		channel_features.emplace(ChannelFeature::Stereo);
 	}
 
-	const auto mixer_callback = std::bind(&Opl::AudioCallback,
-	                                      this,
-	                                      std::placeholders::_1);
+	const auto mixer_callback = std::bind_front(&Opl::AudioCallback, this);
 
 	// Register the audio channel
 	channel = MIXER_AddChannel(mixer_callback,
@@ -910,10 +912,8 @@ Opl::Opl(Section* configuration, const OplMode _opl_mode)
 
 	Init();
 
-	using namespace std::placeholders;
-
-	const auto read_from = std::bind(&Opl::PortRead, this, _1, _2);
-	const auto write_to  = std::bind(&Opl::PortWrite, this, _1, _2, _3);
+	const auto read_from = std::bind_front(&Opl::PortRead, this);
+	const auto write_to  = std::bind_front(&Opl::PortWrite, this);
 
 	// 0x388-0x38b ports (read/write)
 	WriteHandler[0].Install(Port::AdLib::Command, write_to, io_width_t::byte, 4);

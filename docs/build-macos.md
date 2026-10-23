@@ -1,16 +1,16 @@
 # Building on macOS
 
-macOS builds can be created using the Meson buildsystem, compiled using the
-Clang or GCC compilers, and provided with dependencies using the Homebrew or
-MacPorts package managers.
+macOS builds are created with the CMake build tool and the Clang compiler. The
+build tools (CMake, Ccache, etc.) are provided by the Homebrew or MacPorts
+package managers, while the library dependencies are built and provided by
+[vcpkg](https://github.com/microsoft/vcpkg).
+
+We recommend using CMake with presets because they're CI-tested and produce a
+binary using consistent compiler flags. Run `cmake --list-presets` to list the
+presets.
 
 We recommend using Homebrew and Clang because Apple's Core SDKs can be used
 only with Apple's fork of the Clang compiler.
-
-> [!NOTE]
-> CMake support is currently an experimental internal-only, work-in-progress
-> feature; it's not ready for public consumption yet. Please ignore the
-> `CMakeLists.txt` files in the source tree.
 
 
 ## Installing Xcode
@@ -30,18 +30,24 @@ Tools need to be installed and the license agreed to.
 
 3. Install build dependencies using either Homebrew or MacPorts.
 
+You might need to run `sudo xcodebuild -license` as well to accept the license
+agreements again if the CMake build step fails.
 
-## Installing dependencies
+
+## Installing build tools
+
+The library dependencies are handled by vcpkg (see [Installing
+vcpkg](#installing-vcpkg) below), so you only need the build tools themselves
+from Homebrew or MacPorts.
 
 ### Homebrew
 
 1. Install Homebrew: <https://brew.sh>.
 
-2. Install the minimum set of dependencies and related tools:
+2. Install the build tools:
 
     ```shell
-    brew install cmake ccache meson sdl2 asio opusfile \
-                 pkg-config python3
+    brew install cmake ccache pkg-config python3
     ```
 
 3. Add `brew` to your shell path:
@@ -55,24 +61,115 @@ Tools need to be installed and the license agreed to.
 
 1. Install MacPorts: <https://www.macports.org/install.php>
 
-2. Install the minimum set of dependencies and related tools:
+2. Install the build tools:
 
     ```shell
-    sudo port install cmake ccache meson libsdl2 asio opusfile \
-                      glib2 pkgconfig python311
+    sudo port install cmake ccache pkgconfig python314
+    ```
+
+## Installing vcpkg
+
+The library dependencies are built and provided by
+[vcpkg](https://github.com/microsoft/vcpkg). The CMake presets expect the
+`VCPKG_ROOT` environment variable to point at your vcpkg checkout.
+
+1. Clone vcpkg into your home directory:
+
+    ```shell
+    cd ~
+    git clone https://github.com/microsoft/vcpkg.git
+    ```
+
+2. Bootstrap it:
+
+    ```shell
+    cd vcpkg
+    ./bootstrap-vcpkg.sh -disableMetrics
+    ```
+
+3. Set `VCPKG_ROOT` in your shell (add it to your shell startup script, usually
+   `~/.zprofile`, so it persists across sessions):
+
+    ```shell
+    export VCPKG_ROOT=$HOME/vcpkg
     ```
 
 ## Building
 
-Once you have dependencies installed using either environment, clone the
-repository and enter its directory:
+Once the build tools and vcpkg are installed, clone the repository:
 
 ```shell
 git clone https://github.com/dosbox-staging/dosbox-staging.git
-cd dosbox-staging
-meson setup build
-meson compile -C build
 ```
+
+To build the debug version, execute the following from the repo root:
+
+```shell
+cmake --preset=debug-macos
+cmake --build --preset=debug-macos
+```
+
+To build the release version:
+
+```shell
+cmake --preset=release-macos
+cmake --build --preset=release-macos
+```
+
+> [!NOTE]
+> The first configure step builds all library dependencies from source via
+> vcpkg, which can take a while. Subsequent builds reuse the cached artifacts.
+
+## Troubleshooting
+
+- **No CMAKE_C_COMPILER could be found.** --- Make sure you don't have any
+  pending Xcode updates that haven't been completed yet.
+
+- **Random CMake errors**. --- You might need to run `sudo xcodebuild
+  -license` to accept the license agreements again. This usually happens after
+  an Xcode upgrade.
+
+
+## Bisecting and building old versions
+
+Versions prior to 0.83.0 used the Meson build system, and versions prior to
+0.77.0 used Autotools. See the [Meson build guide](build-meson.md) for
+instructions on building these older checkouts.
+
+
+## Unit tests
+
+Unit tests are built and run with CMake and `ctest`. See
+[Running the unit tests](build-testing.md) for details.
+
+
+## Offline documentation
+
+Self-contained offline HTML documentation can optionally be built as part of the
+CMake build. See [Building the offline documentation](build-documentation.md)
+for details.
+
+
+## Sanitizer build
+
+There are two (mutually exclusive) sanitizer settings available:
+- `OPT_SANITIZER` — detects memory errors and undefined behaviors
+- `OPT_THREAD_SANITIZER` — data race detector
+
+To use any of these, pass the appropriate option when configuring the project,
+for example:
+
+```shell
+cmake -DOPT_SANITIZER=ON --preset=release-macos
+cmake --build --preset=release-macos
+```
+
+For more information about sanitizers, check the `clang` documentation on the
+`-fsanitize` option.
+
+As sanitizer availability and performance are highly platform-dependent, you
+might need to manually adapt the `SANITIZER_FLAGS` variable in `CMakeLists.txt`
+to suit your needs.
 
 
 ## Permissions and running
@@ -135,7 +232,7 @@ TODO
 
 ### MacPorts
 
-The instructions are up to date for macOS Sequioa 15.5.
+The instructions are up to date for macOS Sequoia 15.5.
 
 #### mkdocs
 
@@ -222,27 +319,6 @@ sudo port install gsed
 ln -s /opt/local/bin/gsed ~/bin/sed
 ```
 
-### Sanitizer build (CMake)
-
-There are two (mutually exclusive) sanitizer settings available:
-- `OPT_SANITIZER` - detects memory errors and undefined behaviors
-- `OPT_THREAD_SANITIZER` - data race detector
-
-To use any of these, pass the appropriate option when configuring the sources,
-for example:
-
-```bash
-cmake -DOPT_SANITIZER=ON --preset=release-macos
-cmake --build --preset=release-macos
-```
-
-For more information about sanitizers check the `clang` documentation on the
-`-fsanitize` option.
-
-As sanitizer availability and performance are highly dependent on the concrete
-platform (CPU, OS, compiler), you might need to manually adapt the
-`SANITIZER_FLAGS` variable in the `CMakeLists.txt` file to suit your needs.
-
 ## Using FluidSynth and Slirp during local development
 
 FluidSynth and Slirp are difficult and time-consuming to build, therefore they
@@ -285,3 +361,72 @@ to the FluidSynth MIDI synth or NE2000 networking via Slirp.
 
 You'll only need to do this once after a successful build. If you delete the
 CMake build folder, redo step 4.
+
+
+## Setting up local dev environment for code signing
+
+The prerequisite for code signing is an Apple Developer membership. The
+following steps describe how to set up the necessary certificates and
+credentials in the Keychain for the [notarizer
+script](/scripts/packaging/macos/notarize-macos-dmg.sh) for local code
+signing.
+
+### Import the dev certificates into the Keychain
+
+1. Start XCode, then go to **Settings / Accounts**.
+
+2. Click on the **+** button in the bottom left corner and select **Apple
+   Account**.
+
+3. Select the newly added account and click on **Manage Certificates** in the
+   bottom right corner.
+
+4. Click on the **+** button and add all available certificates (probably
+   **Apple Development Certificates** is only one needed, but it doesn't hurt
+   to add them all).
+
+5. Quit XCode, then open Keychain Access and verify the new certificates and
+   keys have been imported. Search for "developer" --- you should see a bunch
+   of entries, including **Developer ID Application: <Your Name>
+   (_<TEAM_ID>_)**. You might need to wait a minute or two for the entries to
+   show up in the Keychain.
+
+Your Team ID is the 10-character alphanumeric code in parentheses on your
+certificate, e.g. **Developer ID Application: Your Name (X4MF6H9XZ6)**
+
+
+### Store the authentication credentials in the Keychain
+
+These instructions are adapted from [here](https://github.com/electron/notarize/blob/main/README.md).
+
+1. Generate an app-specific password for your Apple ID [as described here](https://support.apple.com/en-us/102654).
+
+2. Run the following command to store your credentials securely in the
+   Keychain (you can change the new keychain profile name from
+   `notary-tool-profile` to anything else you like):
+
+       xcrun notarytool store-credentials "notary-tool-profile" \
+           --apple-id "<your-apple-id>" \
+           --team-id "<10-char-team-id>"
+           --password "<app-specific-pw>"
+
+   You should get the following input if all went well:
+
+       Validating your credentials...
+       Success. Credentials validated.
+       Credentials saved to Keychain.
+       To use them, specify `--keychain-profile "notary-tool-profile"`
+
+3. **[Optional]** Create a new script to set the env vars required by the
+   [notarizer script](/scripts/packaging/macos/notarize-macos-dmg.sh) script:
+
+       export DEVELOPER_IDENTITY="Developer ID Application: Your Name (X4MF6H9XZ6)"
+       export KEYCHAIN_PROFILE="notary-tool-profile"
+
+
+## Code signing the application bundle
+
+Once the local dev environment for code signing is set up, you can sign
+the application bundle built on GitHub CI with the [notarizer
+script](/scripts/packaging/macos/notarize-macos-dmg.sh).
+

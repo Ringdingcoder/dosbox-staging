@@ -22,14 +22,16 @@
 
 // Glad must be included before SDL
 #include "glad/gl.h"
-#include <SDL.h>
-#include <SDL_opengl.h>
+#include <SDL3/SDL.h>
+#include <SDL3/SDL_opengl.h>
 
 class OpenGlRenderer : public RenderBackend {
 
 public:
+	// `x`, `y`, `width`, and `height` must be in native units (logical
+	// units (points) on macOS and Wayland; pixels on Windows and X11)
 	OpenGlRenderer(const int x, const int y, const int width,
-	               const int height, uint32_t sdl_window_flags);
+	               const int height, SDL_WindowFlags sdl_window_flags);
 
 	~OpenGlRenderer() override;
 
@@ -80,7 +82,7 @@ public:
 private:
 	SDL_Window* CreateSdlWindow(const int x, const int y, const int width,
 	                            const int height,
-	                            const uint32_t sdl_window_flags);
+	                            const SDL_WindowFlags sdl_window_flags);
 
 	bool InitRenderer();
 	void RecreateInputTexture();

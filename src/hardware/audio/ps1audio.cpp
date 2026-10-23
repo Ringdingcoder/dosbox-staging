@@ -63,14 +63,16 @@ static void PS1AUDIO_PicCallback()
 
 Ps1Dac::Ps1Dac(const std::string& filter_choice)
 {
-	using namespace std::placeholders;
-
 	MIXER_LockMixerThread();
 
 	constexpr bool Stereo = false;
 	constexpr bool SignedData = false;
 	constexpr bool NativeOrder = true;
-	const auto callback = std::bind(MIXER_PullFromQueueCallback<Ps1Dac, uint8_t, Stereo, SignedData, NativeOrder>, _1, this);
+
+	const auto callback = [this](auto arg) {
+		return MIXER_PullFromQueueCallback<Ps1Dac, uint8_t, Stereo, SignedData, NativeOrder>(
+		        arg, this);
+	};
 
 	channel = MIXER_AddChannel(callback,
 	                           UseMixerRate,
@@ -103,44 +105,43 @@ Ps1Dac::Ps1Dac(const std::string& filter_choice)
 
 	// Register DAC per-port read handlers
 	read_handlers[0].Install(0x02F,
-	                         std::bind(&Ps1Dac::ReadPresencePort02F, this, _1, _2),
+	                         std::bind_front(&Ps1Dac::ReadPresencePort02F, this),
 	                         io_width_t::byte);
 
 	read_handlers[1].Install(0x200,
-	                         std::bind(&Ps1Dac::ReadCmdResultPort200, this, _1, _2),
+	                         std::bind_front(&Ps1Dac::ReadCmdResultPort200, this),
 	                         io_width_t::byte);
 
 	read_handlers[2].Install(0x202,
-	                         std::bind(&Ps1Dac::ReadStatusPort202, this, _1, _2),
+	                         std::bind_front(&Ps1Dac::ReadStatusPort202, this),
 	                         io_width_t::byte);
 
 	read_handlers[3].Install(0x203,
-	                         std::bind(&Ps1Dac::ReadTimingPort203, this, _1, _2),
+	                         std::bind_front(&Ps1Dac::ReadTimingPort203, this),
 	                         io_width_t::byte);
 
-	read_handlers[4].Install(
-	        0x204,
-	        std::bind(&Ps1Dac::ReadJoystickPorts204To207, this, _1, _2),
-	        io_width_t::byte,
-	        3);
+	read_handlers[4].Install(0x204,
+	                         std::bind_front(&Ps1Dac::ReadJoystickPorts204To207,
+	                                         this),
+	                         io_width_t::byte,
+	                         3);
 
 	// Register DAC per-port write handlers
 	write_handlers[0].Install(0x200,
-	                          std::bind(&Ps1Dac::WriteDataPort200, this, _1, _2, _3),
+	                          std::bind_front(&Ps1Dac::WriteDataPort200, this),
 	                          io_width_t::byte);
 
 	write_handlers[1].Install(0x202,
-	                          std::bind(&Ps1Dac::WriteControlPort202, this, _1, _2, _3),
+	                          std::bind_front(&Ps1Dac::WriteControlPort202, this),
 	                          io_width_t::byte);
 
 	write_handlers[2].Install(0x203,
-	                          std::bind(&Ps1Dac::WriteTimingPort203, this, _1, _2, _3),
+	                          std::bind_front(&Ps1Dac::WriteTimingPort203, this),
 	                          io_width_t::byte);
 
-	write_handlers[3].Install(
-	        0x204,
-	        std::bind(&Ps1Dac::WriteFifoLevelPort204, this, _1, _2, _3),
-	        io_width_t::byte);
+	write_handlers[3].Install(0x204,
+	                          std::bind_front(&Ps1Dac::WriteFifoLevelPort204, this),
+	                          io_width_t::byte);
 
 	// Operate at native sampling rates
 	sample_rate_hz = channel->GetSampleRate();
@@ -391,6 +392,7 @@ private:
 	MixerChannelPtr channel            = nullptr;
 	IO_WriteHandleObject write_handler = {};
 	std::queue<float> fifo             = {};
+	std::vector<float> render_buf      = {};
 	std::mutex mutex                   = {};
 	sn76496_device device;
 
@@ -411,11 +413,9 @@ static std::unique_ptr<Ps1Synth> ps1_synth = {};
 Ps1Synth::Ps1Synth(const std::string& filter_choice)
         : device(nullptr, nullptr, Ps1PsgClockHz)
 {
-	using namespace std::placeholders;
-
 	MIXER_LockMixerThread();
 
-	const auto callback = std::bind(&Ps1Synth::AudioCallback, this, _1);
+	const auto callback = std::bind_front(&Ps1Synth::AudioCallback, this);
 
 	channel = MIXER_AddChannel(callback,
 	                           RenderRateHz,
@@ -445,8 +445,8 @@ Ps1Synth::Ps1Synth(const std::string& filter_choice)
 		set_section_property_value("speaker", "ps1audio_filter", "on");
 	}
 
-	const auto generate_sound =
-	        std::bind(&Ps1Synth::WriteSoundGeneratorPort205, this, _1, _2, _3);
+	const auto generate_sound = std::bind_front(&Ps1Synth::WriteSoundGeneratorPort205,
+	                                            this);
 
 	write_handler.Install(0x205, generate_sound, io_width_t::byte);
 	static_cast<device_t&>(device).device_start();
@@ -510,20 +510,23 @@ void Ps1Synth::AudioCallback(const int requested_frames)
 	}
 #endif
 
+	render_buf.clear();
+
 	auto frames_remaining = requested_frames;
 
-	// First, send any frames we've queued since the last callback
+	// Drain any cycle-accurate frames queued by RenderUpToNow
 	while (frames_remaining && fifo.size()) {
-		channel->AddSamples_mfloat(1, &fifo.front());
+		render_buf.push_back(fifo.front());
 		fifo.pop();
 		--frames_remaining;
 	}
-	// If the queue's run dry, render the remainder and sync-up our time datum
+	// Render the remainder
 	while (frames_remaining) {
-		float sample = RenderSample();
-		channel->AddSamples_mfloat(1, &sample);
+		render_buf.emplace_back(RenderSample());
 		--frames_remaining;
 	}
+
+	channel->AddSamples_mfloat(requested_frames, render_buf.data());
 	last_rendered_ms = PIC_AtomicIndex();
 }
 

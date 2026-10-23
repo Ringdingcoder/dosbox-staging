@@ -63,7 +63,8 @@
 #include "shell/shell.h"
 #include "utils/math_utils.h"
 
-#include "SDL_thread.h"
+#include <SDL3/SDL_thread.h>
+#include <SDL3/SDL_mutex.h>
 
 // Enable to activate IMF_LOG calls
 #define IMFC_VERBOSE_LOGGING 0
@@ -75,7 +76,7 @@ constexpr uint8_t MinIrqAddress = 2;
 constexpr uint8_t MaxIrqAddress = 7;
 
 #if IMFC_VERBOSE_LOGGING
-SDL_mutex* m_loggerMutex = nullptr;
+SDL_Mutex* m_loggerMutex = nullptr;
 template <typename... Args>
 void IMF_LOG(std::string format, const Args&... args)
 {
@@ -266,7 +267,7 @@ template <typename BufferDataType>
 struct CyclicBufferState {
 private:
 	const std::string m_name           = {};
-	SDL_mutex* m_mutex                 = nullptr;
+	SDL_Mutex* m_mutex                 = nullptr;
 	bool m_locked                      = false;
 	unsigned int lastReadByteIndex     = 0;
 	unsigned int indexForNextWriteByte = 0;
@@ -3095,8 +3096,8 @@ public:
 	~ym2151_device();
 
 	// configuration helpers
-	// auto irq_handler() { return m_irqhandler.bind(); }
-	// auto port_write_handler() { return m_portwritehandler.bind(); }
+	// auto irq_handler() { return m_irqhandler.bind_front(); }
+	// auto port_write_handler() { return m_portwritehandler.bind_front(); }
 
 	// read/write
 	uint8_t read(const offs_t offset) const;
@@ -3148,8 +3149,9 @@ private:
 
 	// Playback related
 	MixerChannelPtr audio_channel = nullptr;
-	std::queue<AudioFrame> fifo   = {};
-	double last_rendered_ms       = 0.0;
+	std::queue<AudioFrame> fifo        = {};
+	std::vector<AudioFrame> render_buf = {};
+	double last_rendered_ms            = 0.0;
 	double ms_per_render          = 0.0;
 
 	int tl_tab[TL_TAB_LEN]{};
@@ -5001,20 +5003,23 @@ void ym2151_device::sound_stream_update(const int requested_frames)
 	// if (fifo.size())
 	//	LOG_MSG("IMFC: Queued %2lu cycle-accurate frames", fifo.size());
 
+	render_buf.clear();
+
 	auto frames_remaining = requested_frames;
 
-	// First, send any frames we've queued since the last callback
+	// Drain any cycle-accurate frames queued by RenderUpToNow
 	while (frames_remaining && fifo.size()) {
-		audio_channel->AddSamples_sfloat(1, &fifo.front()[0]);
+		render_buf.push_back(fifo.front());
 		fifo.pop();
 		--frames_remaining;
 	}
-	// If the queue's run dry, render the remainder and sync-up our time datum
+	// Render the remainder
 	while (frames_remaining) {
-		const auto frame = RenderFrame();
-		audio_channel->AddSamples_sfloat(1, &frame[0]);
+		render_buf.emplace_back(RenderFrame());
 		--frames_remaining;
 	}
+
+	audio_channel->AddAudioFrames(render_buf);
 	last_rendered_ms = PIC_AtomicIndex();
 }
 
@@ -5222,7 +5227,7 @@ private:
 	DataContainer<bool> m_piuGroup1DataAvailable;
 	DataContainer<bool> m_piuGroup1DataAcknowledgement;
 
-	SDL_mutex* m_hardwareMutex = {};
+	SDL_Mutex* m_hardwareMutex = {};
 	Intel8253 m_timer;
 	InverterGate m_invTimerAClear;
 	DFlipFlop m_df1;
@@ -5240,8 +5245,8 @@ private:
 	SDL_Thread* m_mainThread                  = nullptr;
 	SDL_Thread* m_interruptThread             = nullptr;
 	bool m_interruptHandlerRunning            = {};
-	SDL_mutex* m_interruptHandlerRunningMutex = nullptr;
-	SDL_cond* m_interruptHandlerRunningCond    = nullptr;
+	SDL_Mutex* m_interruptHandlerRunningMutex = nullptr;
+	SDL_Condition* m_interruptHandlerRunningCond    = nullptr;
 
 	static constexpr auto NumIoHandlers                           = 16;
 	std::array<IO_ReadHandleObject, NumIoHandlers> readHandlers   = {};
@@ -5330,12 +5335,12 @@ private:
 
 	bool currentThreadIsMainThread() const
 	{
-		return SDL_ThreadID() == SDL_GetThreadID(m_mainThread);
+		return SDL_GetCurrentThreadID() == SDL_GetThreadID(m_mainThread);
 	}
 
 	bool currentThreadIsInterruptThread() const
 	{
-		return SDL_ThreadID() == SDL_GetThreadID(m_interruptThread);
+		return SDL_GetCurrentThreadID() == SDL_GetThreadID(m_interruptThread);
 	}
 
 	const char* getCurrentThreadName()
@@ -11280,7 +11285,7 @@ private:
 		log_debug("processSysExCmd_NodeMessage_SetVoiceBankData() - calling receiveDataPacketTypeA(0x%02x)",
 		          readResult.data);
 		if (receiveDataPacketTypeA(readResult.data,
-		                           (uint8_t*)bank,
+		                           (uint8_t*)bank, //-V2018
 		                           sizeof(VoiceDefinitionBank)) !=
 		    ReadStatus::Success) {
 			log_debug("processSysExCmd_NodeMessage_SetVoiceBankData() - receiveDataPacketTypeA returned ERROR");
@@ -12826,13 +12831,13 @@ private:
 					m_sp_SysExStateMatchTable[i] = b;
 					i++;
 
-					// Although incrementing 'i' can technically exceed the for
-					// loop's bounds, we know the prior "b == 0xFF" condition
-					// per the read-only table value means that 'i' will never
-					// be close to the loop end; so simply assert it:
-					//
-					assert(i < sizeof(SP_SysExStateMatchTableTemplate));
-
+					// Incrementing 'i' can technically exceed the
+					// loop's bounds, but the read-only table values
+					// mean 'i' will never be close to the loop end;
+					// guard defensively regardless:
+					if (i >= sizeof(SP_SysExStateMatchTableTemplate)) {
+						break;
+					}
 					b = SP_SysExStateMatchTableTemplate[i];
 				}
 			} else {
@@ -12890,14 +12895,14 @@ public:
 		                  SDL_LockMutex(m_interruptHandlerRunningMutex);
 		                  // log("m_interruptHandlerRunning = true");
 		                  m_interruptHandlerRunning = true;
-		                  SDL_CondSignal(m_interruptHandlerRunningCond);
+		                  SDL_SignalCondition(m_interruptHandlerRunningCond);
 		                  SDL_UnlockMutex(m_interruptHandlerRunningMutex);
 	                  } /*callbackOnLowToHigh*/,
 	                  [this]() {
 		                  SDL_LockMutex(m_interruptHandlerRunningMutex);
 		                  // log("m_interruptHandlerRunning = false");
 		                  m_interruptHandlerRunning = false;
-		                  SDL_CondSignal(m_interruptHandlerRunningCond);
+		                  SDL_SignalCondition(m_interruptHandlerRunningCond);
 		                  SDL_UnlockMutex(m_interruptHandlerRunningMutex);
 	                  } /*callbackOnToHighToLow*/),
 	          m_tsr("TSR"),
@@ -13012,7 +13017,7 @@ public:
 		m_hardwareMutex                = SDL_CreateMutex();
 		m_interruptHandlerRunning      = false;
 		m_interruptHandlerRunningMutex = SDL_CreateMutex();
-		m_interruptHandlerRunningCond  = SDL_CreateCond();
+		m_interruptHandlerRunningCond  = SDL_CreateCondition();
 		m_mainThread = SDL_CreateThread(&imfMainThreadStart, "imfc-main", this);
 		m_interruptThread = SDL_CreateThread(&imfInterruptThreadStart,
 		                                     "imfc-interrupt",
@@ -13055,7 +13060,7 @@ public:
 		while (keepRunning.load()) {
 			SDL_LockMutex(m_interruptHandlerRunningMutex);
 			while (!m_interruptHandlerRunning) {
-				SDL_CondWait(m_interruptHandlerRunningCond,
+				SDL_WaitCondition(m_interruptHandlerRunningCond,
 				             m_interruptHandlerRunningMutex);
 			}
 			SDL_UnlockMutex(m_interruptHandlerRunningMutex);
@@ -13253,74 +13258,68 @@ void MusicFeatureCard::RegisterIoHandlers(const io_port_t port)
 	assert(readHandlers.size() == NumIoHandlers);
 	assert(writeHandlers.size() == NumIoHandlers);
 
-	auto read_piu0 = std::bind(&MusicFeatureCard::readPortPIU0, this, _1, _2);
-	readHandlers.at(0).Install(port_piu0, read_piu0, io_width_t::byte);
+	auto read_piu0 = std::bind_front(&MusicFeatureCard::readPortPIU0, this);
+	readHandlers[0].Install(port_piu0, read_piu0, io_width_t::byte);
 
-	auto write_piu0 = std::bind(&MusicFeatureCard::writePortPIU0, this, _1, _2, _3);
-	writeHandlers.at(0).Install(port_piu0, write_piu0, io_width_t::byte);
+	auto write_piu0 = std::bind_front(&MusicFeatureCard::writePortPIU0, this);
+	writeHandlers[0].Install(port_piu0, write_piu0, io_width_t::byte);
 
-	auto read_piu1 = std::bind(&MusicFeatureCard::readPortPIU1, this, _1, _2);
-	readHandlers.at(1).Install(port_piu1, read_piu1, io_width_t::byte);
+	auto read_piu1 = std::bind_front(&MusicFeatureCard::readPortPIU1, this);
+	readHandlers[1].Install(port_piu1, read_piu1, io_width_t::byte);
 
-	auto write_piu1 = std::bind(&MusicFeatureCard::writePortPIU1, this, _1, _2, _3);
-	writeHandlers.at(1).Install(port_piu1, write_piu1, io_width_t::byte);
+	auto write_piu1 = std::bind_front(&MusicFeatureCard::writePortPIU1, this);
+	writeHandlers[1].Install(port_piu1, write_piu1, io_width_t::byte);
 
-	auto read_piu2 = std::bind(&MusicFeatureCard::readPortPIU2, this, _1, _2);
-	readHandlers.at(2).Install(port_piu2, read_piu2, io_width_t::byte);
+	auto read_piu2 = std::bind_front(&MusicFeatureCard::readPortPIU2, this);
+	readHandlers[2].Install(port_piu2, read_piu2, io_width_t::byte);
 
-	auto write_piu2 = std::bind(&MusicFeatureCard::writePortPIU2, this, _1, _2, _3);
-	writeHandlers.at(2).Install(port_piu2, write_piu2, io_width_t::byte);
+	auto write_piu2 = std::bind_front(&MusicFeatureCard::writePortPIU2, this);
+	writeHandlers[2].Install(port_piu2, write_piu2, io_width_t::byte);
 
-	auto read_pcr = std::bind(&MusicFeatureCard::readPortPCR, this, _1, _2);
-	readHandlers.at(3).Install(port_pcr, read_pcr, io_width_t::byte);
+	auto read_pcr = std::bind_front(&MusicFeatureCard::readPortPCR, this);
+	readHandlers[3].Install(port_pcr, read_pcr, io_width_t::byte);
 
-	auto write_pcr = std::bind(&MusicFeatureCard::writePortPCR, this, _1, _2, _3);
-	writeHandlers.at(3).Install(port_pcr, write_pcr, io_width_t::byte);
+	auto write_pcr = std::bind_front(&MusicFeatureCard::writePortPCR, this);
+	writeHandlers[3].Install(port_pcr, write_pcr, io_width_t::byte);
 
-	auto read_cntr0 = std::bind(&MusicFeatureCard::readPortCNTR0, this, _1, _2);
-	readHandlers.at(4).Install(port_cntr0, read_cntr0, io_width_t::byte);
+	auto read_cntr0 = std::bind_front(&MusicFeatureCard::readPortCNTR0, this);
+	readHandlers[4].Install(port_cntr0, read_cntr0, io_width_t::byte);
 
-	auto write_cntr0 = std::bind(&MusicFeatureCard::writePortCNTR0, this, _1, _2, _3);
-	writeHandlers.at(4).Install(port_cntr0, write_cntr0, io_width_t::byte);
+	auto write_cntr0 = std::bind_front(&MusicFeatureCard::writePortCNTR0, this);
+	writeHandlers[4].Install(port_cntr0, write_cntr0, io_width_t::byte);
 
-	auto read_cntr1 = std::bind(&MusicFeatureCard::readPortCNTR1, this, _1, _2);
-	readHandlers.at(5).Install(port_cntr1, read_cntr1, io_width_t::byte);
+	auto read_cntr1 = std::bind_front(&MusicFeatureCard::readPortCNTR1, this);
+	readHandlers[5].Install(port_cntr1, read_cntr1, io_width_t::byte);
 
-	auto write_cntr1 = std::bind(&MusicFeatureCard::writePortCNTR1, this, _1, _2, _3);
-	writeHandlers.at(5).Install(port_cntr1, write_cntr1, io_width_t::byte);
+	auto write_cntr1 = std::bind_front(&MusicFeatureCard::writePortCNTR1, this);
+	writeHandlers[5].Install(port_cntr1, write_cntr1, io_width_t::byte);
 
-	auto read_cntr2 = std::bind(&MusicFeatureCard::readPortCNTR2, this, _1, _2);
-	readHandlers.at(6).Install(port_cntr2, read_cntr2, io_width_t::byte);
+	auto read_cntr2 = std::bind_front(&MusicFeatureCard::readPortCNTR2, this);
+	readHandlers[6].Install(port_cntr2, read_cntr2, io_width_t::byte);
 
-	auto write_cntr2 = std::bind(&MusicFeatureCard::writePortCNTR2, this, _1, _2, _3);
-	writeHandlers.at(6).Install(port_cntr2, write_cntr2, io_width_t::byte);
+	auto write_cntr2 = std::bind_front(&MusicFeatureCard::writePortCNTR2, this);
+	writeHandlers[6].Install(port_cntr2, write_cntr2, io_width_t::byte);
 
-	auto read_tcwr = std::bind(&MusicFeatureCard::readPortTCWR, this, _1, _2);
-	readHandlers.at(7).Install(port_tcwr, read_tcwr, io_width_t::byte);
+	auto read_tcwr = std::bind_front(&MusicFeatureCard::readPortTCWR, this);
+	readHandlers[7].Install(port_tcwr, read_tcwr, io_width_t::byte);
 
-	auto write_tcwr = std::bind(&MusicFeatureCard::writePortTCWR, this, _1, _2, _3);
-	writeHandlers.at(7).Install(port_tcwr, write_tcwr, io_width_t::byte);
+	auto write_tcwr = std::bind_front(&MusicFeatureCard::writePortTCWR, this);
+	writeHandlers[7].Install(port_tcwr, write_tcwr, io_width_t::byte);
 
 	// ports [+C],[+D],[+E],[+F] all map to the TSR
-	auto read_tcr = std::bind(&MusicFeatureCard::readPortTCR, this, _1, _2);
-	auto write_tcr = std::bind(&MusicFeatureCard::writePortTCR, this, _1, _2, _3);
+	auto read_tcr  = std::bind_front(&MusicFeatureCard::readPortTCR, this);
+	auto write_tcr = std::bind_front(&MusicFeatureCard::writePortTCR, this);
 	for (io_port_t i = 0; i < 4; i++) {
-		readHandlers.at(8 + i).Install(port_tcr + i, read_tcr, io_width_t::byte);
-		writeHandlers.at(8 + i).Install(port_tcr + i,
-		                                write_tcr,
-		                                io_width_t::byte);
+		readHandlers[8 + i].Install(port_tcr + i, read_tcr, io_width_t::byte);
+		writeHandlers[8 + i].Install(port_tcr + i, write_tcr, io_width_t::byte);
 	}
 
 	// ports [+8],[+9],[+A],[+B] all map to the TCR
-	auto read_tsr = std::bind(&MusicFeatureCard::readPortTSR, this, _1, _2);
-	auto write_tsr = std::bind(&MusicFeatureCard::writePortTSR, this, _1, _2, _3);
+	auto read_tsr  = std::bind_front(&MusicFeatureCard::readPortTSR, this);
+	auto write_tsr = std::bind_front(&MusicFeatureCard::writePortTSR, this);
 	for (io_port_t i = 0; i < 4; i++) {
-		readHandlers.at(12 + i).Install(port_tsr + i,
-		                                read_tsr,
-		                                io_width_t::byte);
-		writeHandlers.at(12 + i).Install(port_tsr + i,
-		                                 write_tsr,
-		                                 io_width_t::byte);
+		readHandlers[12 + i].Install(port_tsr + i, read_tsr, io_width_t::byte);
+		writeHandlers[12 + i].Install(port_tsr + i, write_tsr, io_width_t::byte);
 	}
 }
 

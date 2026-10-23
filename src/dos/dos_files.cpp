@@ -1355,7 +1355,7 @@ static std::pair<std::string, std::string> DTAExtendName(const char *fullname)
 	};
 
 	// Split the string on the dot (if it has one)
-	auto v = split_with_empties(fullname, '.');
+	auto v = split_with_empties(fullname, ".");
 
 	// append placeholders until our vector has two chunks
 	while (v.size() < 2)
@@ -1469,12 +1469,16 @@ bool DOS_FCBFindFirst(uint16_t seg, uint16_t offset)
 
 bool DOS_FCBFindNext(uint16_t seg, uint16_t offset)
 {
-	DOS_FCB fcb(seg, offset);
-	RealPt old_dta = dos.dta();
+	auto old_dta = dos.dta();
 	dos.dta(dos.tables.tempdta);
-	bool ret=DOS_FindNext();
+
+	bool ret = DOS_FindNext();
 	dos.dta(old_dta);
-	if (ret) SaveFindResult(fcb);
+
+	if (ret) {
+		DOS_FCB fcb(seg, offset);
+		SaveFindResult(fcb);
+	}
 	return ret;
 }
 
@@ -1861,13 +1865,16 @@ bool DOS_UnlockFile(const uint16_t entry, const uint32_t pos, const uint32_t len
 		return false;
 	}
 
-	const auto last = Files[handle]->region_locks.end();
-	for (auto it = Files[handle]->region_locks.begin(); it != last; ++it) {
+	auto& region_locks = Files[handle]->region_locks;
+	const auto last    = region_locks.end();
+
+	for (auto it = region_locks.begin(); it != last; ++it) {
 		if (it->pos == pos && it->len == len) {
-			Files[handle]->region_locks.erase(it);
+			region_locks.erase(it);
 			return true;
 		}
 	}
+
 	DOS_SetError(DOSERR_LOCK_VIOLATION);
 	return false;
 }
@@ -1899,17 +1906,23 @@ bool DOS_IsFileLocking()
 
 void DOS_Files_Init(SectionProp& section)
 {
-	const auto locking = section.GetString("file_locking");
+	const auto locking    = section.GetString("file_locking");
 	const auto maybe_bool = parse_bool_setting(locking);
+
 	if (maybe_bool) {
 		if (*maybe_bool) {
 			emulate_file_locking = FileLockingConfig::On;
+			LOG_MSG("DOS: File locking enabled");
+
 		} else {
 			emulate_file_locking = FileLockingConfig::Off;
+			LOG_MSG("DOS: File locking disabled");
 		}
 	} else {
 		assertm(locking == "auto",
 		        "file_locking config set to invalid string");
+
 		emulate_file_locking = FileLockingConfig::Auto;
+		LOG_MSG("DOS: File locking set to auto");
 	}
 }

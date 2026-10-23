@@ -16,6 +16,7 @@
 
 #include "cpu/callback.h"
 #include "cpu/cpu.h"
+#include "dosbox.h"
 #include "gui/common.h"
 #include "hardware/pic.h"
 #include "misc/video.h"
@@ -355,9 +356,9 @@ static void update_state() // updates whole 'state' structure, except cursor vis
 	} else if (state.should_capture_on_click) {
 		state.hint_id = MouseHint::ReleasedHotkeyAnyButton;
 	} else if (state.should_capture_on_middle) {
-		state.hint_id = state.is_seamless
-	                    ? MouseHint::SeamlessHotkeyMiddle
-	                    : MouseHint::ReleasedHotkeyMiddle;
+		state.hint_id = state.is_seamless //-V547
+		                      ? MouseHint::SeamlessHotkeyMiddle
+		                      : MouseHint::ReleasedHotkeyMiddle;
 	} else {
 		state.hint_id = state.is_seamless
 	                    ? MouseHint::SeamlessHotkey
@@ -393,10 +394,14 @@ static void update_state() // updates whole 'state' structure, except cursor vis
 	first_time = false;
 }
 
+// While paused, host mouse motion would otherwise accumulate into the DOS
+// driver's pending delta and deliver as a single large jump on resume.
+//
 static bool should_drop_move()
 {
 	return state.should_drop_events ||
-	       (state.cursor_is_outside && !state.is_seamless);
+	       (state.cursor_is_outside && !state.is_seamless) ||
+	       DOSBOX_IsPaused();
 }
 
 static bool should_drop_press_or_wheel()

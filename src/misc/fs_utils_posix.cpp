@@ -3,8 +3,6 @@
 
 #include "utils/fs_utils.h"
 
-#if !defined(WIN32)
-
 #include <cctype>
 #include <cerrno>
 #include <fcntl.h>
@@ -119,7 +117,7 @@ std::deque<std_fs::path> get_xdg_data_dirs() noexcept
 	const auto data_dirs = ((var.size() > 0) ? var : "/usr/local/share:/usr/share");
 
 	std::deque<std_fs::path> paths{};
-	for (auto& dir : split_with_empties(data_dirs, ':')) {
+	for (auto& dir : split_with_empties(data_dirs, ":")) {
 		trim(dir);
 		if (!dir.empty()) {
 			paths.emplace_back(resolve_home(dir));
@@ -500,4 +498,11 @@ bool local_drive_rename_file_or_directory(const char* old_path, const char* new_
 	return rename(old_path, new_path) == 0;
 }
 
-#endif
+uint32_t local_drive_get_file_size(const NativeFileHandle handle)
+{
+	struct stat file_info = {};
+	if (fstat(handle, &file_info) == 0) {
+		return file_info.st_size;
+	}
+	return 0;
+}

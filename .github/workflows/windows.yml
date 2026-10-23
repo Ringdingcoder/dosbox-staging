@@ -3,6 +3,10 @@ permissions: read-all
 
 on:
   push:
+    branches:
+      - '**'
+    tags-ignore:
+      - dev-latest
     paths-ignore:
       - '.clang-format'
       - '.mdl-styles'
@@ -27,11 +31,11 @@ concurrency:
 jobs:
   generate_release_notes:
     name:    Generate release notes
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     if:      github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           submodules: false
 
@@ -56,7 +60,7 @@ jobs:
     name:  Release ${{ matrix.conf.debugger && 'w/ debugger' || '' }} (${{ matrix.conf.arch }})
     if:    github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
     needs: generate_release_notes
-    runs-on: windows-2022
+    runs-on: windows-2025-vs2026
     strategy:
       matrix:
         conf:
@@ -72,7 +76,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           submodules: false
 
@@ -95,31 +99,41 @@ jobs:
           arch: "${{ matrix.conf.arch }}"
 
       - name: Set up CMake
-        uses: lukka/get-cmake@v4.3.1
+        uses: lukka/get-cmake@a89e43e22a96abafcd7a62db652a65ecd33052c9 # v4.4.4
 
       - name:  Log environment
         shell: pwsh
         run:   .\scripts\ci\log-env.ps1
 
-      - name:  Build release
-        if:    ${{ !matrix.conf.debugger }}
-        shell: pwsh
-        run: |
-          cmake --preset release-windows
-          cmake --build --preset release-windows 2>&1 | Tee-Object -FilePath build.log
+      # Retried because the docs build (OPT_DOCUMENTATION=ON) downloads
+      # external assets via the MkDocs Material privacy plugin; a transient
+      # 5xx or DNS hiccup on any source crashes the whole build. Wrapping
+      # the entire step keeps the change minimal; the cmake build is
+      # incremental, so a docs-flake retry skips already-compiled artifacts.
+      - name: Build release
+        if:   ${{ !matrix.conf.debugger }}
+        uses: ./.github/actions/retry
+        with:
+          cmd: |
+            set -eo pipefail
+            cmake -DOPT_DOCUMENTATION=ON --preset release-windows
+            cmake --build --preset release-windows 2>&1 | tee build.log
 
       - name:  Run tests
         if:    ${{ !matrix.conf.debugger }}
         shell: pwsh
         run: |
-          ctest --preset release-windows 2>&1 | Tee-Object -FilePath tests.log
+          ctest -j 4 --preset release-windows 2>&1 | Tee-Object -FilePath tests.log
 
-      - name:  Build release with debugger
-        if:    ${{ matrix.conf.debugger }}
-        shell: pwsh
-        run: |
-          cmake --preset release-windows -DOPT_DEBUGGER=ON -DOPT_HEAVY_DEBUGGER=ON
-          cmake --build --preset release-windows 2>&1 | Tee-Object -FilePath build.log
+      # See the comment on "Build release" above re: why this is retried.
+      - name: Build release with debugger
+        if:   ${{ matrix.conf.debugger }}
+        uses: ./.github/actions/retry
+        with:
+          cmd: |
+            set -eo pipefail
+            cmake -DOPT_DOCUMENTATION=ON --preset release-windows -DOPT_DEBUGGER=ON -DOPT_HEAVY_DEBUGGER=ON
+            cmake --build --preset release-windows 2>&1 | tee build.log
 
       - name: Summarize warnings
         env:
@@ -132,8 +146,8 @@ jobs:
         run: |
           set -x
           # Construct VC_REDIST_DIR
-          readonly VC_REDIST_BASE="C:/Program Files/Microsoft Visual Studio/2022/Enterprise/VC/Redist/MSVC"
-          readonly VC_REDIST_CRT_VERSION="Microsoft.VC143.CRT"
+          readonly VC_REDIST_BASE="C:/Program Files/Microsoft Visual Studio/18/Enterprise/VC/Redist/MSVC"
+          readonly VC_REDIST_CRT_VERSION="Microsoft.VC145.CRT"
 
           for ENTRY in "$VC_REDIST_BASE"/*
           do
@@ -159,7 +173,9 @@ jobs:
           set -x
           ZIP_NAME=dosbox-vcpkg-deps-windows-${{ matrix.conf.arch }}.zip
 
-          curl -L https://github.com/dosbox-staging/dosbox-staging-ext/releases/download/$VCPKG_EXT_DEPS_VERSION/$ZIP_NAME -o $ZIP_NAME
+          # Retry on transient GitHub release-asset CDN flakes.
+          curl -fL --retry 5 --retry-all-errors --retry-delay 10 \
+            https://github.com/dosbox-staging/dosbox-staging-ext/releases/download/$VCPKG_EXT_DEPS_VERSION/$ZIP_NAME -o $ZIP_NAME
           unzip $ZIP_NAME -d vcpkg-deps
 
           cp vcpkg-deps/release/* "$PACKAGE_DIR"
@@ -172,7 +188,9 @@ jobs:
           set -x
           ZIP_NAME=Nuked-SC55-CLAP-windows-${{ matrix.conf.arch }}-$NUKED_SC55_CLAP_VERSION.zip
 
-          curl -L https://github.com/johnnovak/Nuked-SC55-CLAP/releases/download/$NUKED_SC55_CLAP_VERSION/$ZIP_NAME -o $ZIP_NAME
+          # Retry on transient GitHub release-asset CDN flakes.
+          curl -fL --retry 5 --retry-all-errors --retry-delay 10 \
+            https://github.com/johnnovak/Nuked-SC55-CLAP/releases/download/$NUKED_SC55_CLAP_VERSION/$ZIP_NAME -o $ZIP_NAME
           unzip $ZIP_NAME -d nuked-sc55-clap
 
           PLUGINS_DIR="$PACKAGE_DIR/plugins"
@@ -212,12 +230,19 @@ jobs:
           path: ${{ env.PACKAGE_DIR }}/${{ env.DOSBOX_DEBUGGER_EXE }}
           overwrite: true
 
+      - name:  Report repo cache usage
+        if:    always()
+        shell: bash
+        run:   gh cache list --limit 50 --sort size_in_bytes --order desc
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
 
   merge_artifacts:
     name: Merge release & debugger artifacts (${{ matrix.arch }} )
     needs: build_windows_release
 
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     strategy:
       matrix:
         # TODO reinstate ARM64 build at some point, but we'll need to build the
@@ -227,7 +252,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           submodules: false
 
@@ -245,7 +270,10 @@ jobs:
   build_installer:
     name:    Build installer (${{ matrix.arch }} )
     needs:   merge_artifacts
-    runs-on: windows-2022
+    runs-on: windows-2025-vs2026
+    permissions:
+      contents: read
+      statuses: write
     strategy:
       matrix:
         # We only provide x64 installers as ARM64 support is experimental
@@ -253,7 +281,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           submodules: false
 
@@ -301,7 +329,6 @@ jobs:
           mv $PACKAGE_DIR/*          out/program
           mv out/program/dosbox*.exe out
 
-
       - name: Build Windows installer
         shell: pwsh
         run: |
@@ -326,3 +353,14 @@ jobs:
             ${{ env.PACKAGE_DIR }}-setup.exe
             release-notes.html
           overwrite: true
+
+      # Reports this job's own pass/fail as a separate GitHub status, since
+      # the workflow as a whole also includes the debugger build above,
+      # which can fail without this release build failing.
+      - name: Report dev build status
+        if:   (success() || failure()) && github.ref == 'refs/heads/main'
+        uses: ./.github/actions/report-dev-build-status
+        with:
+          platform:     windows
+          job_status:   ${{ job.status }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}

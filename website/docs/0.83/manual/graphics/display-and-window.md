@@ -1,0 +1,690 @@
+# Display & window
+
+DOSBox Staging opens in a resizable window by default --- press ++alt+enter++
+to toggle fullscreen at any time. For most games, the out-of-the-box display
+settings will serve you well and need no adjustment. This chapter covers the
+cases where you might want to dig deeper.
+
+The most important decision for most users is how to handle [frame
+presentation](#frame-presentation) and [`vsync`](#vsync). If you have a variable
+refresh rate monitor (AMD FreeSync, Nvidia G-Sync, or HDMI 2.1 VRR), the
+defaults give you perfect frame pacing with no tearing and no further
+configuration needed, regardless of any custom refresh rates a program might
+use. On a fixed refresh rate monitor, enabling vsync eliminates tearing in
+fast-paced games, but it can't fully solve the judder that comes from the
+mismatch between DOS refresh rates and your display's fixed rate. Most VGA
+games run at 70 Hz, and that difference is perceptible in scrolling and
+animation. A VRR monitor is the only complete solution.
+
+In practice, tearing is only noticeable in a relatively small number of games
+--- typically fast-paced 3D games from the mid- to late-90s and
+smooth-scrolling 2D games such as platformers and pinball simulators. If you
+mostly play RPGs, adventures, or strategy games, you can ignore most of this
+chapter and use the defaults.
+
+For image output settings such as shaders, CRT emulation, aspect ratio
+correction, dedithering, deinterlacing, and image adjustments, see
+[Rendering](rendering/overview.md).
+
+
+## Frame presentation
+
+DOSBox Staging offers two frame presentation strategies, controlled by the
+[`presentation_mode`](#presentation_mode) setting:
+
+- **`dos-rate`** presents frames at the refresh rate of the emulated DOS video
+  mode (e.g., 70 Hz for standard VGA). This is the ideal choice for variable
+  refresh rate (VRR) monitors (AMD FreeSync, Nvidia G-Sync, or HDMI 2.1 VRR)
+  --- the display synchronises directly to the emulated refresh rate, giving
+  you perfect frame pacing with no tearing and low input lag.
+
+- **`host-rate`** presents the most recent frame at the host display's refresh
+  rate. This is intended for fixed refresh rate monitors (typically 60 Hz)
+  with [`vsync`](#vsync) enabled to eliminate screen tearing in fast-paced
+  games.
+
+The default **`auto`** mode selects `dos-rate` when vsync is off and
+`host-rate` when vsync is on, which is the right choice for most setups. For a
+practical example of configuring vsync and presentation modes for a specific
+game, see the [Star Wars: Dark Forces](../../getting-started/star-wars-dark-forces.md#display-refresh-rate)
+chapter of the Getting Started guide.
+
+In practice, most users fall into one of three categories:
+
+- **VRR monitor**: Use the defaults --- you'll get perfect
+  frame pacing and no tearing in all games regardless of refresh rate. With
+  the defaults, `presentation_mode = auto` resolves to `dos-rate` because
+  `vsync` defaults to off.
+
+- **Fixed 60 Hz monitor, fast-paced games** (typically mid- to late-90s 3D
+  games and smooth-scrolling 2D titles like platformers and pinball games):
+  Set `vsync = on` to eliminate tearing in fullscreen. The `auto` presentation
+  mode will switch to `host-rate` accordingly. On Windows, macOS, and more
+  modern Linux desktops, the OS compositor already provides vsync "for free"
+  in windowed mode, so the default `vsync = off` is fine if you only play
+  windowed.
+
+- **Fixed 60 Hz monitor, slower games** (RPGs, adventures, strategy): The
+  defaults work fine --- tearing is rarely noticeable in these genres.
+
+Note that the game itself might tear on real hardware, in which case DOSBox
+Staging will faithfully reproduce that tearing --- see [Vsync](#vsync) for
+details.
+
+
+### Refresh rates of DOS graphics standards
+
+Each DOS graphics standard has its own native refresh rate. The mismatch
+between these rates and a typical 60 Hz fixed refresh rate display is the
+main source of judder in DOS games.
+
+| Graphics standard     | Refresh rate
+| ---                   | ---
+| SVGA and VESA         | 70 Hz or higher --- 640&times;480 or higher extended and VESA modes
+| VGA                   | 60 Hz --- 640&times;480 standard mode only<br>70 Hz --- all other standard modes
+| CGA, PCjr, Tandy, EGA | 60 Hz
+| Hercules              | 50 Hz
+
+Most VGA games run at 70 Hz. On a fixed 60 Hz display, the 60/70 Hz mismatch
+causes perceptible judder on scrolling and animation. A VRR monitor eliminates
+this entirely by syncing to the emulated refresh rate (the frame presentation
+of the emulator dictates the effective refresh rate of the monitor). On
+fixed-rate monitors, enabling vsync prevents tearing but cannot eliminate the
+judder inherent in the refresh rate mismatch.
+
+!!! note
+
+    For perfectly smooth scrolling in 2D games (e.g.,
+    [Pinball Dreams](https://www.mobygames.com/game/703/pinball-dreams/),
+    [Epic Pinball](https://www.mobygames.com/game/263/epic-pinball/)), you'll
+    need a VRR monitor running in VRR mode with vsync disabled. Fullscreen
+    mode is recommended; in windowed mode you may see some slight residual
+    judder even on a VRR monitor. The scrolling in 70 Hz VGA games will always
+    appear juddery on 60 Hz fixed refresh rate monitors, even with vsync
+    enabled.
+
+
+### Vsync
+
+Because we're running a game inside an emulator, tearing can be introduced
+at _two levels_:
+
+- The game itself might not care about vsync, so it would tear on real
+  hardware too (DOSBox Staging accurately emulates this).
+
+- DOSBox Staging might not present the emulated frames to the host operating
+  system vsync'ed, which could result in a _second layer_ of tearing on
+  fixed refresh monitors, solely introduced by the emulator.
+
+To get zero tearing on **fixed refresh rate** monitors, both conditions must
+be met: the game must vsync its own video output (i.e., no tearing on real
+hardware), and [`vsync`](#vsync) must be enabled at the DOSBox Staging level.
+
+On **VRR monitors**, the [`vsync`](#vsync) setting must be left at its default
+`off` setting --- the monitor will sync automatically to the emulator's frame
+presentation rate, so you'll get no additional tearing.
+
+The most important thing to understand is that you have no control over the
+game's own vsync behaviour. Many DOS games hardcode it (e.g.,
+[Doom](https://www.mobygames.com/game/1068/doom/) runs at a fixed 35 FPS with
+vsync). With games that ignore vsync and thus on real hardware too, the best
+you can do is not to introduce _additional_ tearing at the emulator level.
+
+The below table summarises all possible combinations between game and DOSBox
+level vsync on **fixed refresh monitors**:
+
+<div class="compact vsync" markdown>
+
+| Game uses vsync? | DOSBox vsync enabled? | Result
+| ---              | ---                   | ---
+| yes              | yes                   | No tearing
+| no               | yes                   | Some tearing (also present on real hardware)
+| yes              | no                    | Some tearing (introduced by DOSBox Staging)
+| no               | no                    | Very bad double tearing (in fast-paced games)
+
+</div>
+
+This table shows the possible outcomes with vsync on and off on **variable
+refresh rate (VRR) monitors**:
+
+<div class="compact vsync" markdown>
+
+| Game uses vsync? | Result
+| ---              | ---
+| yes              | No tearing
+| no               | Some tearing (also present on real hardware)
+
+</div>
+
+!!! danger
+
+    Do **not** force vsync globally at the GPU driver level (e.g., in Nvidia
+    Control Panel or similar). Leave the global vsync settings at their
+    defaults ("let the application decide") and only configure vsync via the
+    DOSBox Staging [`vsync`](#vsync) setting. Forcing global vsync causes
+    problems with virtually all emulators, not just DOSBox Staging.
+
+
+### Variable refresh rate (VRR) tips
+
+**AMD FreeSync**, **Nvidia G-Sync**, and **HDMI 2.1 VRR** are all supported.
+Just enable variable refresh in your driver settings, set your desktop to the
+maximum refresh rate of your monitor, and choose the "let the application
+decide" vsync option. DOSBox Staging will automatically take advantage of VRR
+with the default settings.
+
+!!! warning "Apple ProMotion notes"
+
+    **Apple ProMotion** is not "true VRR" like FreeSync and G-Sync. It was not
+    designed for the same low-latency, dynamic VRR experience, but primarily
+    for power efficiency on portable devices. However, if you connect your Mac
+    to a true VRR external monitor and select "Variable" refresh rate in
+    System Settings, you can take full advantage of VRR in DOSBox Staging.
+
+!!! danger
+
+    Do **not** use any frame limiters; those are only useful for modern games,
+    not emulators. Frame limiters **will cause** DOSBox Staging to
+    malfunction! Similarly, do **not** force vsync globally or for DOSBox
+    Staging specifically.
+
+
+### Fixed refresh monitor tips
+
+The simplest thing to do on fixed refresh monitors is to leave
+[`vsync`](#vsync) disabled. The tearing will only be noticeable in fast-paced
+3D games and smooth-scrolling 2D games. In games with mostly static screens
+(RPGs, adventures, and strategy games) the tearing is virtually unnoticeable.
+
+If you really want to use vsync, you can create custom screen modes that match
+the DOS refresh rate exactly. Use the Nvidia Control Panel or [Custom
+Resolution Utility
+(CRU)](https://www.monitortests.com/forum/Thread-Custom-Resolution-Utility-CRU)
+on Windows. Enable **CVT reduced blanking** (**CVT-RB** or **CVT-RBv2**) to
+reach 70 Hz. For the best results, use the exact fractional **59.713 Hz** and
+**70.086 Hz** refresh rates for the nominal "60 Hz" and "70 Hz" DOS rates,
+respectively. The drawback is that you need to set the appropriate refresh
+rate before starting DOSBox Staging, and games that switch between different
+refresh rates cannot be fully accommodated this way.
+
+You can also experiment with using `dos_rate = host` to force the emulated DOS
+video mode to present at your host display's refresh rate (e.g., forcing 60 Hz
+in 70 Hz VGA games on a fixed 60 Hz monitor). This eliminates the 60/70 Hz
+judder without needing a custom screen mode, but it's a hack --- some games
+rely on the original refresh rate for timing and may not work correctly. Try
+it on a per-game basis.
+
+
+## Fullscreen and display output
+
+DOSBox Staging starts in a window by default. Set [`fullscreen`](#fullscreen)
+to `on` to launch directly into fullscreen, or press ++alt+enter++ to toggle
+between windowed and fullscreen at any time. On Windows, if Alt+Tabbing out of
+fullscreen is slow or disruptive (typically caused by the graphics driver
+opting out of fullscreen optimisations, resulting in exclusive fullscreen), set
+[`fullscreen_mode`](#fullscreen_mode) to `forced-borderless` to force
+borderless fullscreen instead. This option is only available on Windows.
+
+The [`output`](#output) setting selects the rendering backend. The default
+`opengl` backend is the only one with shader support, and most users should
+never need to change it. The `texture` and `texturenb` backends exist as
+fallbacks for systems that lack OpenGL 3.3 Core Profile support.
+[`texture_renderer`](#texture_renderer) is only relevant when using one of the
+texture backends; the default `auto` value selects the best available driver.
+
+
+## Window settings
+
+The [`window_size`](#window_size) and [`window_position`](#window_position)
+settings control where and how large the DOSBox Staging window appears on
+startup. You can still resize the window freely after launch --- these only set
+the initial state. The named sizes (`small`, `medium`, `large`) give you 4:3
+windows relative to your desktop height, while the `WxH` format lets you
+specify the size in logical units, pixels, or percentages (see [Logical units,
+pixels, and percentages](#logical-units-pixels-and-percentages) below).
+
+On multi-monitor setups, use [`display`](#display) to select which screen DOSBox
+opens on, and [`window_position`](#window_position) to fine-tune placement.
+
+[`window_decorations`](#window_decorations) controls whether the operating
+system's title bar and window borders are shown.
+[`window_transparency`](#window_transparency) sets the window transparency level
+(0--90%).
+
+
+### Logical units, pixels, and percentages
+
+Most operating systems let you enlarge everything on the screen with a display
+scaling setting, which is especially useful on high-resolution monitors. For
+example, 4K monitors are typically used at 200% scaling. A window that is 1000
+**logical units** wide is 2000 pixels wide on such a monitor, but only 1000
+pixels wide on a 1080p monitor at 100% scaling. This way, the window appears
+roughly the same physical size on both.
+
+You can specify the window size and position, and the [viewport
+size](rendering/aspect-ratios-and-scaling.md#custom-viewport-size), in three
+different ways:
+
+- **Logical units** (e.g., `window_size = 1024x768`) --- The values are
+  multiplied by your operating system's display scaling factor, which is how
+  most programs size their windows.
+
+- **Pixels** (e.g., `window_size = 1440x1080px`) --- The values are in
+  pixels, and display scaling is not applied. This gives you precise control,
+  but the window will look smaller on a 4K monitor than on a 1080p one. A
+  window sized in pixels keeps its size in pixels when you move it to another
+  monitor, while a window sized in logical units keeps its size in logical
+  units.
+
+- **Percentages** (e.g., `window_size = 120x90%` or `viewport = 89%`) --- The
+  values are relative to your desktop size, so they adapt to any monitor. For
+  window sizes, both values are relative to the desktop height; for example,
+  `120x90%` always gives you a 4:3 window that is 90% as tall as your desktop
+  (this is the same as `window_size = large`). The window is resized when you
+  move it to another monitor or change the display scaling.
+
+
+For general use, logical units and percentages are recommended as they ensure
+your settings will be portable between monitors with different scaling
+factors.
+
+
+!!! note
+
+    You can also use a comma instead of the `x` in sizes (e.g., `window_size =
+    1024,768` or `viewport = 1440,1080px`).
+
+!!! tip "Keep it simple"
+
+    For the least surprising results, use the same kind of unit for
+    [`window_size`](#window_size), [`window_position`](#window_position), and
+    [`viewport`](rendering/aspect-ratios-and-scaling.md#viewport). Mixing them
+    can have unexpected effects; for example, a viewport specified in logical
+    units can end up larger than a window specified in pixels at high scaling
+    factors. That said, mixing units is perfectly valid for more advanced use
+    cases, such as combining a window size relative to your desktop with a
+    viewport size in pixels to get a specific integer scaling factor on your
+    monitor.
+
+
+### Title bar and window borders
+
+[`window_size`](#window_size) and [`window_position`](#window_position) refer
+to the window's **content area**, the part of the window where DOSBox Staging
+draws the image. The size does *not* include the title bar and window borders,
+so the window takes up slightly more space on the screen than the size you
+specify. Likewise, the position is that of the top-left corner of the content
+area, *not* of the whole window including the title bar.
+
+You'll rarely notice this, except when you place the window near the top of the
+screen or make it nearly as tall as your desktop. What happens then depends on
+your operating system:
+
+- **Windows** --- The title bar is about 30 logical units tall, and windows can
+  extend beyond the edges of the screen. With a vertical position smaller than
+  that (e.g., `window_position = 0,0`), the title bar ends up above the top edge
+  of the screen, where you can't grab it to move the window. Similarly, a window
+  whose content area is as tall as your desktop gets cut off.
+
+- **macOS** --- macOS keeps the title bar below the menu bar and doesn't let
+  windows grow taller than the space below it. A window positioned too close to
+  the top of the screen is moved down, and a window that's too tall is shrunk to
+  fit (this also updates [`window_size`](#window_size)).
+
+- **Linux** --- The exact behaviour depends on your desktop environment. On Wayland,
+  [`window_position`](#window_position) has no effect. Otherwise, some window
+  managers place the top-left corner of the title bar at the position you set,
+  while others place the top-left corner of the content area there. Some also
+  move the window to keep it fully inside the display bounds. If the window
+  ends up somewhere else, the current values of [`window_size`](#window_size)
+  and [`window_position`](#window_position) show its actual size and position.
+
+Resizing the window updates [`window_size`](#window_size), and moving it
+updates [`window_position`](#window_position). Each setting is updated in the
+same unit you used to specify it (for example, a percentage stays a
+percentage).
+
+Positions and percentages are relative to the whole desktop, including the area
+covered by the taskbar (on Windows) or the Dock (on macOS), so the window can
+end up partly behind them.
+
+!!! tip "Arranging windows"
+
+    To arrange windows side by side, it's easiest to use your operating
+    system's window snapping: press ++win+left++ or ++win+right++ on Windows,
+    ++meta+left++ or ++meta+right++ on most Linux desktops, or hover over the
+    green button in the title bar on macOS. DOSBox Staging updates
+    [`window_size`](#window_size) and [`window_position`](#window_position)
+    to match.
+
+    If the window must cover an exact area of the screen, set
+    [`window_decorations`](#window_decorations) to `off`. The window then has no
+    title bar or borders, so its size and position describe the whole window.
+    The downside is that there's no title bar to drag the window around with.
+
+
+## Title bar customisation
+
+The [`window_titlebar`](#window_titlebar) setting controls what information
+appears in the window's title bar. It accepts a space-separated list of
+parameters, each in `key=value` format.
+
+The default configuration is:
+
+``` ini
+[sdl]
+window_titlebar = program=name dosbox=auto cycles=on mouse=full
+```
+
+This shows the running program's name, the CPU cycles setting, and mouse
+capture hints. "DOSBox Staging" only appears when no program is running.
+
+Here are a few useful configurations:
+
+**Minimal** --- show only "DOSBox Staging", nothing else:
+
+``` ini
+window_titlebar = program=none dosbox=always cycles=off mouse=off
+```
+
+**Custom game title** --- replace the program name with your own text:
+
+``` ini
+window_titlebar = program="Ultima VII" version=simple
+```
+
+**Full detail** --- show the full program path and DOSBox version:
+
+``` ini
+window_titlebar = program=path version=detailed cycles=on mouse=full
+```
+
+When audio or video recording is active, a `[REC]` indicator is prepended to
+the title bar (animated by default --- the recording dot blinks). `[PAUSED]`
+and `[MUTED]` indicators appear when applicable. Set `animation=off` if the
+blinking circle symbol doesn't render correctly with your system font.
+
+
+## Configuration settings
+
+You can set the display and window parameters in the `[sdl]` configuration
+section.
+
+
+### Window
+
+##### fullscreen
+
+:   Start in fullscreen mode.
+
+    Possible values: `on`, `off` *default*{ .default }
+
+
+##### fullscreen_mode
+
+:   Set fullscreen mode.
+
+    Possible values:
+
+    - `standard` *default*{ .default } -- Use the standard fullscreen mode
+      of your operating system.
+    - `forced-borderless` -- Force borderless fullscreen operation on Windows.
+      Use this if your graphics card driver opts out of fullscreen
+      optimisations, resulting in exclusive fullscreen that makes Alt+Tabbing
+      cumbersome. This mode is only available on Windows.
+
+
+##### window_decorations
+
+:   Enable window decorations in windowed mode.
+
+    Possible values: `on` *default*{ .default }, `off`
+
+
+##### window_position
+
+:   Set initial window position for windowed mode.
+
+    Possible values:
+
+    - `auto` *default*{ .default } -- Let the window manager decide the
+      position.
+
+    - `X,Y` -- Set window position in `X,Y` format in logical units (e.g.,
+      `250,100`). `0,0` is the top-left corner of the screen. The values are
+      multiplied by the OS-level display scaling factor to get the window
+      position in pixels.
+
+    - `X,Ypx` -- Set window position in pixels (e.g., `375,150px`).
+
+    - `X,Y%` -- Set window position as a percentage of the desktop width and
+      height (e.g., `10,10%`).
+
+    See [Logical units, pixels, and
+    percentages](#logical-units-pixels-and-percentages) for more details.
+
+
+    !!! note "Notes"
+
+        - Moving the window updates this setting in the same format.
+
+        - The position is that of the top-left corner of the window's content area,
+          excluding the title bar and window borders.
+
+        - The window manager might move the window away from the specified position
+          (e.g., to keep it fully inside the display bounds, or to place it below a
+          task bar). E.g., on Windows, with small Y values, the title bar can
+          end up above the top edge of the screen. On macOS, the window is moved
+          down instead so that its title bar is below the menu bar. See [Title
+          bar and window borders](#title-bar-and-window-borders) for details.
+
+    !!! warning "Wayland note"
+
+        This setting has no effect on Wayland because Wayland doesn't let
+        applications position their windows.
+
+
+##### window_size
+
+:   Set initial window size for windowed mode. You can still resize the
+    window after startup.
+
+    Possible values:
+
+    - `default` *default*{ .default } -- Same as `medium`.
+
+    - `small`, `medium`, `large` (`s`, `m`, `l`) -- 4:3 window sizes
+      relative to the desktop height (same as `66.67x50%`, `98.67x74%`, and
+      `120x90%`, respectively).
+
+    - `WxH` -- Specify window size in `WxH` (or `W,H`) format in logical units
+      (e.g., `1024x768`). The values are multiplied by the OS-level display
+      scaling factor to get the window size in pixels.
+
+    - `WxHpx` -- Specify window size in pixels (e.g., `1440x1080px`). The
+      window keeps its size in pixels when moved to another display.
+
+    - `WxH%` -- Specify window size as a percentage of the desktop height
+      (e.g., `120x90%` for a 4:3 window 90% as tall as the desktop). Both
+      values are relative to the desktop height, so the aspect ratio of the
+      window doesn't depend on the aspect ratio of the desktop.
+
+    See [Logical units, pixels, and
+    percentages](#logical-units-pixels-and-percentages) for more details.
+
+    !!! note "Notes"
+
+        - Resizing the window updates this setting in the same format, except for the
+          named sizes, which are updated in `WxH%` format.
+
+        - The size specifies the window's content area excluding the title bar and
+          window borders, so the window takes up slightly more space on the screen
+          than the specified size. 
+
+        - The window manager might resize the window (e.g., to keep it fully inside
+          the display bounds). See [Title bar and window
+          borders](#title-bar-and-window-borders) for details.
+
+
+##### window_titlebar
+
+:   Space-separated list of information to be displayed in the window's
+    title bar. If a parameter is not specified, its default value is used
+    (`program=name dosbox=auto cycles=on mouse=full` by default).
+
+    Possible parameters:
+
+    - `animation=<value>` -- If set to `on` (default), animate the
+      audio/video recording mark. Set to `off` to disable animation; this
+      is useful if your screen font produces weird results.
+
+    - `program=<value>` -- Display the name of the running program. Values:
+      `none`/`off`, `name` (default), `path`, `segment`, or a custom title
+      in quotes (e.g., `'My Title'`).
+
+    - `dosbox=<value>` -- Display "DOSBox Staging" in the title bar. Values:
+      `always`, `auto` (default; only shows if no program is running or
+      `program=none` is set).
+
+    - `version=<value>` -- Display DOSBox version information. Values:
+      `none`/`off` (default), `simple`, `detailed`.
+
+    - `cycles=<value>` -- If set to `on` (default), show CPU cycles
+      setting. Set to `off` to disable.
+
+    - `mouse=<value>` -- Mouse capturing hint verbosity level:
+      `none`/`off`, `short`, `full` (default).
+
+
+##### window_transparency
+
+:   Set the transparency of the DOSBox Staging window (`0` by default).
+    Valid range from 0 (no transparency) to 90 (high transparency).
+
+
+### Display
+
+##### display
+
+:   Number of display to use; values depend on OS and user settings (`0` by
+    default).
+
+
+##### output
+
+:   Rendering backend to use for graphics output. Only the `opengl` backend
+    has shader support and is thus the preferred option. The `texture` backend
+    is only provided as a last resort fallback if OpenGL is not available or
+    the OpenGL driver is not Core Profile 3.3 compliant.
+
+    Possible values:
+
+    <div class="compact" markdown>
+
+    - `opengl` *default*{ .default } -- OpenGL backend with shader support.
+    - `texture` -- SDL's texture backend with bilinear interpolation.
+    - `texturenb` -- SDL's texture backend with nearest-neighbour
+      interpolation (no bilinear).
+
+    </div>
+
+
+##### texture_renderer
+
+:   Render driver to use in `texture` output mode. Use
+    `texture_renderer = auto` for an automatic choice (`auto` by default).
+
+
+### Presentation
+
+The [`dos_rate`](#dos_rate) setting below is in the `[dosbox]` section; the
+rest are in `[sdl]`.
+
+##### presentation_mode
+
+:   Set the frame presentation mode.
+
+    Possible values:
+
+    - `auto` *default*{ .default } -- Use `host-rate` if
+      [`vsync`](#vsync) is enabled, otherwise use `dos-rate`.
+
+    - `dos-rate` -- Present frames at the refresh rate of the emulated DOS
+      video mode. This is the best option on variable refresh rate (VRR)
+      monitors. [`vsync`](#vsync) is not available with `dos-rate`
+      presentation.
+
+    - `host-rate` -- Present frames at the refresh rate of the host display.
+      Use this with [`vsync`](#vsync) enabled on fixed refresh rate monitors
+      for fast-paced games where tearing is a problem. `host-rate` combined
+      with [`vsync`](#vsync) disabled can be a good workaround on systems that
+      always enforce blocking vsync at the OS level (e.g., forced 60 Hz
+      vsync could cause problems with VGA games presenting frames at 70 Hz).
+
+
+##### dos_rate
+
+:   Override the emulated DOS video mode's refresh rate with a custom rate.
+
+    Possible values:
+
+    - `default` *default*{ .default } -- Don't override; use the emulated
+      DOS video mode's refresh rate.
+    - `host` -- Override the refresh rate of all DOS video modes with the
+      refresh rate of your monitor. This might allow you to play some 70 Hz
+      VGA games with perfect [`vsync`](#vsync) on a 60 Hz fixed refresh rate
+      monitor.
+    - `<number>` -- Override the refresh rate of all DOS video modes with a
+      fixed rate specified in Hz (valid range is from 24.000 to 1000.000).
+      This is a niche option for a select few fast-paced mid to late 1990s 3D
+      games for high refresh rate gaming.
+
+    !!! important
+
+        Many games will misbehave when overriding the DOS video mode's
+        refresh rate with non-standard values. This can manifest in glitchy
+        video, sped-up or slowed-down audio, jerky mouse movement, mouse
+        button presses not being registered, and even gameplay bugs.
+        Overriding the DOS refresh rate is a hack that only works acceptably
+        with a small subset of all DOS games (typically mid to late 1990s
+        games).
+
+
+##### vsync
+
+:   Set the host video driver's vertical synchronization (vsync) mode.
+
+    Possible values:
+
+    - `off` *default*{ .default } -- Disable vsync in both windowed and
+      fullscreen mode. This is the best option on variable refresh rate (VRR)
+      monitors running in VRR mode to get perfect frame pacing, no tearing,
+      and low input lag. On fixed refresh rate monitors (or VRR monitors in
+      fixed refresh mode), disabling vsync might cause visible tearing in
+      fast-paced games.
+
+    - `on` -- Enable vsync in both windowed and fullscreen mode. This can
+      prevent tearing in fast-paced games but will increase input lag. Vsync
+      is only available with `host-rate` presentation (see
+      [`presentation_mode`](#presentation_mode)).
+
+    - `fullscreen-only` -- Enable vsync in fullscreen mode only. This might
+      be useful if your operating system enforces vsync in windowed mode and
+      the `on` setting causes audio glitches or other issues in windowed mode
+      only. Vsync is only available with `host-rate` presentation (see
+      [`presentation_mode`](#presentation_mode)).
+
+    !!! note "Notes"
+
+        - For perfectly smooth scrolling in 2D games (e.g., in
+          [Pinball Dreams](https://www.mobygames.com/game/703/pinball-dreams/)
+          and [Epic Pinball](https://www.mobygames.com/game/263/epic-pinball/)),
+          you'll need a VRR monitor running in VRR mode and vsync disabled.
+          The scrolling in 70 Hz VGA games will always appear juddery on 60 Hz
+          fixed refresh rate monitors even with vsync enabled.
+
+        - Usually, you'll only get perfectly smooth 2D scrolling in fullscreen
+          mode, even on a VRR monitor.
+
+        - For the best results, disable all frame cappers and global vsync
+          overrides in your video driver settings.

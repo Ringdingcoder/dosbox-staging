@@ -10,7 +10,7 @@
 #include "ints/int10.h"
 #include "misc/help_util.h"
 
-#include <SDL.h>
+#include <SDL3/SDL.h>
 
 class SHOWPIC final : public Program {
 public:
@@ -44,4 +44,4 @@ private:
 	void WaitForKeypress() const;
 };
 
-#endif // DOSBOX_PROGRAM_SHOPIC_H
+#endif // DOSBOX_PROGRAM_SHOWPIC_H

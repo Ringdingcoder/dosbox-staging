@@ -15,14 +15,13 @@ function(add_copy_assets)
   file(GLOB_RECURSE RESOURCE_FILES
        RELATIVE "${CMAKE_SOURCE_DIR}/${RESOURCES_PATH}"
        "${CMAKE_SOURCE_DIR}/${RESOURCES_PATH}/*")
-  # Filter out build system and GIT related files
-  list(FILTER RESOURCE_FILES EXCLUDE REGEX "(.*/)*meson\.build$")
+  # Filter out Git files
   list(FILTER RESOURCE_FILES EXCLUDE REGEX "(.*/)*\.git[a-z]+$")
 
   # Generate list of resource files with destination paths
   foreach(RESOURCE_FILE ${RESOURCE_FILES})
     list(APPEND RESOURCE_DESTINATION_FILES
-         "${CMAKE_CURRENT_BINARY_DIR}${RESOURCE_COPY_PATH}/${RESOURCE_FILE}")
+         "${CMAKE_CURRENT_BINARY_DIR}/${RESOURCE_COPY_PATH}/${RESOURCE_FILE}")
   endforeach()
 
   # Generate list of license files with destination paths
@@ -41,8 +40,8 @@ function(add_copy_assets)
   # Add a copy command for each resource file
   foreach(RESOURCE_FILE ${RESOURCE_FILES})
     add_to_copy_command(
-      "${CMAKE_CURRENT_SOURCE_DIR}/resources/${RESOURCE_FILE}"
-      "${CMAKE_CURRENT_BINARY_DIR}${RESOURCE_COPY_PATH}/${RESOURCE_FILE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/${RESOURCES_PATH}/${RESOURCE_FILE}"
+      "${CMAKE_CURRENT_BINARY_DIR}/${RESOURCE_COPY_PATH}/${RESOURCE_FILE}"
     )
   endforeach()
 

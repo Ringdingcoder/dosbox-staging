@@ -3,16 +3,17 @@
 
 #include "webserver.h"
 #include "bridge.h"
-#include "cpu.h"
-#include "dos.h"
-#include "memory.h"
+#include "private/cpu.h"
+#include "private/dos.h"
+#include "private/dosbox.h"
+#include "private/memory.h"
 
 #include <set>
 #include <string>
 #include <thread>
 
-#include "libs/http/http.h"
-#include "libs/json/json.h"
+#include "http/http.h"
+#include "json/json.h"
 
 #include "config/config.h"
 #include "dosbox.h"
@@ -34,6 +35,7 @@ static void error_handler(const httplib::Request&, httplib::Response& res,
 {
 	json j;
 	std::string msg;
+
 	try {
 		if (ep) {
 			std::rethrow_exception(ep);
@@ -43,8 +45,10 @@ static void error_handler(const httplib::Request&, httplib::Response& res,
 	} catch (...) {
 		msg = "Unknown error";
 	}
+
 	j["error"] = msg;
 	res.status = httplib::StatusCode::InternalServerError_500;
+
 	send_json(res, j);
 }
 
@@ -52,14 +56,18 @@ static httplib::Server server;
 
 static void setup_api_handlers()
 {
-	server.Get("/api/cpu", CpuInfoCommand::Get);
-	server.Get("/api/memory/:offset/:len", ReadMemCommand::Get);
-	server.Get("/api/memory/:segment/:offset/:len", ReadMemCommand::Get);
-	server.Put("/api/memory/:offset", WriteMemCommand::Put);
-	server.Put("/api/memory/:segment/:offset", WriteMemCommand::Put);
-	server.Post("/api/memory/allocate", AllocMemoryCommand::Post);
-	server.Post("/api/memory/free", FreeMemoryCommand::Post);
-	server.Get("/api/dos", DosInfoCommand::Get);
+	server.Get("/api/v1/cpu/state", CpuStateCommand::Get);
+
+	server.Get("/api/v1/dos/internals", DosInternalsCommand::Get);
+
+	server.Post("/api/v1/dosbox/shutdown", ShutdownCommand::Post);
+
+	server.Post("/api/v1/memory/allocate", AllocMemoryCommand::Post);
+	server.Post("/api/v1/memory/free", FreeMemoryCommand::Post);
+	server.Get("/api/v1/memory/:offset/:len", ReadMemoryCommand::Get);
+	server.Get("/api/v1/memory/:segment/:offset/:len", ReadMemoryCommand::Get);
+	server.Put("/api/v1/memory/:offset", WriteMemoryCommand::Put);
+	server.Put("/api/v1/memory/:segment/:offset", WriteMemoryCommand::Put);
 }
 
 static std::string strip_port(const std::string& host)
@@ -72,6 +80,7 @@ static std::string strip_port(const std::string& host)
 		}
 		return host;
 	}
+
 	// IPv4 or hostname: 127.0.0.1:8080
 	const auto colon = host.rfind(':');
 	if (colon != std::string::npos) {
@@ -106,43 +115,49 @@ static void setup_host_validation(const std::string& addr, int port)
 	server.set_pre_routing_handler(
 	        [allowed = std::move(allowed)](const httplib::Request& req,
 	                                       httplib::Response& res) {
-		        const auto host = strip_port(
-		                req.get_header_value("Host"));
+		        const auto host = strip_port(req.get_header_value("Host"));
 
 		        if (allowed.find(host) == allowed.end()) {
 			        LOG_WARNING("WEBSERVER: Rejected request with Host header '%s'",
 			                    req.get_header_value("Host").c_str());
+
 			        res.status = httplib::StatusCode::Forbidden_403;
 			        res.set_content("Forbidden", "text/plain");
+
 			        return httplib::Server::HandlerResponse::Handled;
 		        }
 		        return httplib::Server::HandlerResponse::Unhandled;
 	        });
 }
 
-static void run(std::string addr, int port)
+static void run(const std::string addr, const int port, const std::string resource_home)
 {
-	const auto resource_home = get_resource_path("webserver").string();
 	const auto config_home = (get_config_dir() / DefaultWebserverDir).string();
+
 	server.set_mount_point("/", config_home);
 	server.set_mount_point("/", resource_home);
 
 	setup_api_handlers();
 	setup_host_validation(addr, port);
+
 	server.set_exception_handler(error_handler);
-	server.Get("/api/info", [=](auto, auto& res) {
+
+	server.Get("/api/v1/dosbox/info", [=](auto, auto& res) {
 		json j;
 		j["configHome"]      = get_config_dir();
 		j["configWebserver"] = config_home;
 		j["version"]         = DOSBOX_GetDetailedVersion();
+
 		send_json(res, j);
 	});
 
 	LOG_INFO("WEBSERVER: Starting HTTP REST API on http://%s:%d",
 	         addr.c_str(),
 	         port);
+
 	LOG_INFO("WEBSERVER: Using document root directory '%s'",
 	         config_home.c_str());
+
 	auto ok = server.listen(addr, port);
 	if (!ok) {
 		LOG_WARNING("WEBSERVER: Failed to bind to %s:%d", addr.c_str(), port);
@@ -155,9 +170,9 @@ static void init_config_settings(SectionProp& section)
 
 	auto enabled = section.AddBool("webserver_enabled", OnlyAtStart, false);
 	enabled->SetHelp(
-			"Enable the HTTP REST API that exposes internal state and memory (disabled by\n"  
-			"default). Open http://localhost:8080 in a browser (or use the configured port)\n"  
-			"to view the API documentation.");
+	        "Enable the HTTP REST API that exposes internal state and memory (disabled by\n"
+	        "default). Open http://localhost:8086 in a browser (or use the configured port)\n"
+	        "to view the API documentation.");
 	auto bind_ip = section.AddString("webserver_bind_address",
 	                                 OnlyAtStart,
 	                                 "127.0.0.1");
@@ -167,20 +182,28 @@ static void init_config_settings(SectionProp& section)
 	        "\n"
 	        "By default only local connections are allowed.");
 
-	auto bind_port = section.AddInt("webserver_port", OnlyAtStart, 8080);
+	auto bind_port = section.AddInt("webserver_port", OnlyAtStart, 8086);
 	bind_port->SetMinMax(1, 0xFFFF);
 	bind_port->SetHelp("TCP port to bind to.");
 }
 
 } // namespace Webserver
 
+static bool is_webserver_enabled = false;
+
 void WEBSERVER_Init()
 {
 	auto section = get_section("webserver");
+
 	if (section->GetBool("webserver_enabled")) {
-		auto addr = section->GetString("webserver_bind_address");
-		auto port = section->GetInt("webserver_port");
-		std::thread thread(Webserver::run, addr, port);
+		is_webserver_enabled = true;
+
+		const auto addr = section->GetString("webserver_bind_address");
+		const auto port = section->GetInt("webserver_port");
+		const auto resource_home = get_resource_path("webserver").string();
+
+		std::thread thread(Webserver::run, addr, port, resource_home);
+
 		thread.detach();
 	}
 }
@@ -193,6 +216,13 @@ void WEBSERVER_Destroy()
 void WEBSERVER_AddConfigSection(const ConfigPtr& conf)
 {
 	assert(conf);
+
 	auto section = conf->AddSection("webserver");
+
 	Webserver::init_config_settings(*section);
+}
+
+bool WEBSERVER_IsEnabled()
+{
+	return is_webserver_enabled;
 }

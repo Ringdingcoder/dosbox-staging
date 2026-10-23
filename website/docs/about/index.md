@@ -5,12 +5,12 @@ hide:
 
 # About
 
-[![DOSBox Staging](../assets/images/dosbox-staging-no-border.svg){ align=right width=33% .about-logo }](https://www.dosbox-staging.org/)
+[![DOSBox Staging](../assets/images/dosbox-staging-logo.svg){ align=right width=33% .about-logo }](https://www.dosbox-staging.org/)
 
 **DOSBox Staging** is a modern continuation of DOSBox with advanced features
 and current development practices.
 
-It is a (mostly) drop-in replacement for older DOSBox versions---your
+It is a (mostly) drop-in replacement for older DOSBox versions --- your
 existing configurations will continue to work, and you will have access to
 many advanced features.
 
@@ -18,8 +18,8 @@ many advanced features.
 a lot less configuration than with older DOSBox versions. Most games and
 applications require no tweaking and will work fine with the stock
 settings. However, the extensive configuration options and advanced features
-are available if you wish to delve deeper. Please refer to the [Feature
-highlights](../index.md#feature-highlights) on our front page to learn more
+are available if you wish to delve deeper. Please refer to the [feature
+highlights](../index.md) on our front page to learn more
 about these.
 
 The key features for developers are summarised [here](https://github.com/dosbox-staging/dosbox-staging?tab=readme-ov-file#key-features-for-developers).
@@ -29,7 +29,7 @@ The key features for developers are summarised [here](https://github.com/dosbox-
 
 - Faithfully emulate the **DOS operating environment** running on IBM PC
   compatibles and the IBM PCjr, with the primary goal of running **all PC
-  Booter, DOS and Windows 3.x games** released in the 1981--2000 period. Running
+  Booter, DOS and Windows 3.1 games** released in the 1981--2000 period. Running
   applications and demoscene productions or more recent DOS software is a
   secondary objective.
 - Improve the **out-of-the-box experience**.
@@ -43,8 +43,8 @@ The key features for developers are summarised [here](https://github.com/dosbox-
 - Encourage **new contributors** by removing barriers to entry.
 - Prioritise **code quality** to minimise technical
   debt and ease maintenance. This generally means following the
-  [Staging Coding Style Guide](https://github.com/dosbox-staging/dosbox-staging/blob/main/CONTRIBUTING.md#coding-style)
-  and best practices such as the [C++ Core Guidelines](http://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines).
+  [code contributing guide](https://github.com/dosbox-staging/dosbox-staging/blob/main/docs/CONTRIBUTING.md#contributing-code)
+  and best practices such as the [C++ core guidelines](http://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines).
 
 
 ## Non-goals

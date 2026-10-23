@@ -1,8 +1,10 @@
-.PHONY: help png windows macos linux clean
+.PHONY: all help png windows favicon macos linux clean
 
 PNG_DIR = png
 
 WINDOWS_DIR = windows
+
+WEB_IMAGES_DIR = ../../website/docs/assets/images
 
 MACOS_DIR = macos
 MACOS_ICON_1024 = $(MACOS_DIR)/dosbox-staging-1024.png
@@ -14,6 +16,7 @@ help:
 	@echo "Available targets:"
 	@echo "  png     - re-generate small PNG icons from the SVG sources"
 	@echo "  windows - re-generate Windows .ico file from the PNG icons"
+	@echo "  favicon - re-generate website favicon from the PNG icons"
 	@echo "  macos   - re-generate macOS .icns file from the macOS source PNG"
 	@echo "  all     - re-generate all (in above the listed order)"
 	@echo ""
@@ -22,7 +25,7 @@ help:
 	@echo "  make install prefix=/usr  # install icons to \$${DESTDIR}/usr/share/icons/..."
 	@echo "  make install datadir=foo  # install icons to \$${DESTDIR}foo/icons/..."
 
-all: png windows macos
+all: png windows favicon macos
 
 ##
 #  Re-generate small PNG icons from the SVG sources.
@@ -32,15 +35,24 @@ all: png windows macos
 #  Needs rsvg-convert from the librsvg package.
 #
 png:
+	mkdir -p $(PNG_DIR)
+
 	rsvg-convert -h  16 svg/dosbox-staging-16.svg > $(PNG_DIR)/icon_16.png
+	rsvg-convert -h  20 svg/dosbox-staging-20.svg > $(PNG_DIR)/icon_20.png
 	rsvg-convert -h  24 svg/dosbox-staging-24.svg > $(PNG_DIR)/icon_24.png
+	rsvg-convert -h  30 svg/dosbox-staging-30.svg > $(PNG_DIR)/icon_30.png
 	rsvg-convert -h  32 svg/dosbox-staging-32.svg > $(PNG_DIR)/icon_32.png
 
 	# Some desktop environments expect a 22x22 icon (e.g., KDE Plasma).
-	# Rendering this from the SVG optimised for 24x24px looks good enough.
-	rsvg-convert -h  22 svg/dosbox-staging-24.svg > $(PNG_DIR)/icon_22.png
+	rsvg-convert -h  22 svg/dosbox-staging-22.svg > $(PNG_DIR)/icon_22.png
 
+	rsvg-convert -h   36 svg/dosbox-staging.svg   > $(PNG_DIR)/icon_36.png
+	rsvg-convert -h   40 svg/dosbox-staging.svg   > $(PNG_DIR)/icon_40.png
 	rsvg-convert -h   48 svg/dosbox-staging.svg   > $(PNG_DIR)/icon_48.png
+	rsvg-convert -h   60 svg/dosbox-staging.svg   > $(PNG_DIR)/icon_60.png
+	rsvg-convert -h   64 svg/dosbox-staging.svg   > $(PNG_DIR)/icon_64.png
+	rsvg-convert -h   72 svg/dosbox-staging.svg   > $(PNG_DIR)/icon_72.png
+	rsvg-convert -h   80 svg/dosbox-staging.svg   > $(PNG_DIR)/icon_80.png
 	rsvg-convert -h   96 svg/dosbox-staging.svg   > $(PNG_DIR)/icon_96.png
 	rsvg-convert -h  128 svg/dosbox-staging.svg   > $(PNG_DIR)/icon_128.png
 	rsvg-convert -h  256 svg/dosbox-staging.svg   > $(PNG_DIR)/icon_256.png
@@ -50,16 +62,36 @@ png:
 ##
 #  Re-generate Window .ico file from the PNG icons.
 #
-#  Needs icotool from the icoutils packags (there's no good Windows native
+#  Needs icotool from the icoutils packages (there's no good Windows native
 #  CLI tool for this).
 #
 windows:
+	mkdir -p $(WINDOWS_DIR)
+
 	icotool -c $(PNG_DIR)/icon_256.png \
+	           $(PNG_DIR)/icon_96.png \
+	           $(PNG_DIR)/icon_80.png \
+	           $(PNG_DIR)/icon_72.png \
+	           $(PNG_DIR)/icon_64.png \
+	           $(PNG_DIR)/icon_60.png \
 	           $(PNG_DIR)/icon_48.png \
+	           $(PNG_DIR)/icon_40.png \
+	           $(PNG_DIR)/icon_36.png \
 	           $(PNG_DIR)/icon_32.png \
+	           $(PNG_DIR)/icon_30.png \
 	           $(PNG_DIR)/icon_24.png \
+	           $(PNG_DIR)/icon_20.png \
 	           $(PNG_DIR)/icon_16.png \
 	        -o $(WINDOWS_DIR)/dosbox-staging.ico
+
+##
+#  Re-generate favicon from the PNG icons.
+#
+favicon:
+	icotool -c $(PNG_DIR)/icon_48.png \
+	           $(PNG_DIR)/icon_32.png \
+	           $(PNG_DIR)/icon_16.png \
+	        -o $(WEB_IMAGES_DIR)/favicon.ico
 
 ##
 #  Re-generate macOS .icns file from the 1024x1024 macOS source PNG.
@@ -102,7 +134,10 @@ install:
 	mkdir -m 0755 -p "$(DESTDIR)$(datadir)/icons/hicolor/22x22/apps/"
 	mkdir -m 0755 -p "$(DESTDIR)$(datadir)/icons/hicolor/24x24/apps/"
 	mkdir -m 0755 -p "$(DESTDIR)$(datadir)/icons/hicolor/32x32/apps/"
+	mkdir -m 0755 -p "$(DESTDIR)$(datadir)/icons/hicolor/36x36/apps/"
 	mkdir -m 0755 -p "$(DESTDIR)$(datadir)/icons/hicolor/48x48/apps/"
+	mkdir -m 0755 -p "$(DESTDIR)$(datadir)/icons/hicolor/64x64/apps/"
+	mkdir -m 0755 -p "$(DESTDIR)$(datadir)/icons/hicolor/72x72/apps/"
 	mkdir -m 0755 -p "$(DESTDIR)$(datadir)/icons/hicolor/96x96/apps/"
 	mkdir -m 0755 -p "$(DESTDIR)$(datadir)/icons/hicolor/128x128/apps/"
 	mkdir -m 0755 -p "$(DESTDIR)$(datadir)/icons/hicolor/256x256/apps/"
@@ -114,7 +149,10 @@ install:
 	install -p -m 0644 $(PNG_DIR)/icon_22.png "$(DESTDIR)$(datadir)/icons/hicolor/22x22/apps/org.dosbox_staging.dosbox_staging.png"
 	install -p -m 0644 $(PNG_DIR)/icon_24.png "$(DESTDIR)$(datadir)/icons/hicolor/24x24/apps/org.dosbox_staging.dosbox_staging.png"
 	install -p -m 0644 $(PNG_DIR)/icon_32.png "$(DESTDIR)$(datadir)/icons/hicolor/32x32/apps/org.dosbox_staging.dosbox_staging.png"
+	install -p -m 0644 $(PNG_DIR)/icon_36.png "$(DESTDIR)$(datadir)/icons/hicolor/36x36/apps/org.dosbox_staging.dosbox_staging.png"
 	install -p -m 0644 $(PNG_DIR)/icon_48.png "$(DESTDIR)$(datadir)/icons/hicolor/48x48/apps/org.dosbox_staging.dosbox_staging.png"
+	install -p -m 0644 $(PNG_DIR)/icon_64.png "$(DESTDIR)$(datadir)/icons/hicolor/64x64/apps/org.dosbox_staging.dosbox_staging.png"
+	install -p -m 0644 $(PNG_DIR)/icon_72.png "$(DESTDIR)$(datadir)/icons/hicolor/72x72/apps/org.dosbox_staging.dosbox_staging.png"
 	install -p -m 0644 $(PNG_DIR)/icon_96.png "$(DESTDIR)$(datadir)/icons/hicolor/96x96/apps/org.dosbox_staging.dosbox_staging.png"
 	install -p -m 0644 $(PNG_DIR)/icon_128.png "$(DESTDIR)$(datadir)/icons/hicolor/128x128/apps/org.dosbox_staging.dosbox_staging.png"
 	install -p -m 0644 $(PNG_DIR)/icon_256.png "$(DESTDIR)$(datadir)/icons/hicolor/256x256/apps/org.dosbox_staging.dosbox_staging.png"

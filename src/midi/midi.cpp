@@ -33,6 +33,7 @@
 #include "config/config.h"
 #include "config/setup.h"
 #include "dos/programs.h"
+#include "dosbox.h"
 #include "dosbox_config.h"
 #include "gui/mapper.h"
 #include "hardware/audio/mpu401.h"
@@ -44,7 +45,7 @@
 #include "utils/string_utils.h"
 
 // must be included after dosbox_config.h
-#include <SDL.h>
+#include <SDL3/SDL.h>
 
 // #define DEBUG_MIDI
 
@@ -96,12 +97,10 @@ static std::unique_ptr<MidiDevice> create_device(
 #endif
 
 	// External MIDI devices
-#if C_COREMIDI
+#if defined(MACOSX)
 	if (name == CoreMidi) {
 		return std::make_unique<MidiDeviceCoreMidi>(config.c_str());
 	}
-#endif
-#if C_COREAUDIO
 	if (name == CoreAudio) {
 		return std::make_unique<MidiDeviceCoreAudio>(config.c_str());
 	}
@@ -221,8 +220,8 @@ public:
 	MidiState& operator=(const MidiState&) = delete;
 
 private:
-	std::array<bool, NumMidiNotes* NumMidiChannels> note_on_tracker = {};
-	std::array<uint8_t, NumMidiChannels> channel_volume_tracker     = {};
+	std::array<bool, NumMidiNotes * NumMidiChannels> note_on_tracker = {};
+	std::array<uint8_t, NumMidiChannels> channel_volume_tracker      = {};
 
 	inline size_t NoteAddr(const uint8_t channel, const uint8_t note)
 	{
@@ -586,6 +585,67 @@ void MIDI_Unmute()
 	midi.is_muted = false;
 }
 
+// Pause MIDI output as part of a DOSBox pause.
+//
+// Halting the software synth renderer keeps it from advancing the synth's
+// internal clock while the mixer is halted; without it the renderer rushes
+// to fill the `audio_frame_fifo` headroom that opens up the moment the mixer
+// halts, advancing the synth clock and leaking music into the next capture.
+//
+// The renderer stops its own `audio_frame_fifo` while parked (see the synth
+// `Render()` loops), so a mixer `BulkDequeue()` racing this gets a short read
+// instead of blocking on the empty-but-running queue. That former block --
+// `mix_samples()` stuck mid-`BulkDequeue()` waiting for a halted renderer
+// while holding `mixer.mutex` -- was the pause/resume deadlock. The fifo stop
+// removes it, so this no longer needs `MIXER_LockMixerThread()` coverage.
+//
+void MIDI_Pause()
+{
+	// External MIDI devices need an explicit volume-zero broadcast on pause
+	// so they go silent (the mixer's fade only silences internal audio
+	// flowing through SDL; external MIDI is a side channel).
+	//
+	// Called unconditionally: `MIDI_Mute()` is idempotent (early-returns if
+	// already muted), so if the mute FSM already muted us there's no
+	// double-mute. This also covers the case where the user toggled mute
+	// during `Pending` -- `set_mute_state()` skips MIDI while a pause is in
+	// flight (so it can't accidentally unmute hanging notes mid-pause), and
+	// we catch up here.
+	MIDI_Mute();
+
+	// For internal software synths (FluidSynth/MT-32/SoundCanvas) this
+	// halts their renderer thread so the synth's internal clock doesn't
+	// advance during the pause; default no-op override for External.
+	if (MIDI_IsAvailable()) {
+		midi.device->Pause();
+	}
+}
+
+// Resume MIDI output as part of a DOSBox resume.
+//
+// The synth's `audio_frame_fifo` is stopped while the renderer is parked, so
+// if the mixer races into `mix_samples()` first (in the window between
+// `pause_state.store(Running)` and the renderer waking), its `BulkDequeue()`
+// returns a short read -- silence-padded by the synth's `MixerCallback` --
+// instead of blocking on a still-parked renderer while holding `mixer.mutex`.
+// That block was the pause/resume deadlock; the fifo stop removes it. The
+// renderer restarts its fifo on wake and the buffered pre-pause frames drain
+// normally.
+//
+void MIDI_Resume()
+{
+	if (MIDI_IsAvailable()) {
+		midi.device->Resume();
+	}
+	// Only restore MIDI volume if the mixer is back to Audible. If the user
+	// toggled mute during the pause and we're still UserMuted (or
+	// AutoMuted), leave MIDI silent -- the FSM transition will undo the
+	// MIDI mute when the user un-mutes.
+	if (MIXER_GetMuteState() == MixerMuteState::Audible) {
+		MIDI_Unmute();
+	}
+}
+
 bool MIDI_IsAvailable()
 {
 	return (midi.device != nullptr);
@@ -639,7 +699,7 @@ public:
 
 		if (device_pref == MidiDevicePortPref) {
 			// Use system-level MIDI interface of the host OS
-#if C_COREMIDI
+#if defined(MACOSX)
 			// macOS
 			midi.device = create_device(MidiDeviceName::CoreMidi,
 			                            midiconfig_prefs);
@@ -697,23 +757,21 @@ void MIDI_ListDevices(MoreOutputStrings& output)
 	                           : nullptr,
 
 	                   output);
-#if C_COREMIDI
+#if defined(MACOSX)
 	write_device_name(MidiDeviceName::CoreMidi);
 
 	COREMIDI_ListDevices((device_name == MidiDeviceName::CoreMidi)
 	                             ? dynamic_cast<MidiDeviceCoreMidi*>(device_ptr)
 	                             : nullptr,
 	                     output);
-#endif
-#if C_COREAUDIO
+
 	write_device_name(MidiDeviceName::CoreAudio);
 
 	COREAUDIO_ListDevices((device_name == MidiDeviceName::CoreAudio)
 	                              ? dynamic_cast<MidiDeviceCoreAudio*>(device_ptr)
 	                              : nullptr,
 	                      output);
-#endif
-#if defined(WIN32)
+#elif defined(WIN32)
 	write_device_name(MidiDeviceName::Win32);
 
 	MIDI_WIN32_ListDevices((device_name == MidiDeviceName::Win32)
@@ -745,6 +803,17 @@ void MIDI_Init()
 		try {
 			midi_instance = std::make_unique<MIDI>();
 			midi_state.Reset();
+
+			// The device may have been re-created while paused (a
+			// config change via hot-reload or the HTTP API).
+			// Re-engage the pause hook so the fresh synth renderer
+			// starts out halted too; otherwise it would keep
+			// rendering into its `audio_frame_fifo` during the
+			// pause, advancing the synth clock past the pause edge
+			// (see `MIDI_Pause()`).
+			if (DOSBOX_IsPaused()) {
+				MIDI_Pause();
+			}
 
 			// A MIDI device has been successfully initialised
 			return;
@@ -832,7 +901,7 @@ static void init_mididevice_settings(SectionProp& secprop)
 	str_prop->SetOptionHelp("none", "  none:         Disable MIDI output.");
 
 	str_prop->SetValues({MidiDevicePortPref,
-#if C_COREAUDIO
+#if defined(MACOSX)
 	                     MidiDeviceName::CoreAudio,
 #endif
 
@@ -888,17 +957,17 @@ static void init_midiconfig_settings(SectionProp& secprop)
 	        "    after the port ID or name (e.g., 'midiconfig = 2 delaysysex').");
 
 	str_prop->SetEnabledOptions({
-#if (C_COREMIDI == 1 || defined(WIN32))
-		"windows_or_macos",
+#if (defined(MACOSX) || defined(WIN32))
+	        "windows_or_macos",
 #endif
-#if C_COREAUDIO
-		        "coreaudio",
+#if defined(MACOSX)
+	        "coreaudio",
 #endif
 #if C_ALSA
-		        "linux",
+	        "linux",
 #endif
-		        "internal_synth", "physical_mt32"
-	});
+	        "internal_synth",
+	        "physical_mt32"});
 }
 
 void init_midi_config_settings(SectionProp& secprop)

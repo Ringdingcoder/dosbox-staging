@@ -9,6 +9,7 @@
 
 #include <gtest/gtest.h>
 
+#include "audio/mixer.h"
 #include "config/config.h"
 #include "cpu/cpu.h"
 #include "dos/dos.h"
@@ -20,10 +21,13 @@
 class DOSBoxTestFixture : public ::testing::Test {
 public:
 	DOSBoxTestFixture()
-	        : arg_c_str("-conf tests/files/dosbox-staging-tests.conf\0"),
-	          argv{arg_c_str},
-	          command_line(1, argv)
+	        : command_line("dosbox_tests",
+	                       "--noprimaryconf "
+	                       "--nolocalconf "
+	                       "--conf tests/files/dosbox-staging-tests.conf")
 	{
+		// Don't load the local & primary configs if they exist as they're
+		// outside of our control and could skew the tests.
 		control = std::make_unique<Config>(&command_line);
 	}
 
@@ -33,8 +37,6 @@ public:
 		// pre-requisite that's asserted during the Init process.
 		//
 		init_config_dir();
-		const auto config_path = get_config_dir();
-		control->ParseConfigFiles(config_path);
 
 		// Only initialiasing the minimum number of modules required for
 		// the tests.
@@ -43,10 +45,19 @@ public:
 		// compared to using `DOSBOX_InitModules()` (e.g. DOS_FilesTest
 		// runs in 3 seconds instead of 13).
 		//
+		// Config sections must be registered before parsing the config
+		// files below, otherwise settings targeting not-yet-registered
+		// sections (e.g. "nosound" in the "mixer" section) are silently
+		// dropped.
+		//
 		DOSBOX_InitModuleConfigsAndMessages();
+
+		const auto config_path = get_config_dir();
+		control->ParseConfigFiles(config_path);
 
 		DOSBOX_Init();
 		CPU_Init();
+		MIXER_Init();
 		BIOS_Init();
 		SERIAL_Init();
 		DOS_Init();
@@ -59,17 +70,14 @@ public:
 		SERIAL_Destroy();
 		BIOS_Destroy();
 		CPU_Destroy();
+		MIXER_Destroy();
 		DOSBOX_Destroy();
 
 		control = {};
 	}
 
 private:
-	const char* arg_c_str;
-	const char* argv[1];
-
 	CommandLine command_line;
-	ConfigPtr config;
 };
 
 #endif

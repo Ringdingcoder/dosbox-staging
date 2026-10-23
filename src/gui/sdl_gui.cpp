@@ -13,7 +13,8 @@
 #include <unistd.h>
 
 #if C_DEBUGGER
-#include <queue>
+#include "debugger/debugger.h"
+#include "debugger/debugger_inc.h"
 #endif
 
 #include "private/common.h"
@@ -25,6 +26,7 @@
 #include "cpu/cpu.h"
 #include "dosbox.h"
 #include "gui/mapper.h"
+#include "gui/private/window_geometry.h"
 #include "gui/render/opengl_renderer.h"
 #include "gui/render/sdl_renderer.h"
 #include "gui/titlebar.h"
@@ -42,8 +44,12 @@
 #include "utils/rect.h"
 #include "utils/string_utils.h"
 
+#ifdef MACOSX
+#include "gui/private/macos_window.h"
+#endif
+
 // must be included after dosbox_config.h
-#include <SDL.h>
+#include <SDL3/SDL.h>
 
 CHECK_NARROWING();
 
@@ -58,23 +64,11 @@ void log_window_event([[maybe_unused]] const char* message,
 #endif
 }
 
-constexpr uint32_t sdl_version_to_uint32(const SDL_version version)
-{
-	return (version.major << 16) + (version.minor << 8) + version.patch;
-}
-
-[[maybe_unused]] static bool is_runtime_sdl_version_at_least(const SDL_version min_version)
-{
-	SDL_version version = {};
-	SDL_GetVersion(&version);
-	const auto curr_version = sdl_version_to_uint32(version);
-
-	return curr_version >= sdl_version_to_uint32(min_version);
-}
-
 SDL_Block sdl;
 
-static SDL_Point minimum_window_size = {640, 480};
+constexpr SDL_Rect MinWindowSize = {0, 0, 320, 200};
+
+constexpr SDL_Rect DefaultDesktopSize = {0, 0, 640, 480};
 
 DosBox::Rect to_rect(const SDL_Rect r)
 {
@@ -86,28 +80,84 @@ SDL_Rect to_sdl_rect(const DosBox::Rect& r)
 	return {iroundf(r.x), iroundf(r.y), iroundf(r.w), iroundf(r.h)};
 }
 
-#if C_DEBUGGER
+// SDL's window API (e.g., `SDL_SetWindowSize()`, `SDL_SetWindowPosition()`,
+// `SDL_EVENT_WINDOW_RESIZED`, and `SDL_EVENT_WINDOW_MOVED`) uses the native
+// units of the platform: logical units (points) on macOS and Wayland, and
+// pixels on Windows and X11. We use logical units for window sizes and
+// positions on all platforms, and convert them to and from native units only
+// when calling SDL.
+//
+// See https://wiki.libsdl.org/SDL3/README-highdpi for details.
+//
+// Returns the display the window is on, or the display we're about to create
+// the window on.
+//
+// This is more up-to-date than `sdl.display_number` when the window has just
+// been moved to a different display; we might process its move and resize
+// events before SDL_EVENT_WINDOW_DISPLAY_CHANGED updates
+// `sdl.display_number`.
+//
+static SDL_DisplayID get_current_display()
+{
+	const auto window_display = sdl.window ? SDL_GetDisplayForWindow(sdl.window)
+	                                       : 0;
 
-extern SDL_Window* pdc_window;
-extern std::queue<SDL_Event> pdc_event_queue;
+	return (window_display != 0) ? window_display : sdl.display_number;
+}
+
+// Returns the number of native units per logical unit. This is always 1.0 on
+// macOS and Wayland, and the OS-level display scaling factor on Windows and
+// X11 (e.g., 2.0 at 200% scaling).
+//
+static float get_content_scale()
+{
+	const auto scale = SDL_GetDisplayContentScale(get_current_display());
+	return (scale > 0.0f) ? scale : 1.0f;
+}
+
+static float get_window_display_scale()
+{
+	const auto result = SDL_GetWindowDisplayScale(sdl.window);
+	return (result == 0.0f) ? 1.0f : result;
+}
+
+// Convert logical units to native units. No-op on macOS and Wayland as the
+// content scale is always 1.0 on these platforms; multiplies by the content
+// scale factor on Windows and X11 (e.g., by 2.0 on 200% content scaling set
+// in system preferences).
+static int to_native(const int logical)
+{
+	return WindowGeometry::LogicalToNative(logical, get_content_scale());
+}
+
+// Convert native units to logical units. No-op on macOS and Wayland as the
+// content scale is always 1.0 on these platforms; divides by the content
+// scale factor on Windows and X11 (e.g., by 2.0 on 200% content scaling set
+// in system preferences).
+static int to_logical(const int native)
+{
+	return WindowGeometry::NativeToLogical(native, get_content_scale());
+}
+
+static int size_to_native(const float logical_size)
+{
+	return WindowGeometry::LogicalSizeToNative(logical_size,
+	                                           get_content_scale());
+}
+
+#if C_DEBUGGER
 
 static bool is_debugger_event(const SDL_Event& event)
 {
-	switch (event.type) {
-	case SDL_KEYDOWN:
-	case SDL_KEYUP:
-	case SDL_MOUSEBUTTONDOWN:
-	case SDL_MOUSEBUTTONUP:
-	case SDL_MOUSEMOTION:
-	case SDL_MOUSEWHEEL:
-	case SDL_TEXTINPUT:
-	case SDL_TEXTEDITING:
-	case SDL_USEREVENT:
-	case SDL_WINDOWEVENT:
-		return event.window.windowID == SDL_GetWindowID(pdc_window);
-
-	default: return false;
+	if (!dbg.win_main) {
+		return false;
 	}
+
+	const auto dbg_window_id   = SDL_GetWindowID(dbg.win_main);
+	const auto event_window    = SDL_GetWindowFromEvent(&event);
+	const auto event_window_id = SDL_GetWindowID(event_window);
+
+	return event_window_id == dbg_window_id;
 }
 #endif
 
@@ -165,30 +215,30 @@ double GFX_GetHostRefreshRate()
 {
 	assert(sdl.window);
 
-	SDL_DisplayMode mode = {};
-
-	const auto display_in_use = SDL_GetWindowDisplayIndex(sdl.window);
+	const auto display_in_use = SDL_GetDisplayForWindow(sdl.window);
 
 	constexpr auto DefaultHostRefreshRateHz = 60;
 
-	if (display_in_use < 0) {
-		LOG_ERR("SDL: Could not get the current window index: %s",
-				SDL_GetError());
-		return DefaultHostRefreshRateHz;
-	}
-	if (SDL_GetCurrentDisplayMode(display_in_use, &mode) != 0) {
-		LOG_ERR("SDL: Could not get the current display mode: %s",
-				SDL_GetError());
-		return DefaultHostRefreshRateHz;
-	}
-	if (mode.refresh_rate < RefreshRateMin) {
-		LOG_WARNING("SDL: Got a strange refresh rate of %d Hz",
-					mode.refresh_rate);
+	if (display_in_use == 0) {
+		LOG_ERR("SDL: Could not get the current display ID: %s",
+		        SDL_GetError());
 		return DefaultHostRefreshRateHz;
 	}
 
-	assert(mode.refresh_rate >= RefreshRateMin);
-	return mode.refresh_rate;
+	const auto* mode = SDL_GetCurrentDisplayMode(display_in_use);
+	if (!mode) {
+		LOG_ERR("SDL: Could not get the current display mode: %s",
+		        SDL_GetError());
+		return DefaultHostRefreshRateHz;
+	}
+	if (mode->refresh_rate < RefreshRateMin) {
+		LOG_WARNING("SDL: Got a strange refresh rate of %g Hz",
+		            mode->refresh_rate);
+		return DefaultHostRefreshRateHz;
+	}
+
+	assert(mode->refresh_rate >= RefreshRateMin);
+	return mode->refresh_rate;
 }
 
 static void validate_vsync_and_presentation_mode_settings()
@@ -294,85 +344,36 @@ void GFX_RequestExit(const bool pressed)
 	}
 }
 
-#if defined(MACOSX)
-static bool is_command_pressed(const SDL_Event event)
-{
-	return (event.key.keysym.mod == KMOD_RGUI ||
-	        event.key.keysym.mod == KMOD_LGUI);
-}
-#endif
-
+// Thin wrapper around the FSM. The state machine + `paused_tick()` in
+// `dosbox.cpp` own the actual pause loop; here we just translate the
+// hotkey press into the right transition.
+//
 [[maybe_unused]] static void pause_emulation(bool pressed)
 {
 	if (!pressed) {
 		return;
 	}
-	const auto inkeymod = static_cast<uint16_t>(SDL_GetModState());
 
-	sdl.is_paused = true;
-	TITLEBAR_RefreshTitle();
-
-	SDL_Event event;
-
-	while (SDL_PollEvent(&event)) {
-		// flush event queue.
+	// Toggle on the requested state, not the actual one. During the
+	// pending fade-out window `DOSBOX_IsPaused()` is still false, so
+	// keying off it would map a second press to another (no-op) pause
+	// request. Keying off the request lets a quick second press cancel
+	// the pause during the fade, and guarantees the hotkey can always
+	// exit a pending pause even if the fade never completes (e.g. the
+	// mixer thread wedged on a stalled audio device).
+	if (DOSBOX_IsPauseRequested()) {
+		DOSBOX_RequestUserResume();
+	} else {
+		DOSBOX_RequestUserPause();
 	}
 
-	// Prevent the mixer from running while in our pause loop
-	// Muting is not ideal for some sound devices such as GUS that loop
-	// samples This also saves CPU time by not rendering samples we're not
-	// going to play anyway
-	MIXER_LockMixerThread();
-
-	// NOTE: This is one of the few places where we use SDL key codes with
-	// SDL 2.0, rather than scan codes. Is that the correct behavior?
-	while (sdl.is_paused && !DOSBOX_IsShutdownRequested()) {
-		// since we're not polling, CPU usage drops to 0.
-		SDL_WaitEvent(&event);
-
-		switch (event.type) {
-		case SDL_QUIT: GFX_RequestExit(true); break;
-
-		case SDL_WINDOWEVENT:
-			if (event.window.event == SDL_WINDOWEVENT_RESTORED) {
-				// We may need to re-create a texture and more
-				GFX_ResetScreen();
-			}
-			break;
-
-		case SDL_KEYDOWN:
-#if defined(MACOSX)
-			// Pause/unpause is hardcoded to Command+P on macOS
-			if (is_command_pressed(event) &&
-			    event.key.keysym.sym == SDLK_p) {
-#else
-			// Pause/unpause is hardcoded to Alt+Pause on Window &
-			// Linux
-			if (event.key.keysym.sym == SDLK_PAUSE) {
-#endif
-				const uint16_t outkeymod = event.key.keysym.mod;
-				if (inkeymod != outkeymod) {
-					KEYBOARD_ClrBuffer();
-					MAPPER_LosingFocus();
-					// Not perfect if the pressed Alt key is
-					// switched, but then we have to insert
-					// the keys into the mapper or
-					// create/rewrite the event and push it.
-					// Which is tricky due to possible use
-					// of scancodes.
-				}
-				sdl.is_paused = false;
-				TITLEBAR_RefreshTitle();
-				break;
-			}
-		}
-	}
-	MIXER_UnlockMixerThread();
+	// Titlebar refresh happens inside the pause FSM on the
+	// `Paused`/`Running` transition.
 }
 
 bool GFX_IsPaused()
 {
-	return sdl.is_paused;
+	return DOSBOX_IsPaused();
 }
 
 void GFX_Stop()
@@ -392,8 +393,32 @@ void GFX_ResetScreen()
 
 	CPU_ResetAutoAdjust();
 
+	// The callback's `update_viewport()` may have triggered an auto-shader
+	// switch (e.g. resize crossed the scan-doubling threshold while the
+	// mapper was open). Push the new shader's `force_single_scan` into
+	// `vga.draw.scan_doubling_allowed` here so the `VGA_SetupDrawing()`
+	// call below sees it, otherwise `render.src.height` will stay wrong.
+	//
+	// This matters even while paused: `RENDER_RescaleLastFrame()` below
+	// reads `render.src.height` as its destination height for the height
+	// doubling/halving of the last latched frame. Stale height will mean
+	// stride mismatch, resulting in garbage output.
+	RENDER_SetScanAndPixelDoubling();
+
 	VGA_SetupDrawing(0);
 	GFX_Start();
+
+	// While paused, we are not producing fresh frames, so the just
+	// recreated renderer would draw a blank or stale stretched framebuffer
+	// until resume. Drive a synthetic rescale of the latched last completed
+	// source frame at the new dimensions, then present immediately so the
+	// held frame shows correctly after viewport dimension updates (resizing
+	// the window, fullscreen/windowed toggle, etc.)
+	//
+	if (DOSBOX_IsPaused()) {
+		RENDER_RescaleLastFrame();
+		GFX_MaybePresentFrame();
+	}
 }
 
 static bool is_vsync_enabled()
@@ -456,6 +481,12 @@ static void maybe_log_display_properties()
 {
 	assert(sdl.renderer);
 	assert(sdl.draw.render_width_px > 0 && sdl.draw.render_height_px > 0);
+
+	// We log the display properties once the user or the OS has finished
+	// resizing the window (see `maybe_log_resized_window_size()`)
+	if (sdl.windowed.resized_at_ms) {
+		return;
+	}
 
 	static DosBox::Rect last_draw_size_px = {};
 
@@ -593,77 +624,55 @@ static void notify_new_mouse_screen_params()
 
 	MouseScreenParams params = {};
 
-	// It is important to scale not just the size of the rectangle but also
-	// its starting point by the inverse of the DPI scale factor.
-	params.draw_rect = to_rect(sdl.draw.draw_rect_px).Copy().Scale(1.0f / sdl.dpi_scale);
+	// The mouse position is in SDL's native units (logical units on macOS
+	// and Wayland, pixels on Windows and X11), so we need to convert both
+	// the size and the starting point of the rectangle from pixels to
+	// native units.
+	const auto density       = SDL_GetWindowPixelDensity(sdl.window);
+	const auto pixel_density = (density > 0.0f) ? density : 1.0f;
 
-	int abs_x = 0;
-	int abs_y = 0;
+	params.draw_rect = to_rect(sdl.draw.draw_rect_px).Copy().Scale(1.0f / pixel_density);
+
+	float abs_x = 0.0f;
+	float abs_y = 0.0f;
 	SDL_GetMouseState(&abs_x, &abs_y);
 
-	params.x_abs = static_cast<float>(abs_x);
-	params.y_abs = static_cast<float>(abs_y);
+	params.x_abs = abs_x;
+	params.y_abs = abs_y;
 
-	params.is_fullscreen    = sdl.is_fullscreen;
-	params.is_multi_display = (SDL_GetNumVideoDisplays() > 1);
+	params.is_fullscreen = sdl.is_fullscreen;
+
+	// We only need the number of displays
+	int num_displays = 0;
+	SDL_free(SDL_GetDisplays(&num_displays));
+	params.is_multi_display = (num_displays > 1);
 
 	MOUSE_NewScreenParams(params);
-}
-
-static bool is_aspect_ratio_correction_enabled()
-{
-	return (RENDER_GetAspectRatioCorrectionMode() ==
-	        AspectRatioCorrectionMode::Auto);
 }
 
 static void set_minimum_window_size()
 {
 	assert(sdl.window);
 
-	// TODO This only works for 320x200 games. We cannot make hardcoded
-	// assumptions about aspect ratios in general, e.g. the pixel aspect
-	// ratio is 1:1 for 640x480 games both with 'aspect = on` and 'aspect =
-	// off'.
-	const auto minimum_height = (is_aspect_ratio_correction_enabled() ? 480 : 400);
+	const auto min_w = to_native(MinWindowSize.w);
+	const auto min_h = to_native(MinWindowSize.h);
 
-	constexpr auto MinimumWidth = 640;
+	// `SDL_SetWindowMinimumSize()` always sets the window size as well,
+	// which interferes with dragging the window to another display on
+	// macOS. So we only call it when the minimum size in native units has
+	// changed.
+	int curr_min_w = 0;
+	int curr_min_h = 0;
+	SDL_GetWindowMinimumSize(sdl.window, &curr_min_w, &curr_min_h);
 
-	minimum_window_size  = {iround(MinimumWidth), iround(minimum_height)};
-
-	// The SDL documentation is incorrect; this will set the minimum window
-	// size in logical units, not pixels.
-	SDL_SetWindowMinimumSize(sdl.window,
-	                         minimum_window_size.x,
-	                         minimum_window_size.y);
-
-	// LOG_INFO("SDL: Updated window minimum size to %dx%d", width, height);
-}
-
-static void check_and_handle_dpi_change(SDL_Window* sdl_window,
-                                        const int _new_width = 0)
-{
-	assert(sdl.renderer);
-	assert(sdl.window);
-
-	auto new_width = _new_width;
-	if (new_width <= 0) {
-		SDL_GetWindowSize(sdl_window, &new_width, nullptr);
-	}
-	assert(new_width > 0);
-
-	const auto canvas_size_px = sdl.renderer->GetCanvasSizeInPixels();
-	const auto new_dpi_scale = canvas_size_px.w / static_cast<float>(new_width);
-
-	if (std::abs(new_dpi_scale - sdl.dpi_scale) < DBL_EPSILON) {
-		log_window_event("SDL: DPI scale hasn't changed (still %g)",
-		                 sdl.dpi_scale);
+	if (min_w == curr_min_w && min_h == curr_min_h) {
 		return;
 	}
-	sdl.dpi_scale = new_dpi_scale;
 
-	log_window_event("SDL: DPI scale updated from %g to %g",
-	                 sdl.dpi_scale,
-	                 new_dpi_scale);
+	if (!SDL_SetWindowMinimumSize(sdl.window, min_w, min_h)) {
+		LOG_WARNING("SDL: Failed to set window minimum size: %s",
+		            SDL_GetError());
+	}
 }
 
 static void set_window_transparency()
@@ -673,17 +682,86 @@ static void set_window_transparency()
 	const auto transparency = get_sdl_section()->GetInt("window_transparency");
 	const auto alpha = static_cast<float>(100 - transparency) / 100.0f;
 
-	SDL_SetWindowOpacity(sdl.window, alpha);
+	if (!SDL_SetWindowOpacity(sdl.window, alpha)) {
+		LOG_WARNING("SDL: Failed to set window opacity: %s", SDL_GetError());
+	}
 }
 
 static void set_window_decorations()
 {
 	assert(sdl.window);
 
-	SDL_SetWindowBordered(sdl.window,
-	                      get_sdl_section()->GetBool("window_decorations")
-	                              ? SDL_TRUE
-	                              : SDL_FALSE);
+	if (!SDL_SetWindowBordered(sdl.window,
+	                           get_sdl_section()->GetBool("window_decorations"))) {
+		LOG_WARNING("SDL: Failed to set window border: %s", SDL_GetError());
+	}
+}
+
+// Returns the index of the display as used by the `display` setting
+static std::optional<int> get_display_index(const SDL_DisplayID display)
+{
+	int num_displays    = 0;
+	const auto displays = SDL_GetDisplays(&num_displays);
+	if (!displays) {
+		return {};
+	}
+
+	std::optional<int> index = {};
+	for (auto i = 0; i < num_displays; ++i) {
+		if (displays[i] == display) {
+			index = i;
+			break;
+		}
+	}
+
+	SDL_free(displays);
+	return index;
+}
+
+// Logs the windowed size we've requested rather than the actual window size;
+// the latter can still be the fullscreen size right after exiting fullscreen
+// mode.
+static void log_window_size()
+{
+	const auto display_scale = get_window_display_scale();
+
+	LOG_MSG("DISPLAY: Using window size of %dx%d logical units "
+	        "(%dx%d pixels) on display %d",
+	        iroundf(sdl.windowed.width),
+	        iroundf(sdl.windowed.height),
+	        iroundf(sdl.windowed.width * display_scale),
+	        iroundf(sdl.windowed.height * display_scale),
+	        get_display_index(get_current_display()).value_or(0));
+}
+
+// The windowed size and position are restored when exiting fullscreen mode
+static void apply_windowed_size()
+{
+	if (sdl.is_fullscreen) {
+		return;
+	}
+
+	if (SDL_SetWindowSize(sdl.window,
+	                      size_to_native(sdl.windowed.width),
+	                      size_to_native(sdl.windowed.height))) {
+		log_window_size();
+	} else {
+		LOG_WARNING("SDL: Failed to set window size: %s", SDL_GetError());
+	}
+}
+
+static void apply_windowed_position()
+{
+	if (sdl.is_fullscreen) {
+		return;
+	}
+	if (!SDL_SetWindowPosition(sdl.window,
+	                           to_native(sdl.windowed.x_pos),
+	                           to_native(sdl.windowed.y_pos))) {
+
+		LOG_WARNING("SDL: Failed to set window position: %s",
+		            SDL_GetError());
+	}
 }
 
 static void enter_fullscreen()
@@ -702,38 +780,55 @@ static void enter_fullscreen()
 		// fullscreen optimisation won't kick in.
 		//
 		SDL_Rect display_bounds = {};
-		SDL_GetDisplayBounds(sdl.display_number, &display_bounds);
-		SDL_GetWindowSize(sdl.window,
-		                  &sdl.fullscreen.prev_window.width,
-		                  &sdl.fullscreen.prev_window.height);
+		if (!SDL_GetDisplayBounds(sdl.display_number, &display_bounds)) {
+			LOG_WARNING("SDL: Failed to get display bounds: %s",
+			            SDL_GetError());
+			return;
+		}
 
-		SDL_GetWindowPosition(sdl.window,
-		                      &sdl.fullscreen.prev_window.x_pos,
-		                      &sdl.fullscreen.prev_window.y_pos);
+		// SDL can't move or resize maximised windows on Windows, so we
+		// need to unmaximise the window first
+		if (SDL_GetWindowFlags(sdl.window) & SDL_WINDOW_MAXIMIZED) {
+			SDL_RestoreWindow(sdl.window);
 
-		SDL_SetWindowBordered(sdl.window, SDL_FALSE);
-		SDL_SetWindowResizable(sdl.window, SDL_FALSE);
-		SDL_SetWindowPosition(sdl.window, 0, 0);
+			SDL_Rect rect = {};
+			SDL_GetWindowPosition(sdl.window, &rect.x, &rect.y);
+			SDL_GetWindowSize(sdl.window, &rect.w, &rect.h);
 
-		SDL_SetWindowSize(sdl.window,
-		                  display_bounds.w + 1,
-		                  display_bounds.h);
+			sdl.fullscreen.unmaximized_window_rect = rect;
+		}
 
-		// Disable transparency in fullscreen mode
-		SDL_SetWindowOpacity(sdl.window, 100);
+		SDL_SetWindowBordered(sdl.window, false);
+		SDL_SetWindowResizable(sdl.window, false);
+		if (!SDL_SetWindowPosition(sdl.window,
+		                           display_bounds.x,
+		                           display_bounds.y)) {
+			LOG_WARNING("SDL: Failed to set window position: %s",
+			            SDL_GetError());
+		}
+
+		if (!SDL_SetWindowSize(sdl.window,
+		                       display_bounds.w + 1,
+		                       display_bounds.h)) {
+			LOG_WARNING("SDL: Failed to set window size: %s",
+			            SDL_GetError());
+		}
 
 		maybe_log_display_properties();
 
 	} else {
-		const auto mode = (sdl.fullscreen.mode == FullscreenMode::Standard)
-		                        ? SDL_WINDOW_FULLSCREEN_DESKTOP
-		                        : SDL_WINDOW_FULLSCREEN;
+		const auto fullscreen = (sdl.fullscreen.mode ==
+		                         FullscreenMode::Standard);
 
-		SDL_SetWindowFullscreen(sdl.window, mode); //-V2006
+		if (!SDL_SetWindowFullscreen(sdl.window, fullscreen)) {
+			LOG_WARNING("SDL: Failed to set fullscreen: %s",
+			            SDL_GetError());
+		}
 	}
 
-	// We need to disable transparency in fullscreen on macOS
-	SDL_SetWindowOpacity(sdl.window, 100);
+	// Disable transparency in fullscreen mode (this is needed in standard
+	// fullscreen mode on macOS too)
+	SDL_SetWindowOpacity(sdl.window, 1.0f);
 }
 
 static void exit_fullscreen()
@@ -748,39 +843,45 @@ static void exit_fullscreen()
 		//
 		set_window_decorations();
 
-		SDL_SetWindowResizable(sdl.window, SDL_TRUE);
+		SDL_SetWindowResizable(sdl.window, true);
 
-		SDL_SetWindowSize(sdl.window,
-		                  sdl.fullscreen.prev_window.width,
-		                  sdl.fullscreen.prev_window.height);
+		if (const auto rect = sdl.fullscreen.unmaximized_window_rect; rect) {
+			// We restore the unmaximised size and position before
+			// maximising the window so the user can still
+			// unmaximise it
+			SDL_SetWindowPosition(sdl.window, rect->x, rect->y);
+			SDL_SetWindowSize(sdl.window, rect->w, rect->h);
+			SDL_MaximizeWindow(sdl.window);
 
-		SDL_SetWindowPosition(sdl.window,
-		                      sdl.fullscreen.prev_window.x_pos,
-		                      sdl.fullscreen.prev_window.y_pos);
+			sdl.fullscreen.unmaximized_window_rect = {};
+		} else {
+			apply_windowed_size();
+			apply_windowed_position();
+		}
 
 		set_window_transparency();
 
 		maybe_log_display_properties();
 
 	} else {
-		constexpr auto WindowedMode = 0;
-		SDL_SetWindowFullscreen(sdl.window, WindowedMode);
+		if (!SDL_SetWindowFullscreen(sdl.window, false)) {
+			LOG_WARNING("SDL: Failed to exit fullscreen: %s",
+			            SDL_GetError());
+		}
 
 		// On macOS, SDL_SetWindowSize() and SDL_SetWindowPosition()
 		// calls in fullscreen mode are no-ops, so we need to set the
 		// potentially changed window size and position when exiting
 		// fullscreen mode.
-		SDL_SetWindowSize(sdl.window, sdl.windowed.width, sdl.windowed.height);
+		apply_windowed_size();
+		apply_windowed_position();
 
-		SDL_SetWindowPosition(sdl.window,
-		                      sdl.windowed.x_pos,
-		                      sdl.windowed.y_pos);
+		// Transparency is disabled in fullscreen mode (see
+		// `enter_fullscreen()`), so we need to restore it
+		set_window_transparency();
+
+		set_window_decorations();
 	}
-
-	// We need to disable transparency in fullscreen on macOS
-	set_window_transparency();
-
-	set_window_decorations();
 }
 
 DosBox::Rect GFX_GetCanvasSizeInPixels()
@@ -800,37 +901,36 @@ RenderBackendType GFX_GetRenderBackendType()
 	return sdl.render_backend_type;
 }
 
-static SDL_Rect get_desktop_size()
+// Returns the desktop size in logical units and the display scale of the
+// current display
+static WindowGeometry::Desktop get_desktop_geometry()
 {
-	SDL_Rect desktop = {};
-	assert(sdl.display_number >= 0);
+	const auto* mode = SDL_GetDesktopDisplayMode(get_current_display());
+	if (!mode) {
+		LOG_ERR("SDL: Could not get the desktop display mode: %s",
+		        SDL_GetError());
 
-	SDL_GetDisplayBounds(sdl.display_number, &desktop);
+		// Return a safe default
+		return {static_cast<float>(DefaultDesktopSize.w),
+		        static_cast<float>(DefaultDesktopSize.h),
+		        1.0f};
+	}
 
-	// Deduct the border decorations from the desktop size
-	int top    = 0;
-	int left   = 0;
-	int bottom = 0;
-	int right  = 0;
+	const auto desktop = WindowGeometry::CalcDesktop(*mode, get_content_scale());
 
-	SDL_GetWindowBordersSize(SDL_GetWindowFromID(sdl.display_number),
-	                         &top,
-	                         &left,
-	                         &bottom,
-	                         &right);
+	if (!sdl.window) {
+		return desktop;
+	}
 
-	// If SDL_GetWindowBordersSize fails, it populates the values with 0.
-	desktop.w -= (left + right);
-	desktop.h -= (top + bottom);
-
-	assert(desktop.w >= minimum_window_size.x);
-	assert(desktop.h >= minimum_window_size.y);
-	return desktop;
+	// Once the window exists, use its display scale; that reflects the
+	// actual pixel density of the window.
+	return {desktop.width, desktop.height, get_window_display_scale()};
 }
 
 DosBox::Rect GFX_GetDesktopSize()
 {
-	return to_rect(get_desktop_size());
+	const auto desktop = get_desktop_geometry();
+	return {desktop.width, desktop.height};
 }
 
 DosBox::Rect GFX_GetViewportSizeInPixels()
@@ -842,41 +942,11 @@ DosBox::Rect GFX_GetViewportSizeInPixels()
 	return RENDER_CalcRestrictedViewportSizeInPixels(canvas_size_px);
 }
 
-float GFX_GetDpiScaleFactor()
+DosBox::Rect GFX_LogicalToPixels(const DosBox::Rect& rect)
 {
-	return sdl.dpi_scale;
-}
+	assert(sdl.window);
 
-static bool is_using_kmsdrm_driver()
-{
-	assert(SDL_WasInit(SDL_INIT_VIDEO));
-
-	const auto driver = SDL_GetCurrentVideoDriver();
-	if (!driver) {
-		return false;
-	}
-
-	std::string driver_str = driver;
-	lowcase(driver_str);
-	return driver_str == "kmsdrm";
-}
-
-static bool check_kmsdrm_setting()
-{
-	// Do we have read access to the event subsystem
-	if (auto f = fopen("/dev/input/event0", "r"); f) {
-		fclose(f);
-		return true;
-	}
-
-	// We're using KMSDRM, but we don't have read access to the event
-	// subsystem
-	return false;
-}
-
-[[maybe_unused]] static bool operator!=(const SDL_Point lhs, const SDL_Point rhs)
-{
-	return lhs.x != rhs.x || lhs.y != rhs.y;
+	return rect.Copy().Scale(get_window_display_scale());
 }
 
 static void update_viewport()
@@ -962,6 +1032,17 @@ static void update_viewport()
 	}
 }
 
+// Recalculates the viewport and resets the screen after the size of the
+// canvas or the properties of the display the window is on have changed
+static void update_viewport_and_reset_screen()
+{
+	update_viewport();
+	RENDER_SetScanAndPixelDoubling();
+	GFX_ResetScreen();
+
+	notify_new_mouse_screen_params();
+}
+
 void GFX_SetSize(const int render_width_px, const int render_height_px,
                  const Fraction& render_pixel_aspect_ratio,
                  const bool double_width, const bool double_height,
@@ -1008,52 +1089,60 @@ void GFX_CenterMouse()
 	int width  = 0;
 	int height = 0;
 
-#if defined(WIN32)
-	if (is_runtime_sdl_version_at_least({2, 28, 1})) {
-		SDL_GetWindowSize(sdl.window, &width, &height);
-
-	} else {
-		const auto canvas_size_px = sdl.renderer->GetCanvasSizeInPixels();
-
-		width  = iroundf(canvas_size_px.w);
-		height = iroundf(canvas_size_px.h);
-	}
-#else
 	SDL_GetWindowSize(sdl.window, &width, &height);
-#endif
 
-	SDL_WarpMouseInWindow(sdl.window, width / 2, height / 2);
+	SDL_WarpMouseInWindow(sdl.window,
+	                      static_cast<float>(width) / 2.0f,
+	                      static_cast<float>(height) / 2.0f);
 }
 
-void GFX_SetMouseRawInput(const bool requested_raw_input)
+void GFX_SetMouseRawInput([[maybe_unused]] const bool requested_raw_input)
 {
-	if (SDL_SetHintWithPriority(SDL_HINT_MOUSE_RELATIVE_MODE_WARP,
-	                            requested_raw_input ? "0" : "1",
-	                            SDL_HINT_OVERRIDE) != SDL_TRUE) {
+	// TODO Raw mouse input is unsupported (and not needed) under SDL3. If
+	// this remains the case, remove the associated config option and
+	// related code.
+}
 
-		LOG_WARNING("SDL: Error %s raw mouse input",
-		            requested_raw_input ? "enabling" : "disabling");
+static void set_keyboard_capture()
+{
+	assert(sdl.window);
+
+	const auto pref = get_sdl_section()->GetString("keyboard_capture");
+
+	// In 'auto' mode, the keyboard follows the mouse
+	const auto capture_keyboard = (pref == "auto") ? sdl.is_mouse_captured
+	                                               : has_true(pref);
+
+	if (!SDL_SetWindowKeyboardGrab(sdl.window, capture_keyboard)) {
+		LOG_WARNING("SDL: Failed to set keyboard grab: %s", SDL_GetError());
 	}
 }
 
 void GFX_SetMouseCapture(const bool requested_capture)
 {
-	const auto param = requested_capture ? SDL_TRUE : SDL_FALSE;
-	if (SDL_SetRelativeMouseMode(param) != 0) {
-		SDL_ShowCursor(SDL_ENABLE);
+	if (!SDL_SetWindowRelativeMouseMode(sdl.window, requested_capture)) {
+		SDL_ShowCursor();
 
 		E_Exit("SDL: Error %s relative mode",
 		       requested_capture ? "putting the mouse into"
 		                         : "taking the mouse out of");
 	}
+
+	sdl.is_mouse_captured = requested_capture;
+
+	set_keyboard_capture();
 }
 
 void GFX_SetMouseVisibility(const bool requested_visible)
 {
-	const auto param = requested_visible ? SDL_ENABLE : SDL_DISABLE;
-	if (SDL_ShowCursor(param) < 0) {
-		E_Exit("SDL: Error making mouse cursor %s",
-		       requested_visible ? "visible" : "invisible");
+	if (requested_visible) {
+		if (!SDL_ShowCursor()) {
+			LOG_WARNING("SDL: Error making mouse cursor visible");
+		}
+	} else {
+		if (!SDL_HideCursor()) {
+			LOG_WARNING("SDL: Error making mouse cursor invisible");
+		}
 	}
 }
 
@@ -1071,19 +1160,14 @@ static void focus_input()
 	}
 
 	// If not, raise-and-focus to prevent stranding the window
-	SDL_RaiseWindow(sdl.window);
-	SDL_SetWindowInputFocus(sdl.window);
+	if (!SDL_RaiseWindow(sdl.window)) {
+		LOG_WARNING("SDL: Failed to raise window: %s", SDL_GetError());
+	}
 }
 
 static void toggle_fullscreen()
 {
 	assert(sdl.renderer);
-
-	// Record the window's current canvas size if we're departing window-mode
-	if (!sdl.is_fullscreen) {
-		sdl.windowed.canvas_size = to_sdl_rect(
-		        sdl.renderer->GetCanvasSizeInPixels());
-	}
 
 	if (sdl.is_fullscreen) {
 		exit_fullscreen();
@@ -1235,290 +1319,321 @@ void GFX_Destroy()
 	MAPPER_Destroy();
 }
 
-static SDL_Point refine_window_size(const SDL_Point size,
-                                    const bool wants_aspect_ratio_correction)
+#if defined(LINUX)
+
+static bool is_using_video_driver(const std::string_view driver_name)
 {
-	// TODO This only works for 320x200 games. We cannot make hardcoded
-	// assumptions about aspect ratios in general, e.g. the pixel aspect
-	// ratio is 1:1 for 640x480 games both with 'aspect = on' and 'aspect =
-	// off'.
-	constexpr SDL_Point RatiosForStretchedPixels = {4, 3};
-	constexpr SDL_Point RatiosForSquarePixels    = {8, 5};
+	assert(SDL_WasInit(SDL_INIT_VIDEO));
 
-	const auto image_aspect = wants_aspect_ratio_correction
-	                                ? RatiosForStretchedPixels
-	                                : RatiosForSquarePixels;
-
-	const auto window_aspect = static_cast<double>(size.x) / size.y;
-
-	const auto game_aspect = static_cast<double>(image_aspect.x) /
-	                         image_aspect.y;
-
-	// Window is wider than the emulated image, so constrain horizonally
-	if (window_aspect > game_aspect) {
-		const int x = ceil_sdivide(size.y * image_aspect.x, image_aspect.y);
-		return {x, size.y};
-	} else {
-		// Window is narrower than the emulated image, so constrain
-		// vertically
-		const int y = ceil_sdivide(size.x * image_aspect.y, image_aspect.x);
-		return {size.x, y};
-	}
-
-	return minimum_window_size;
+	const auto driver = SDL_GetCurrentVideoDriver();
+	return driver && iequals(driver, driver_name);
 }
 
-static void maybe_limit_requested_resolution(int& w, int& h,
-                                             const char* size_description)
+static bool check_kmsdrm_setting()
 {
-	const auto desktop = get_desktop_size();
-	if (w <= desktop.w && h <= desktop.h) {
+	// Do we have read access to the event subsystem
+	if (auto f = fopen("/dev/input/event0", "r"); f) {
+		fclose(f);
+		return true;
+	}
+
+	// We're using KMSDRM, but we don't have read access to the event
+	// subsystem
+	return false;
+}
+
+static void maybe_limit_window_size_kmsdrm_driver(float& w, float& h,
+                                                  const WindowGeometry::Desktop& desktop)
+{
+	if (w <= desktop.width && h <= desktop.height) {
 		return;
 	}
 
 	bool was_limited = false;
 
-	// Add any driver / platform / operating system limits in succession:
-
 	// SDL KMSDRM limitations
-	if (is_using_kmsdrm_driver()) {
-		w = desktop.w;
-		h = desktop.h;
+	if (is_using_video_driver("kmsdrm")) {
+		w = desktop.width;
+		h = desktop.height;
 
 		was_limited = true;
 
-		LOG_WARNING("DISPLAY: Limiting '%s' resolution to %dx%d to avoid kmsdrm issues",
-		            size_description,
-		            w,
-		            h);
+		LOG_WARNING("DISPLAY: Limiting window size to %dx%d to avoid kmsdrm issues",
+		            iroundf(w),
+		            iroundf(h));
 	}
 
 	if (!was_limited) {
 		// TODO shouldn't we log the display resolution in physical
 		// pixels instead?
 		LOG_INFO(
-		        "DISPLAY: Accepted '%s' resolution %dx%d despite exceeding "
+		        "DISPLAY: Accepted window size resolution %dx%d despite exceeding "
 		        "the %dx%d display",
-		        size_description,
-		        w,
-		        h,
-		        desktop.w,
-		        desktop.h);
+		        iroundf(w),
+		        iroundf(h),
+		        iroundf(desktop.width),
+		        iroundf(desktop.height));
 	}
 }
 
-static SDL_Point parse_window_resolution_from_conf(const std::string& pref)
+#endif
+
+// Returns nullopt if the setting is invalid
+static std::optional<WindowGeometry::SizeSetting> parse_window_size_setting(
+        const std::string& window_size_pref)
 {
-	int w = 0;
-	int h = 0;
-
-	const bool was_parsed = sscanf(pref.c_str(), "%dx%d", &w, &h) == 2;
-
-	const bool is_valid = (w >= minimum_window_size.x &&
-	                       h >= minimum_window_size.y);
-
-	if (was_parsed && is_valid) {
-		maybe_limit_requested_resolution(w, h, "window");
-		return {w, h};
+	const auto size = WindowGeometry::ParseWindowSizeSetting(window_size_pref);
+	if (!size) {
+		NOTIFY_DisplayWarning(Notification::Source::Console,
+		                      "DISPLAY",
+		                      "PROGRAM_CONFIG_INVALID_SETTING",
+		                      "window_size",
+		                      window_size_pref.c_str(),
+		                      "default");
 	}
-
-	// TODO convert to notification
-	LOG_WARNING(
-	        "DISPLAY: Invalid 'window_size' setting: '%s', "
-	        "using 'default'",
-	        pref.c_str());
-
-	return minimum_window_size;
+	return size;
 }
 
-static SDL_Point window_bounds_from_label(const std::string& pref,
-                                          const SDL_Rect desktop)
+// Returns nullopt for 'auto' and invalid settings
+static std::optional<WindowGeometry::PositionSetting> parse_window_position_setting(
+        const std::string& window_position_pref, const WindowGeometry::Desktop& desktop)
 {
-	constexpr int SmallPercent  = 50;
-	constexpr int MediumPercent = 74;
-	constexpr int LargePercent  = 90;
-
-	const int percent = [&] {
-		if (pref.starts_with('s')) {
-			return SmallPercent;
-
-		} else if (pref.starts_with('m') || pref == "default" ||
-		           pref.empty()) {
-			return MediumPercent;
-
-		} else if (pref.starts_with('l')) {
-			return LargePercent;
-
-		} else if (pref == "desktop") {
-			return 100;
-
-		} else {
-			// TODO convert to notification
-			LOG_WARNING(
-			        "DISPLAY: Invalid 'window_size' setting: '%s', "
-			        "using 'default'",
-			        pref.c_str());
-			return MediumPercent;
-		}
-	}();
-
-	const int w = ceil_sdivide(desktop.w * percent, 100);
-	const int h = ceil_sdivide(desktop.h * percent, 100);
-
-	return {w, h};
-}
-
-static SDL_Point clamp_to_minimum_window_dimensions(SDL_Point size)
-{
-	const auto w = std::max(size.x, minimum_window_size.x);
-	const auto h = std::max(size.y, minimum_window_size.y);
-	return {w, h};
-}
-
-static std::optional<SDL_Point> parse_window_position_conf(const std::string& window_position_val)
-{
-	if (window_position_val == "auto") {
+	if (window_position_pref == "auto") {
 		return {};
 	}
 
-	int x, y;
-	const auto was_parsed = (sscanf(window_position_val.c_str(), "%d,%d", &x, &y) ==
-	                         2);
-	if (!was_parsed) {
-		// TODO convert to notification
-		LOG_WARNING(
-		        "DISPLAY: Invalid 'window_position' setting: '%s'. "
-		        "Must be in X,Y format, using 'auto'.",
-		        window_position_val.c_str());
+	const auto position = WindowGeometry::ParseWindowPositionSetting(
+	        window_position_pref);
+	if (!position) {
+		NOTIFY_DisplayWarning(Notification::Source::Console,
+		                      "DISPLAY",
+		                      "PROGRAM_CONFIG_INVALID_SETTING",
+		                      "window_position",
+		                      window_position_pref.c_str(),
+		                      "auto");
 		return {};
 	}
 
-	const auto desktop = get_desktop_size();
+#if defined(LINUX)
+	// Wayland doesn't let applications position their windows
+	if (is_using_video_driver("wayland")) {
+		NOTIFY_DisplayWarning(Notification::Source::Console,
+		                      "DISPLAY",
+		                      "PROGRAM_CONFIG_INVALID_SETTING_WITH_DETAILS",
+		                      "window_position",
+		                      window_position_pref.c_str(),
+		                      "applications cannot set window positions on Wayland",
+		                      "auto");
+		return {};
+	}
+#endif
 
-	const bool is_out_of_bounds = x < 0 || x > desktop.w || y < 0 ||
-	                              y > desktop.h;
+	// Negative positions are rejected by the parser
+	const auto [x, y] = WindowGeometry::PositionToLogicalUnits(*position, desktop);
+
+	const bool is_out_of_bounds = (static_cast<float>(x) > desktop.width ||
+	                               static_cast<float>(y) > desktop.height);
 	if (is_out_of_bounds) {
-		// TODO convert to notification
-		LOG_WARNING(
-		        "DISPLAY: Invalid 'window_position' setting: '%s'. "
-		        "Requested position is outside the bounds of the %dx%d "
-		        "desktop, using 'auto'.",
-		        window_position_val.c_str(),
-		        desktop.w,
-		        desktop.h);
+		const auto details = format_str("Window position is outside of the %dx%d desktop bounds",
+		                                iroundf(desktop.width),
+		                                iroundf(desktop.height));
+
+		NOTIFY_DisplayWarning(Notification::Source::Console,
+		                      "DISPLAY",
+		                      "PROGRAM_CONFIG_INVALID_SETTING_WITH_DETAILS",
+		                      "window_position",
+		                      window_position_pref.c_str(),
+		                      details.c_str(),
+		                      "auto");
 		return {};
 	}
 
-	return SDL_Point{x, y};
+	return position;
 }
 
-static void save_window_position(const std::optional<SDL_Point> pos)
+static void set_windowed_position(const int x, const int y)
 {
-	if (pos) {
-		if (sdl.fullscreen.mode == FullscreenMode::ForcedBorderless) {
-			sdl.fullscreen.prev_window.x_pos = pos->x;
-			sdl.fullscreen.prev_window.y_pos = pos->y;
-		} else {
-			sdl.windowed.x_pos = pos->x;
-			sdl.windowed.y_pos = pos->y;
-		}
-	} else {
-		if (sdl.fullscreen.mode == FullscreenMode::ForcedBorderless) {
-			sdl.fullscreen.prev_window.x_pos = SDL_WINDOWPOS_UNDEFINED_DISPLAY(
-			        sdl.display_number);
+	sdl.windowed.x_pos = x;
+	sdl.windowed.y_pos = y;
+}
 
-			sdl.fullscreen.prev_window.y_pos = SDL_WINDOWPOS_UNDEFINED_DISPLAY(
-			        sdl.display_number);
-		} else {
-			sdl.windowed.x_pos = SDL_WINDOWPOS_UNDEFINED_DISPLAY(
-			        sdl.display_number);
+static void set_default_windowed_position()
+{
+	set_windowed_position(SDL_WINDOWPOS_UNDEFINED_DISPLAY(sdl.display_number),
+	                      SDL_WINDOWPOS_UNDEFINED_DISPLAY(sdl.display_number));
 
-			sdl.windowed.y_pos = SDL_WINDOWPOS_UNDEFINED_DISPLAY(
-			        sdl.display_number);
-		}
-	}
+	set_section_property_value("sdl", "window_position", "auto");
 }
 
 // Writes to the window-size member should be done via this function
-static void save_window_size(const int w, const int h)
+static void set_windowed_size(const float w, const float h)
 {
-	assert(w > 0 && h > 0);
+	assert(w > 0.0f && h > 0.0f);
 
-	// `sdl.window` size stores the user-configured window size. During
-	// runtime, the actual SDL window size might differ from this depending
-	// on the aspect ratio, window DPI, or manual resizing.
 	sdl.windowed.width  = w;
 	sdl.windowed.height = h;
-
-	// Initialize the window's canvas size if it hasn't yet been set.
-	if (sdl.windowed.canvas_size.w <= 0 || sdl.windowed.canvas_size.h <= 0) {
-		sdl.windowed.canvas_size.w = w;
-		sdl.windowed.canvas_size.h = h;
-	}
 }
 
-// Takes in:
-//  - The user's window_size setting: default, WxH, small, medium, large,
-//    desktop, or an invalid setting.
-//  - If aspect correction is requested.
+static bool is_windowed_size(const int native_w, const int native_h)
+{
+	return native_w == size_to_native(sdl.windowed.width) &&
+	       native_h == size_to_native(sdl.windowed.height);
+}
+
+// Called when the user or the OS has resized the window. The new size is in
+// native units. We only update the setting if the size has actually changed,
+// so rounding errors won't alter the user's setting, and named sizes (e.g.,
+// 'medium') are kept.
+static void handle_window_resized(const int native_w, const int native_h)
+{
+	if (sdl.is_fullscreen || is_windowed_size(native_w, native_h)) {
+		return;
+	}
+
+	const auto content_scale = get_content_scale();
+
+	const SDL_FRect size = {
+	        0.0f,
+	        0.0f,
+	        WindowGeometry::NativeSizeToLogical(native_w, content_scale),
+	        WindowGeometry::NativeSizeToLogical(native_h, content_scale)};
+
+	set_windowed_size(size.w, size.h);
+
+	set_section_property_value("sdl",
+	                           "window_size",
+	                           WindowGeometry::FormatSize(size,
+	                                                      sdl.windowed.size_unit,
+	                                                      get_desktop_geometry()));
+
+	sdl.windowed.resized_at_ms = GetTicks();
+}
+
+// Called when the user or the OS has moved the window. We only update the
+// setting if the position has actually changed, so rounding errors won't
+// alter the user's setting.
+static void handle_window_moved(const int x, const int y)
+{
+	if (sdl.is_fullscreen) {
+		return;
+	}
+
+	// With `window_position = auto`, the windowed position is undefined
+	// until we learn where the window has been placed. That's not a move by
+	// the user, so we keep the 'auto' setting.
+	if (SDL_WINDOWPOS_ISUNDEFINED(sdl.windowed.x_pos)) {
+		set_windowed_position(x, y);
+		return;
+	}
+
+	if (x == sdl.windowed.x_pos && y == sdl.windowed.y_pos) {
+		return;
+	}
+	set_windowed_position(x, y);
+
+	// Positions on displays to the left of or above the primary display are
+	// negative, which 'window_position' doesn't support. We still remember
+	// them so we can restore the window there when leaving fullscreen mode,
+	// but we write 0 to the config settings.
+	auto new_x = std::max(x, 0);
+	auto new_y = std::max(y, 0);
+
+	set_section_property_value(
+	        "sdl",
+	        "window_position",
+	        WindowGeometry::FormatPosition({new_x, new_y},
+	                                       sdl.windowed.position_unit,
+	                                       get_desktop_geometry()));
+}
+
+void GFX_SaveCurrentWindowSizeAndPosition()
+{
+	SDL_Rect r = {};
+
+	SDL_GetWindowPosition(sdl.window, &r.x, &r.y);
+	SDL_GetWindowSize(sdl.window, &r.w, &r.h);
+
+	handle_window_moved(to_logical(r.x), to_logical(r.y));
+	handle_window_resized(r.w, r.h);
+}
+
+// The `windowresolution` setting was renamed to `window_size` in 0.83.0, but
+// we still accept the legacy name. If both are set (e.g., in two different
+// config files), the one parsed last wins, as with any other setting that's
+// set more than once.
 //
-// This function returns a refined size and additionally populates the
-// following struct members:
+// This must only be called once at startup, right after loading the config
+// files, because the parse order is only known for settings read from config
+// files. Runtime changes to `windowresolution` are handled in
+// `notify_sdl_setting_updated()`.
 //
-//  - 'sdl.window', with the refined size.
+// There's no equivalent for `window_position` as it has never been renamed.
 //
+static void migrate_legacy_window_size_setting()
+{
+	assert(control);
+
+	constexpr auto SectionName    = "sdl";
+	constexpr auto LegacyPrefName = "windowresolution";
+	constexpr auto NewPrefName    = "window_size";
+
+	const auto legacy_pref_order = control->GetSettingParseOrder(SectionName,
+	                                                             LegacyPrefName);
+
+	const auto new_pref_order = control->GetSettingParseOrder(SectionName,
+	                                                          NewPrefName);
+
+	if (legacy_pref_order > new_pref_order) {
+		const auto legacy_pref = get_sdl_section()->GetString(LegacyPrefName);
+
+		// Move setting from the legacy setting into the new one
+		set_section_property_value(SectionName, NewPrefName, legacy_pref);
+	}
+
+	set_section_property_value(SectionName, LegacyPrefName, "");
+}
+
 static void configure_window_size()
 {
-	const auto window_size_pref = []() {
-		const auto legacy_pref = get_sdl_section()->GetString(
-		        "windowresolution");
-		if (!legacy_pref.empty()) {
-			set_section_property_value("sdl", "windowresolution", "");
-			set_section_property_value("sdl", "window_size", legacy_pref);
-		}
-		return get_sdl_section()->GetString("window_size");
-	}();
+	const auto window_size_pref = get_sdl_section()->GetString("window_size");
 
-	// Get the coarse resolution from the users setting, and adjust
-	// refined scaling mode if an exact resolution is desired.
-	SDL_Point coarse_size = minimum_window_size;
+	const auto default_size = *WindowGeometry::ParseWindowSizeSetting("default");
 
-	const auto use_exact_window_resolution = window_size_pref.find('x') !=
-	                                         std::string::npos;
+	const auto size = parse_window_size_setting(window_size_pref).value_or(default_size);
 
-	if (use_exact_window_resolution) {
-		coarse_size = parse_window_resolution_from_conf(window_size_pref);
-	} else {
-		const auto desktop = get_desktop_size();
+	sdl.windowed.size_unit = size.unit;
 
-		coarse_size = window_bounds_from_label(window_size_pref, desktop);
-	}
+	const auto desktop = get_desktop_geometry();
+	const auto requested_size = WindowGeometry::SizeToLogicalUnits(size, desktop);
 
-	// Refine the coarse resolution and save it in the SDL struct.
-	auto refined_size = coarse_size;
+	auto w = std::max(requested_size.w, static_cast<float>(MinWindowSize.w));
+	auto h = std::max(requested_size.h, static_cast<float>(MinWindowSize.h));
 
-	if (use_exact_window_resolution) {
-		refined_size = clamp_to_minimum_window_dimensions(coarse_size);
-	} else {
-		refined_size = refine_window_size(coarse_size,
-		                                  is_aspect_ratio_correction_enabled());
-	}
+#if defined(LINUX)
+	maybe_limit_window_size_kmsdrm_driver(w, h, desktop);
+#endif
 
-	assert(refined_size.x <= UINT16_MAX && refined_size.y <= UINT16_MAX);
-
-	save_window_size(refined_size.x, refined_size.y);
-
-	// Let the user know the resulting window properties
-	LOG_MSG("DISPLAY: Using %dx%d window size in windowed mode on display-%d",
-	        refined_size.x,
-	        refined_size.y,
-	        sdl.display_number);
+	set_windowed_size(w, h);
 }
 
-static void save_window_position_from_conf()
+static void configure_window_position()
 {
-	save_window_position(parse_window_position_conf(
-	        get_sdl_section()->GetString("window_position")));
+	const auto window_position_pref = get_sdl_section()->GetString(
+	        "window_position");
+
+	const auto desktop = get_desktop_geometry();
+	const auto position = parse_window_position_setting(window_position_pref,
+	                                                    desktop);
+
+	sdl.windowed.position_unit = position ? position->unit
+	                                      : WindowGeometry::Unit::LogicalUnits;
+	if (position) {
+		const auto [x, y] = WindowGeometry::PositionToLogicalUnits(*position,
+		                                                           desktop);
+		set_windowed_position(x, y);
+	} else {
+		set_default_windowed_position();
+	}
 }
 
 TextureFilterMode GFX_GetTextureFilterMode()
@@ -1526,9 +1641,9 @@ TextureFilterMode GFX_GetTextureFilterMode()
 	return sdl.texture_filter_mode;
 }
 
-static int get_sdl_window_flags()
+static SDL_WindowFlags get_sdl_window_flags()
 {
-	auto flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI;
+	SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
 
 	if (!get_sdl_section()->GetBool("window_decorations")) {
 		flags |= SDL_WINDOW_BORDERLESS;
@@ -1537,7 +1652,7 @@ static int get_sdl_window_flags()
 	if (sdl.is_fullscreen) {
 		switch (sdl.fullscreen.mode) {
 		case FullscreenMode::Standard:
-			flags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
+			flags |= SDL_WINDOW_FULLSCREEN;
 			break;
 		case FullscreenMode::ForcedBorderless:
 			// no-op
@@ -1546,7 +1661,7 @@ static int get_sdl_window_flags()
 		}
 	}
 
-	return check_cast<int>(flags);
+	return flags;
 }
 
 static RenderBackend* create_renderer()
@@ -1554,10 +1669,10 @@ static RenderBackend* create_renderer()
 #if C_OPENGL
 	if (sdl.render_backend_type == RenderBackendType::OpenGl) {
 		try {
-			return new OpenGlRenderer(sdl.windowed.x_pos,
-			                          sdl.windowed.y_pos,
-			                          sdl.windowed.width,
-			                          sdl.windowed.height,
+			return new OpenGlRenderer(to_native(sdl.windowed.x_pos),
+			                          to_native(sdl.windowed.y_pos),
+			                          size_to_native(sdl.windowed.width),
+			                          size_to_native(sdl.windowed.height),
 			                          get_sdl_window_flags());
 
 		} catch (const std::runtime_error& ex) {
@@ -1584,10 +1699,10 @@ static RenderBackend* create_renderer()
 			        "texture_renderer");
 			lowcase(render_driver);
 
-			return new SdlRenderer(sdl.windowed.x_pos,
-			                       sdl.windowed.y_pos,
-			                       sdl.windowed.width,
-			                       sdl.windowed.height,
+			return new SdlRenderer(to_native(sdl.windowed.x_pos),
+			                       to_native(sdl.windowed.y_pos),
+			                       size_to_native(sdl.windowed.width),
+			                       size_to_native(sdl.windowed.height),
 			                       get_sdl_window_flags(),
 			                       render_driver,
 			                       sdl.texture_filter_mode);
@@ -1601,35 +1716,57 @@ static RenderBackend* create_renderer()
 	return nullptr;
 }
 
-static void set_keyboard_capture()
+// Window-inactive coordinator. Single entry point for everything that
+// should happen when the host window loses focus.
+static void handle_window_inactive()
 {
-	assert(sdl.window);
+	MOUSE_NotifyWindowActive(false);
 
-	const auto capture_keyboard = get_sdl_section()->GetBool("keyboard_capture");
-
-	SDL_SetWindowKeyboardGrab(sdl.window, capture_keyboard ? SDL_TRUE : SDL_FALSE);
+	if (sdl.mute_when_inactive) {
+		// No-op if the user has manually muted
+		MIXER_RequestAutoMute();
+	}
+	if (sdl.pause_when_inactive) {
+		KEYBOARD_ClrBuffer();
+		DOSBOX_RequestAutoPause();
+	}
 }
 
-static void apply_active_settings()
+// Window-active coordinator.
+//
+// `focus_gained` is true for the FOCUS_GAINED SDL window event and false for
+// WINDOW_RESTORED" and WINDOW_EXPOSED. Only FOCUS_GAINED re-applies host-side
+// state (keyboard grab, mouse-active, and auto-unmute).
+//
+// Pause auto-resume runs on all three events, so a minimized/uncovered window
+// comes back up.
+//
+static void handle_window_active(const bool focus_gained)
 {
+	if (sdl.pause_when_inactive) {
+		DOSBOX_RequestAutoResume();
+
+		// ALT can stick on focus loss -- `paused_tick` doesn't
+		// process key events normally, so release on the "user is
+		// back" edge regardless of which active-event got us here.
+		KEYBOARD_AddKey(KBD_leftalt, false);
+		KEYBOARD_AddKey(KBD_rightalt, false);
+	}
+	if (!focus_gained) {
+		return;
+	}
+
 	MOUSE_NotifyWindowActive(true);
 
-	if (sdl.mute_when_inactive && !MIXER_IsManuallyMuted()) {
-		MIXER_Unmute();
+	if (sdl.mute_when_inactive) {
+		// No-op if the user has manually muted -- the mute FSM
+		// preserves UserMuted across focus changes.
+		MIXER_RequestAutoUnmute();
 	}
 
 	// At least on some platforms grabbing the keyboard has to be repeated
 	// each time we regain focus
 	set_keyboard_capture();
-}
-
-static void apply_inactive_settings()
-{
-	MOUSE_NotifyWindowActive(false);
-
-	if (sdl.mute_when_inactive) {
-		MIXER_Mute();
-	}
 }
 
 static void restart_hotkey_handler([[maybe_unused]] bool pressed)
@@ -1657,22 +1794,47 @@ static void configure_display()
 {
 	const int display = get_sdl_section()->GetInt("display");
 
-	if ((display >= 0) && (display < SDL_GetNumVideoDisplays())) {
-		sdl.display_number = display;
-	} else {
-		// TODO convert to notification
-		LOG_WARNING("SDL: Display number out of bounds, using display 0");
-		sdl.display_number = 0;
+	int num_displays    = 0;
+	const auto displays = SDL_GetDisplays(&num_displays);
+	if (!displays) {
+		E_Exit("SDL: Failed to get the list of displays: %s",
+		       SDL_GetError());
 	}
+
+	if ((display >= 0) && (display < num_displays)) {
+		sdl.display_number = displays[display];
+	} else {
+		const auto details = format_str("Display number must be between 0 and %d",
+		                                num_displays - 1);
+
+		NOTIFY_DisplayWarning(Notification::Source::Console,
+		                      "DISPLAY",
+		                      "PROGRAM_CONFIG_INVALID_SETTING_WITH_DETAILS",
+		                      "display",
+		                      format_str("%d", display).c_str(),
+		                      details.c_str(),
+		                      "0");
+
+		sdl.display_number = displays[0];
+	}
+	assert(sdl.display_number != 0);
+
+	SDL_free(displays);
 }
 
 static void set_allow_screensaver()
 {
 	const std::string screensaver = get_sdl_section()->GetString("screensaver");
 	if (screensaver == "allow") {
-		SDL_EnableScreenSaver();
+		if (!SDL_EnableScreenSaver()) {
+			LOG_WARNING("SDL: Failed to enable screensaver: %s",
+			            SDL_GetError());
+		}
 	} else {
-		SDL_DisableScreenSaver();
+		if (!SDL_DisableScreenSaver()) {
+			LOG_WARNING("SDL: Failed to disable screensaver: %s",
+			            SDL_GetError());
+		}
 	}
 }
 
@@ -1686,22 +1848,6 @@ static void configure_pause_and_mute_when_inactive()
 
 static void set_sdl_hints()
 {
-#if (SDL_VERSION_ATLEAST(3, 0, 0))
-	SDL_SetHint(SDL_HINT_APP_ID, DOSBOX_APP_ID);
-#else
-#if !defined(WIN32) && !defined(MACOSX)
-	constexpr int Overwrite = 0;
-
-	set_env_var("SDL_VIDEO_X11_WMCLASS", DOSBOX_APP_ID, Overwrite);
-	set_env_var("SDL_VIDEO_WAYLAND_WMCLASS", DOSBOX_APP_ID, Overwrite);
-#endif
-#endif
-
-#if defined(WIN32)
-	SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2");
-	SDL_SetHint(SDL_HINT_WINDOWS_DPI_SCALING, "1");
-#endif
-
 	// Seamless mouse integration feels more 'seamless' if mouse
 	// clicks on unfocused windows are passed to the guest.
 	SDL_SetHint(SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH, "1");
@@ -1782,7 +1928,7 @@ static bool is_dosbox_package(const std::string& path)
 // Handle .dosbox package drops from Finder
 static void handle_macos_dosbox_package_drop(const std::string& dropped_file_path)
 {
-	LOG_MSG("CONFIG: Received dropped file via SDL_DROPFILE: '%s'",
+	LOG_MSG("CONFIG: Received dropped file via SDL_EVENT_DROP_FILE: '%s'",
 	        dropped_file_path.c_str());
 
 	// Check if it's a .dosbox package
@@ -1818,44 +1964,53 @@ void GFX_InitSdl()
 {
 	set_sdl_hints();
 
-	// Initialise SDL (timer is needed for title bar animations)
-	if (SDL_InitSubSystem(SDL_INIT_VIDEO | SDL_INIT_TIMER) < 0) {
-		E_Exit("SDL: Failed to init SDL video and timer: %s", SDL_GetError());
+	// Initialise SDL
+	if (!SDL_Init(SDL_INIT_VIDEO)) {
+		E_Exit("SDL: Failed to init SDL video and timer: %s",
+		       SDL_GetError());
 	}
 
-	if (is_using_kmsdrm_driver() && !check_kmsdrm_setting()) {
+#ifdef MACOSX
+	// Otherwise, macOS can restore stale window sizes when the user drags
+	// the window to another display
+	DisableWindowFrameRestoreOnDisplayChange();
+#endif
+
+#if defined(LINUX)
+	if (is_using_video_driver("kmsdrm") && !check_kmsdrm_setting()) {
 		E_Exit("SDL: /dev/input/event0 is not readable, quitting early to prevent TTY input lockup.\n"
 		       "Please run: 'sudo usermod -aG input $(whoami)', then re-login and try again.");
 	}
+#endif
 
 	// Register custom SDL events
 	sdl.start_event_id = SDL_RegisterEvents(enum_val(DosBoxSdlEvent::NumEvents));
-	if (sdl.start_event_id == UINT32_MAX) {
+	// SDL3 returns 0 on failure (SDL2 returned (Uint32)-1).
+	if (sdl.start_event_id == 0) {
 		E_Exit("SDL: Error allocating event IDs");
 	}
 
 	// Log runtime SDL version
-	SDL_version sdl_version = {};
-	SDL_GetVersion(&sdl_version);
+	const auto sdl_version = SDL_GetVersion();
 
 	LOG_MSG("SDL: Version %d.%d.%d initialised",
-	        sdl_version.major,
-	        sdl_version.minor,
-	        sdl_version.patch);
+	        SDL_VERSIONNUM_MAJOR(sdl_version),
+	        SDL_VERSIONNUM_MINOR(sdl_version),
+	        SDL_VERSIONNUM_MICRO(sdl_version));
 	LOG_MSG("SDL: %s video initialised", SDL_GetCurrentVideoDriver());
 
 #ifdef MACOSX
 	// Check for .dosbox document packages dropped from Finder
 	// (double-click to open or drag-and-drop onto the app icon)
 
-	// Sleep briefly to allow the OS time to queue the drop event before we poll.
+	// Sleep briefly to allow the OS time to queue the drop event before we
+	// poll.
 	SDL_Delay(100);
 
 	SDL_Event event;
 	while (SDL_PollEvent(&event)) {
-		if (event.type == SDL_DROPFILE && event.drop.file != nullptr) {
-			const std::string dropped_file_path = event.drop.file;
-			SDL_free(event.drop.file);
+		if (event.type == SDL_EVENT_DROP_FILE && event.drop.data != nullptr) {
+			const std::string dropped_file_path = event.drop.data;
 			handle_macos_dosbox_package_drop(dropped_file_path);
 		}
 	}
@@ -1875,11 +2030,13 @@ void GFX_InitAndStartGui()
 	configure_presentation_mode();
 	configure_renderer();
 
-	save_window_position_from_conf();
+	configure_window_position();
+
+	migrate_legacy_window_size_setting();
 	configure_window_size();
 
-	sdl.draw.render_width_px  = minimum_window_size.x;
-	sdl.draw.render_height_px = minimum_window_size.y;
+	sdl.draw.render_width_px  = MinWindowSize.w;
+	sdl.draw.render_height_px = MinWindowSize.h;
 
 	// Create rendering backend and application window
 	sdl.renderer = std::unique_ptr<RenderBackend>(create_renderer());
@@ -1888,35 +2045,50 @@ void GFX_InitAndStartGui()
 	sdl.window = sdl.renderer->GetWindow();
 	assert(sdl.window);
 
+	log_window_size();
+
 #ifdef MACOSX
+	// The renderers create the windows with SDL_CreateWindowWithProperties()
+	// which appears to alter the provided window position so the window is
+	// fully within the desktop bounds. By setting the position explicitly
+	// here, we're forcing the requested window position.
+	apply_windowed_position();
+
 	// The window is not always brought to the foreground after startup with
-	// SDL 2.32.10 on macOS, hence this workaround. Both the OpenGL and SDL
+	// SDL 3.4.16 on macOS, hence this workaround. Both the OpenGL and SDL
 	// texture renderers are affected.
 	//
 	// SDL on Windows and Linux seems to always raise the window after
 	// creation.
 	//
-	// SDL issues:
-	//
-	// - https://github.com/libsdl-org/SDL/issues/14701
-	// - https://github.com/libsdl-org/SDL/issues/13920
+	// TODO Remove workaround when the SDL issue
+	// https://github.com/libsdl-org/SDL/issues/13920 is resolved
 	//
 	SDL_RaiseWindow(sdl.window);
-	SDL_SetWindowInputFocus(sdl.window);
-
-	// Setting the SDL_WINDOW_BORDERLESS flag on window creation doesn't
-	// work on macOS.
-	//
-	// TODO Remove workaround when the SDL issue
-	// https://github.com/libsdl-org/SDL/issues/6172 is resolved.
-	//
-	set_window_decorations();
 #endif
 
 	set_minimum_window_size();
 
+	// Record where the window has been placed if `window_position` is
+	// 'auto', so moving the window later updates the setting (see
+	// `handle_window_moved()`)
+	int window_x = 0;
+	int window_y = 0;
+	SDL_GetWindowPosition(sdl.window, &window_x, &window_y);
+	handle_window_moved(to_logical(window_x), to_logical(window_y));
+
+	// `handle_window_moved()` ignores the position in fullscreen mode, but
+	// if we start in forced-borderless fullscreen mode, the window is still
+	// in windowed mode at this point. We record its position so we can
+	// restore it there when leaving fullscreen mode.
+	if (sdl.fullscreen.mode == FullscreenMode::ForcedBorderless &&
+	    SDL_WINDOWPOS_ISUNDEFINED(sdl.windowed.x_pos)) {
+		set_windowed_position(to_logical(window_x), to_logical(window_y));
+	}
+
 	// Assume focus on startup
-	apply_active_settings();
+	constexpr auto FocusGained = true;
+	handle_window_active(FocusGained);
 
 	RENDER_SetShaderWithFallback();
 
@@ -1924,7 +2096,6 @@ void GFX_InitAndStartGui()
 
 	set_window_transparency();
 
-	check_and_handle_dpi_change(sdl.window);
 	set_allow_screensaver();
 
 	add_default_sdl_section_mapper_bindings();
@@ -2004,31 +2175,30 @@ static void notify_sdl_setting_updated(SectionProp& section,
 
 #if C_OPENGL && defined(MACOSX)
 		update_viewport();
+		RENDER_SetScanAndPixelDoubling();
+		GFX_ResetScreen();
 #endif
 
 	} else if (prop_name == "window_position") {
-		save_window_position_from_conf();
-
-		if (!sdl.is_fullscreen) {
-			SDL_SetWindowPosition(sdl.window,
-			                      sdl.windowed.x_pos,
-			                      sdl.windowed.y_pos);
-		}
+		configure_window_position();
+		apply_windowed_position();
 
 	} else if (prop_name == "window_size") {
 		configure_window_size();
+		apply_windowed_size();
 
-		if (sdl.fullscreen.mode == FullscreenMode::ForcedBorderless &&
-		    sdl.is_fullscreen) {
+	} else if (prop_name == "windowresolution") {
+		// Move setting from the legacy setting into the new one
+		constexpr auto LegacyPrefName = "windowresolution";
+		constexpr auto NewPrefName    = "window_size";
 
-			sdl.fullscreen.prev_window.width = sdl.windowed.width;
+		const auto legacy_pref = get_sdl_section()->GetString(LegacyPrefName);
 
-			sdl.fullscreen.prev_window.height = sdl.windowed.height;
-		} else {
-			SDL_SetWindowSize(sdl.window,
-			                  sdl.windowed.width,
-			                  sdl.windowed.height);
-		}
+		set_section_property_value("sdl", LegacyPrefName, "");
+		set_section_property_value("sdl", NewPrefName, legacy_pref);
+
+		configure_window_size();
+		apply_windowed_size();
 
 	} else if (prop_name == "window_titlebar") {
 		TITLEBAR_ReadConfig();
@@ -2039,23 +2209,84 @@ static void notify_sdl_setting_updated(SectionProp& section,
 		}
 
 	} else {
-		LOG_WARNING("SDL: Runtime change unhandled for property: '%s'", prop_name.c_str());
+		LOG_WARNING("SDL: Runtime change unhandled for property: '%s'",
+		            prop_name.c_str());
 	}
+}
+
+static void handle_desktop_mode_changed(const SDL_DisplayEvent& event)
+{
+	// Percentage window sizes, window positions, and viewport sizes depend
+	// on the desktop size
+	if (event.displayID == get_current_display()) {
+		if (sdl.windowed.size_unit == WindowGeometry::Unit::Percentage) {
+			configure_window_size();
+			apply_windowed_size();
+		}
+		if (sdl.windowed.position_unit == WindowGeometry::Unit::Percentage) {
+			configure_window_position();
+			apply_windowed_position();
+		}
+		update_viewport_and_reset_screen();
+	}
+}
+
+// Restores the windowed size after the window has been moved to another
+// display or the display scale has changed. On display scale changes, SDL3
+// keeps the window's size in pixels on Windows, and the OS keeps its size in
+// logical units on macOS and Wayland, so we only resize the window if needed.
+//
+// Resizing the window while the user is dragging it to another display
+// interferes with the drag on macOS, so we wait until all mouse buttons are
+// released.
+static void maybe_restore_windowed_size()
+{
+	if (!sdl.windowed.is_resize_pending ||
+	    SDL_GetGlobalMouseState(nullptr, nullptr) != 0) {
+		return;
+	}
+	sdl.windowed.is_resize_pending = false;
+
+	int native_w = 0;
+	int native_h = 0;
+	SDL_GetWindowSize(sdl.window, &native_w, &native_h);
+
+	if (is_windowed_size(native_w, native_h)) {
+		log_window_size();
+	} else {
+		apply_windowed_size();
+	}
+}
+
+// Live resizing and the OS's window tiling animations resize the window many
+// times in quick succession, so we only log the new window size and display
+// properties once all mouse buttons have been released and the window hasn't
+// been resized for a while.
+static void maybe_log_resized_window_size()
+{
+	constexpr auto QuietPeriodMs = 250;
+
+	if (!sdl.windowed.resized_at_ms ||
+	    SDL_GetGlobalMouseState(nullptr, nullptr) != 0 ||
+	    GetTicksSince(*sdl.windowed.resized_at_ms) < QuietPeriodMs) {
+		return;
+	}
+	sdl.windowed.resized_at_ms = {};
+
+	log_window_size();
+	maybe_log_display_properties();
 }
 
 static void handle_mouse_motion(SDL_MouseMotionEvent* motion)
 {
-	MOUSE_EventMoved(static_cast<float>(motion->xrel),
-	                 static_cast<float>(motion->yrel),
-	                 static_cast<float>(motion->x),
-	                 static_cast<float>(motion->y));
+	MOUSE_EventMoved(motion->xrel, motion->yrel, motion->x, motion->y);
 }
 
 static void handle_mouse_wheel(SDL_MouseWheelEvent* wheel)
 {
 	const auto tmp = (wheel->direction == SDL_MOUSEWHEEL_NORMAL) ? -wheel->y
 	                                                             : wheel->y;
-	MOUSE_EventWheel(check_cast<int16_t>(tmp));
+	MOUSE_EventWheel(tmp);
 }
 
 static void handle_mouse_button(SDL_MouseButtonEvent* button)
@@ -2072,7 +2303,7 @@ static void handle_mouse_button(SDL_MouseButtonEvent* button)
 		// clang-format on
 	};
 	assert(button);
-	notify_button(button->button, button->state == SDL_PRESSED);
+	notify_button(button->button, button->down);
 }
 
 void GFX_LosingFocus()
@@ -2083,6 +2314,12 @@ void GFX_LosingFocus()
 bool GFX_IsFullscreen()
 {
 	return sdl.is_fullscreen;
+}
+
+static bool is_window_event(const SDL_Event& event)
+{
+	return (event.type >= SDL_EVENT_WINDOW_FIRST &&
+	        event.type <= SDL_EVENT_WINDOW_LAST);
 }
 
 static bool is_user_event(const SDL_Event& event)
@@ -2111,91 +2348,10 @@ int GFX_GetUserSdlEventId(DosBoxSdlEvent event)
 	return sdl.start_event_id + enum_val(event);
 }
 
-static void handle_pause_when_inactive(const SDL_Event& event)
-{
-	// Non-focus priority is set to pause; check to see if we've lost window
-	// or input focus i.e. has the window been minimised or made inactive?
-	//
-	if ((event.window.event == SDL_WINDOWEVENT_FOCUS_LOST) ||
-	    (event.window.event == SDL_WINDOWEVENT_MINIMIZED)) {
-		// Window has lost focus, pause the emulator. This is similar to
-		// what PauseDOSBox() does, but the exit criteria is different.
-		// Instead of waiting for the user to hit Alt+Break, we wait for
-		// the window to regain window or input focus.
-		//
-		apply_inactive_settings();
-
-		KEYBOARD_ClrBuffer();
-
-		sdl.is_paused = true;
-		TITLEBAR_RefreshTitle();
-
-		// Prevent the mixer from running while in our pause loop.
-		// Muting is not ideal for some sound devices such as GUS that
-		// loop samples. This also saves CPU time by not rendering
-		// samples we're not going to play anyway.
-		MIXER_LockMixerThread();
-
-		SDL_Event ev;
-
-		while (sdl.is_paused && !DOSBOX_IsShutdownRequested()) {
-			// WaitEvent() waits for an event rather than
-			// polling, so CPU usage drops to zero.
-			SDL_WaitEvent(&ev);
-
-			switch (ev.type) {
-			case SDL_QUIT: GFX_RequestExit(true); break;
-			case SDL_WINDOWEVENT: {
-				const auto we = ev.window.event;
-
-				// wait until we get window focus back
-				if ((we == SDL_WINDOWEVENT_FOCUS_LOST) ||
-				    (we == SDL_WINDOWEVENT_MINIMIZED) ||
-				    (we == SDL_WINDOWEVENT_FOCUS_GAINED) ||
-				    (we == SDL_WINDOWEVENT_RESTORED) ||
-				    (we == SDL_WINDOWEVENT_EXPOSED)) {
-
-					// We've got focus back, so unpause and
-					// break out of the loop
-					if ((we == SDL_WINDOWEVENT_FOCUS_GAINED) ||
-					    (we == SDL_WINDOWEVENT_RESTORED) ||
-					    (we == SDL_WINDOWEVENT_EXPOSED)) {
-
-						sdl.is_paused = false;
-						TITLEBAR_RefreshTitle();
-
-						if (we == SDL_WINDOWEVENT_FOCUS_GAINED) {
-							sdl.is_paused = false;
-							apply_active_settings();
-						}
-					}
-
-					// Now poke a "release ALT" command into
-					// the keyboard buffer we have to do
-					// this, otherwise ALT will 'stick' and
-					// cause problems with the app running
-					// in the DOSBox.
-					//
-					KEYBOARD_AddKey(KBD_leftalt, false);
-					KEYBOARD_AddKey(KBD_rightalt, false);
-
-					if (we == SDL_WINDOWEVENT_RESTORED) {
-						// We may need to re-create a
-						// texture and more
-						GFX_ResetScreen();
-					}
-				}
-			} break;
-			}
-		}
-		MIXER_UnlockMixerThread();
-	}
-}
-
 static bool handle_sdl_windowevent(const SDL_Event& event)
 {
-	switch (event.window.event) {
-	case SDL_WINDOWEVENT_RESTORED:
+	switch (event.type) {
+	case SDL_EVENT_WINDOW_RESTORED: {
 		log_window_event("SDL: Window has been restored");
 
 		// We may need to re-create a texture and more on Android.
@@ -2203,63 +2359,35 @@ static bool handle_sdl_windowevent(const SDL_Event& event)
 		//
 		GFX_ResetScreen();
 
-#if C_OPENGL && defined(MACOSX)
-		// TODO check if this workaround is still needed
-
-		log_window_event("SDL: Reset macOS's GL viewport after window-restore");
-
-		if (sdl.render_backend_type == RenderBackendType::OpenGl) {
-			update_viewport();
-		}
-#endif
 		focus_input();
-		return true;
 
-	case SDL_WINDOWEVENT_RESIZED: {
-		// Window dimensions in logical coordinates
+		constexpr auto FocusGained = false;
+		handle_window_active(FocusGained);
+		return true;
+	}
+
+	case SDL_EVENT_WINDOW_RESIZED: {
+		// In native units
 		const auto width  = event.window.data1;
 		const auto height = event.window.data2;
 
 		log_window_event("SDL: Window has been resized to %dx%d", width, height);
 
-		static int last_width  = 0;
-		static int last_height = 0;
+		handle_window_resized(width, height);
 
-		// SDL_WINDOWEVENT_RESIZED events are sent twice when resizing
-		// the window, but maybe_log_display_properties() will only
-		// output a log entry if the image dimensions have actually
-		// changed.
-		maybe_log_display_properties();
-
-		if (!sdl.is_fullscreen) {
-			save_window_size(width, height);
-
-			set_section_property_value("sdl",
-			                           "window_size",
-			                           format_str("%dx%d", width, height));
-		}
-
-		if (width != last_width && height != last_height) {
-			maybe_log_display_properties();
-
-			// Needed for aspect & viewport mode combinations where
-			// the pixel aspect ratio or viewport size is sized
-			// relatively to the window size.
-			GFX_ResetScreen();
-
-			last_width  = width;
-			last_height = height;
-		}
+		// Resizing the window changes its size in pixels too, so SDL
+		// also sends an SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED event. We
+		// update the viewport and reset the screen in response to that
+		// (this is needed for viewport and aspect ratio settings that
+		// depend on the window size).
 		return true;
 	}
 
-	case SDL_WINDOWEVENT_FOCUS_GAINED:
+	case SDL_EVENT_WINDOW_FOCUS_GAINED:
 		log_window_event("SDL: Window has gained keyboard focus");
-
-		apply_active_settings();
 		[[fallthrough]];
 
-	case SDL_WINDOWEVENT_EXPOSED:
+	case SDL_EVENT_WINDOW_EXPOSED: {
 		log_window_event("SDL: Window has been exposed and should be redrawn");
 
 		// TODO: below is not consistently true :( seems incorrect on
@@ -2271,126 +2399,135 @@ static bool handle_sdl_windowevent(const SDL_Event& event)
 		// Framebuffer); therefore we rely on the FOCUS_GAINED event to
 		// catch window startup and size toggles.
 
+		const bool focus_gained = (event.type == SDL_EVENT_WINDOW_FOCUS_GAINED);
+		handle_window_active(focus_gained);
+
 		if (sdl.draw.callback) {
 			sdl.draw.callback(GFX_CallbackRedraw);
 		}
 		focus_input();
 		return true;
+	}
 
-	case SDL_WINDOWEVENT_FOCUS_LOST:
+	case SDL_EVENT_WINDOW_FOCUS_LOST:
 		log_window_event("SDL: Window has lost keyboard focus");
 
-		apply_inactive_settings();
+		// `GFX_LosingFocus()` deactivates mapper events, which can
+		// enqueue key-up scancodes; `handle_window_inactive()`'s
+		// `KEYBOARD_ClrBuffer` must run after that so pause starts
+		// with an empty keyboard buffer.
 		GFX_LosingFocus();
+		handle_window_inactive();
 		return false;
 
-	case SDL_WINDOWEVENT_ENTER:
+	case SDL_EVENT_WINDOW_MOUSE_ENTER:
 		log_window_event("SDL: Window has gained mouse focus");
 		return true;
 
-	case SDL_WINDOWEVENT_LEAVE:
+	case SDL_EVENT_WINDOW_MOUSE_LEAVE:
 		log_window_event("SDL: Window has lost mouse focus");
 		return true;
 
-	case SDL_WINDOWEVENT_SHOWN:
+	case SDL_EVENT_WINDOW_SHOWN:
 		log_window_event("SDL: Window has been shown");
 		return true;
 
-	case SDL_WINDOWEVENT_HIDDEN:
+	case SDL_EVENT_WINDOW_HIDDEN:
 		log_window_event("SDL: Window has been hidden");
 		return true;
 
-	case SDL_WINDOWEVENT_MOVED: {
-		const auto x = event.window.data1;
-		const auto y = event.window.data2;
+	case SDL_EVENT_WINDOW_MOVED: {
+		const auto x = to_logical(event.window.data1);
+		const auto y = to_logical(event.window.data2);
 
 		log_window_event("SDL: Window has been moved to %d, %d", x, y);
 
-#if C_OPENGL && defined(MACOSX)
-		// TODO This workaround is still needed on macOS 15.6. We'll be
-		// able to remove it once we always set the viewport to covert
-		// the full window (supporting overlay images and the OSD will
-		// necessitate this).
-		//
-		if (sdl.render_backend_type == RenderBackendType::OpenGl) {
-			update_viewport();
-		}
-#endif
-		// We don't allow negative values for 'window_position', so this
-		// is the best we can do to keep things in sync.
-		const auto new_x = std::max(x, 0);
-		const auto new_y = std::max(y, 0);
-
-		if (!sdl.is_fullscreen) {
-			save_window_position(SDL_Point{new_x, new_y});
-
-			set_section_property_value("sdl",
-			                           "window_position",
-			                           format_str("%d,%d", new_x, new_y));
-		}
+		handle_window_moved(x, y);
 		return true;
 	}
 
-	case SDL_WINDOWEVENT_DISPLAY_CHANGED: {
+	case SDL_EVENT_WINDOW_DISPLAY_CHANGED: {
 		const auto new_display_number = event.window.data1;
 		log_window_event("SDL: Window has been moved to display %d",
 		                 new_display_number);
 
-		// New display might have a different resolution and DPI scaling
-		// set, so recalculate that and set viewport
-		check_and_handle_dpi_change(sdl.window);
-
 		sdl.display_number = new_display_number;
 
-		update_viewport();
-		notify_new_mouse_screen_params();
+		// Percentage window sizes are relative to the desktop size of
+		// the window's display
+		if (sdl.windowed.size_unit == WindowGeometry::Unit::Percentage) {
+			configure_window_size();
+			sdl.windowed.is_resize_pending = true;
+			maybe_restore_windowed_size();
+		}
+
+		// The new display might have a different resolution and display
+		// scale, so we need to recalculate the viewport
+		update_viewport_and_reset_screen();
 		return true;
 	}
 
-	case SDL_WINDOWEVENT_SIZE_CHANGED: {
+	case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED: {
+		log_window_event("SDL: Window display scale has changed to %g",
+		                 get_window_display_scale());
+
+		// This happens when the window is moved to a display with a
+		// different scale, or when the display scale of the current
+		// display is changed in the OS settings.
+		//
+		// The minimum window size is set in native units, which depend
+		// on the display scale on Windows and X11.
+		set_minimum_window_size();
+
+		// Window sizes specified in pixels keep their size in pixels.
+		// Percentage window sizes are relative to the desktop size in
+		// logical units, which depends on the display scale.
+		if (sdl.windowed.size_unit != WindowGeometry::Unit::LogicalUnits) {
+			configure_window_size();
+		}
+		sdl.windowed.is_resize_pending = true;
+		maybe_restore_windowed_size();
+
+		// Viewport sizes specified in logical units depend on the
+		// display scale.
+		update_viewport_and_reset_screen();
+		return true;
+	}
+
+	case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED: {
 		log_window_event("SDL: The window size has changed");
 
 		// The window size has changed either as a result of an API call
 		// or through the system or user changing the window size.
-		const auto new_width  = event.window.data1;
-
-		check_and_handle_dpi_change(sdl.window, new_width);
-		update_viewport();
-		notify_new_mouse_screen_params();
+		update_viewport_and_reset_screen();
 		return true;
 	}
 
-	case SDL_WINDOWEVENT_MINIMIZED:
+	case SDL_EVENT_WINDOW_MINIMIZED:
 		log_window_event("SDL: Window has been minimized");
 
-		apply_inactive_settings();
+		handle_window_inactive();
 		return false;
 
-	case SDL_WINDOWEVENT_MAXIMIZED:
+	case SDL_EVENT_WINDOW_MAXIMIZED:
 		log_window_event("SDL: Window has been maximized");
 		return true;
 
-	case SDL_WINDOWEVENT_CLOSE:
+	case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
 		log_window_event(
 		        "SDL: The window manager requests that the window be closed");
 
 		GFX_RequestExit(true);
 		return false;
 
-	case SDL_WINDOWEVENT_TAKE_FOCUS:
-		log_window_event("SDL: Window is being offered a focus");
-
-		focus_input();
-		apply_active_settings();
-		return true;
-
-	case SDL_WINDOWEVENT_HIT_TEST:
+	case SDL_EVENT_WINDOW_HIT_TEST:
 		log_window_event(
 		        "SDL: Window had a hit test that wasn't SDL_HITTEST_NORMAL");
 		return true;
 
 	default: return false;
 	}
+	return false;
 }
 
 static void adjust_ticks_after_present_frame(int64_t elapsed_us)
@@ -2492,7 +2629,7 @@ void GFX_MaybePresentFrame()
 //   false - event loop wants to quit
 bool GFX_PollAndHandleEvents()
 {
-	SDL_Event event;
+	SDL_Event event = {};
 
 	static auto last_check_joystick = GetTicks();
 	auto current_check_joystick     = GetTicks();
@@ -2501,15 +2638,26 @@ bool GFX_PollAndHandleEvents()
 		last_check_joystick = current_check_joystick;
 
 		if (MAPPER_IsUsingJoysticks()) {
-			SDL_JoystickUpdate();
+			SDL_UpdateJoysticks();
 		}
 		MAPPER_UpdateJoysticks();
 	}
 
 	while (SDL_PollEvent(&event)) {
+
 #if C_DEBUGGER
 		if (is_debugger_event(event)) {
-			pdc_event_queue.push(event);
+			if (event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED &&
+			    !DEBUG_IsDebugging()) {
+				SDL_HideWindow(dbg.win_main);
+				continue;
+			}
+			DebuggerInputEvent qe;
+			qe.ev = event;
+			if (event.type == SDL_EVENT_TEXT_INPUT && event.text.text) {
+				qe.text = event.text.text;
+			}
+			debugger_event_queue.push(std::move(qe));
 			continue;
 		}
 #endif
@@ -2518,39 +2666,41 @@ bool GFX_PollAndHandleEvents()
 			continue;
 		}
 
-		switch (event.type) {
-		case SDL_DISPLAYEVENT:
-			switch (event.display.event) {
-			case SDL_DISPLAYEVENT_CONNECTED:
-			case SDL_DISPLAYEVENT_DISCONNECTED:
-				notify_new_mouse_screen_params();
-				break;
-			default: break;
-			};
-			break;
-
-		case SDL_WINDOWEVENT: {
-			auto handling_finished = handle_sdl_windowevent(event);
-			if (handling_finished) {
+		if (is_window_event(event)) {
+			if (handle_sdl_windowevent(event)) {
 				continue;
 			}
+		}
 
-			if (sdl.pause_when_inactive) {
-				handle_pause_when_inactive(event);
-			}
-		} break;
+		switch (event.type) {
+		case SDL_EVENT_DISPLAY_ADDED:
+		case SDL_EVENT_DISPLAY_REMOVED:
+			notify_new_mouse_screen_params();
+			break;
 
-		case SDL_MOUSEMOTION: handle_mouse_motion(&event.motion); break;
-		case SDL_MOUSEWHEEL: handle_mouse_wheel(&event.wheel); break;
-		case SDL_MOUSEBUTTONDOWN:
-		case SDL_MOUSEBUTTONUP:
+		case SDL_EVENT_DISPLAY_DESKTOP_MODE_CHANGED:
+			handle_desktop_mode_changed(event.display);
+			break;
+
+		case SDL_EVENT_MOUSE_MOTION:
+			handle_mouse_motion(&event.motion);
+			break;
+		case SDL_EVENT_MOUSE_WHEEL:
+			handle_mouse_wheel(&event.wheel);
+			break;
+		case SDL_EVENT_MOUSE_BUTTON_DOWN:
+		case SDL_EVENT_MOUSE_BUTTON_UP:
 			handle_mouse_button(&event.button);
 			break;
 
-		case SDL_QUIT: GFX_RequestExit(true); break;
+		case SDL_EVENT_QUIT: GFX_RequestExit(true); break;
 		default: MAPPER_CheckEvent(&event);
 		}
 	}
+
+	maybe_restore_windowed_size();
+	maybe_log_resized_window_size();
+
 	return !DOSBOX_IsShutdownRequested();
 }
 
@@ -2562,15 +2712,14 @@ static std::vector<std::string> get_sdl_texture_renderers()
 	drivers.reserve(n + 1);
 	drivers.emplace_back("auto");
 
-	SDL_RendererInfo info;
+	const char* name;
 
 	for (int i = 0; i < n; i++) {
-		if (SDL_GetRenderDriverInfo(i, &info)) {
+		name = SDL_GetRenderDriver(i);
+		if (!name) {
 			continue;
 		}
-		if (info.flags & SDL_RENDERER_TARGETTEXTURE) {
-			drivers.emplace_back(info.name);
-		}
+		drivers.emplace_back(name);
 	}
 	return drivers;
 }
@@ -2674,11 +2823,12 @@ static void init_sdl_config_settings(SectionProp& section)
 	        "                      borderless mode might result in decreased performance\n"
 	        "                      and slightly worse frame pacing (e.g., scrolling in 2D\n"
 	        "                      games not appearing perfectly smooth).");
-	pstring->SetValues({"standard",
+	pstring->SetValues({
+	        "standard",
 #ifdef WIN32
-	                    "forced-borderless",
+	        "forced-borderless",
 #endif
-	                    });
+	});
 
 	pstring->SetDeprecatedWithAlternateValue("desktop", "standard");
 
@@ -2692,18 +2842,34 @@ static void init_sdl_config_settings(SectionProp& section)
 	        "Set initial window size for windowed mode ('default' by default). You can still\n"
 	        "resize the window after startup. Possible values:\n"
 	        "\n"
-	        "  default:   Select the best option based on your environment and other\n"
-	        "             factors (such as whether aspect ratio correction is enabled).\n"
+	        "  default:   Same as 'medium'.\n"
 	        "\n"
 	        "  small, medium, large (s, m, l):\n"
-	        "             Size the window relative to the desktop.\n"
+	        "             4:3 window sizes relative to the desktop height (same as 66.67x50%%,\n"
+	        "             98.67x74%%, and 120x90%%, respectively).\n"
 	        "\n"
-	        "  WxH:       Specify window size in WxH format in logical units (e.g.,\n"
-	        "             1024x768). The values be multiplied by the OS-level DPI scaling to\n"
-	        "             get the window size in pixels.\n"
+	        "  WxH:       Specify window size in WxH (or W,H) format in logical units (e.g.,\n"
+	        "             1024x768). The values are multiplied by the OS-level display\n"
+	        "             scaling factor to get the window size in pixels.\n"
 	        "\n"
-	        "Note: If you want to use pixel coordinates instead and ignore DPI scaling, set\n"
-	        "      the SDL_WINDOWS_DPI_SCALING environment variable to 0.");
+	        "  WxHpx:     Specify window size in pixels (e.g., 1440x1080px). The window keeps\n"
+	        "             its size in pixels when moved to another display.\n"
+	        "\n"
+	        "  WxH%%:      Specify window size as a percentage of the desktop height (e.g.,\n"
+	        "             120x90%% for a 4:3 window 90%% as tall as the desktop). Both values\n"
+	        "             are relative to the desktop height, so the aspect ratio of the\n"
+	        "             window doesn't depend on the aspect ratio of the desktop.\n"
+	        "\n"
+	        "Notes:\n"
+	        "  - Resizing the window updates this setting in the same format, except for the\n"
+	        "    named sizes, which are updated in WxH%% format.\n"
+	        "\n"
+	        "  - The size specifies the window's content area excluding the title bar and\n"
+	        "    window borders, so the window takes up slightly more space on the screen\n"
+	        "    than the specified size.\n"
+	        "\n"
+	        "  - The window manager might resize the window (e.g., to keep it fully inside\n"
+	        "    the display bounds).");
 
 	pstring = section.AddString("window_position", Always, "auto");
 	pstring->SetHelp(
@@ -2713,12 +2879,35 @@ static void init_sdl_config_settings(SectionProp& section)
 	        "  auto:      Let the window manager decide the position (default).\n"
 	        "\n"
 	        "  X,Y:       Set window position in X,Y format in logical units (e.g., 250,100).\n"
-	        "             0,0 is the top-left corner of the screen. The values will be\n"
-	        "             multiplied by the OS-level DPI scaling to get the window position\n"
+	        "             0,0 is the top-left corner of the screen. The values are multiplied\n"
+	        "             by the OS-level display scaling factor to get the window position\n"
 	        "             in pixels.\n"
 	        "\n"
-	        "Note: If you want to use pixel coordinates instead and ignore DPI scaling, set\n"
-	        "      the SDL_WINDOWS_DPI_SCALING environment variable to 0.");
+	        "  X,Ypx:     Set window position in pixels (e.g., 375,150px).\n"
+	        "\n"
+	        "  X,Y%%:      Set window position as a percentage of the desktop width and height\n"
+	        "             (e.g., 10,10%%).\n"
+	        "\n"
+	        "Notes:\n"
+	        "  - Moving the window updates this setting in the same format.\n"
+	        "\n"
+	        "  - The position is that of the top-left corner of the window's content area,\n"
+	        "    excluding the title bar and window borders.\n"
+	        "\n"
+	        "  - The window manager might move the window away from the specified position\n"
+	        "    (e.g., to keep it fully inside the display bounds, or to place it below a\n"
+	        "    task bar).");
+
+	pstring->SetOptionHelp("window_position_linux",
+	                       "\n"
+	                       "  - This setting has no effect on Wayland because Wayland doesn't let\n"
+	                       "    applications position their windows.");
+
+	pstring->SetEnabledOptions({
+#if defined(LINUX)
+	        "window_position_linux"
+#endif
+	});
 
 	pbool = section.AddBool("window_decorations", Always, true);
 	pbool->SetHelp("Enable window decorations in windowed mode ('on' by default).");
@@ -2827,12 +3016,20 @@ static void init_sdl_config_settings(SectionProp& section)
 	pbool = section.AddBool("pause_when_inactive", Always, false);
 	pbool->SetHelp("Pause emulation when the window is inactive ('off' by default).");
 
-	pbool = section.AddBool("keyboard_capture", Always, false);
-	pbool->SetHelp(
-	        "Capture system keyboard shortcuts ('off' by default).\n"
-	        "When enabled, most system shortcuts such as Alt+Tab are captured and sent to\n"
-	        "DOSBox Staging. This is useful for Windows 3.1x and some DOS programs with\n"
-	        "unchangeable keyboard shortcuts that conflict with system shortcuts.");
+	pstring = section.AddString("keyboard_capture", Always, "off");
+	pstring->SetValues({"auto", "on", "off"});
+	pstring->SetHelp(
+	        "Capture system keyboard shortcuts ('off' by default). When captured, most system\n"
+	        "shortcuts such as Alt+Tab are sent to DOSBox Staging instead of the host OS.\n"
+	        "This is useful for Windows 3.1 and some DOS programs with unchangeable keyboard\n"
+	        "shortcuts that conflict with system shortcuts. Possible values:\n"
+	        "\n"
+	        "  auto:  Capture system shortcuts only while the mouse is captured. Releasing\n"
+	        "         the mouse gives the shortcuts back to the host OS.\n"
+	        "\n"
+	        "  on:    Always capture system shortcuts.\n"
+	        "\n"
+	        "  off:   Never capture system shortcuts (default).");
 
 	pstring = section.AddPath("mapperfile", Always, MAPPERFILE);
 	pstring->SetHelp(
@@ -2840,7 +3037,7 @@ static void init_sdl_config_settings(SectionProp& section)
 	        "current version). Pre-configured maps are bundled in 'resources/mapperfiles'.\n"
 	        "These can be loaded by name, e.g., with 'mapperfile = xbox/xenon2.map'.\n"
 	        "\n"
-	        "Note: The '--resetmapper' command line option only deletes the default mapper\n"
+	        "Note: The '--erasemapper' command line option only deletes the default mapper\n"
 	        "      file.");
 
 	pstring = section.AddString("screensaver", Always, "auto");
@@ -2868,7 +3065,7 @@ void GFX_Quit()
 	// Renderer must be destoryed before SDL_Quit() is called.
 	// Otherwise we can get segfaults and sadness.
 	sdl.renderer = {};
-	sdl.window = nullptr;
+	sdl.window   = nullptr;
 
 	SDL_Quit();
 #endif

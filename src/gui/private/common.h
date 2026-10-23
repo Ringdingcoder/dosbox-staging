@@ -4,13 +4,15 @@
 #ifndef DOSBOX_GUI_PRIVATE_COMMON_H
 #define DOSBOX_GUI_PRIVATE_COMMON_H
 
+#include <optional>
+
 #include "dosbox_config.h"
 #include "misc/video.h"
 #include "utils/fraction.h"
 #include "utils/rect.h"
 
 // must be included after dosbox_config.h
-#include "SDL.h"
+#include <SDL3/SDL.h>
 
 constexpr uint8_t GFX_CAN_8      = 1 << 0;
 constexpr uint8_t GFX_CAN_15     = 1 << 1;
@@ -103,9 +105,12 @@ void GFX_EndUpdate();
 
 void GFX_CaptureRenderedImage();
 
+// Returns the desktop size in logical units
 DosBox::Rect GFX_GetDesktopSize();
 
-float GFX_GetDpiScaleFactor();
+// Converts a rectangle from logical units to pixels using the display scale
+// of the display the window is on
+DosBox::Rect GFX_LogicalToPixels(const DosBox::Rect& rect);
 
 DosBox::Rect GFX_CalcDrawRectInPixels(const DosBox::Rect& canvas_size_px);
 
@@ -120,5 +125,7 @@ enum class DosBoxSdlEvent {
 int GFX_GetUserSdlEventId(DosBoxSdlEvent event);
 
 bool GFX_IsPaused();
+
+void GFX_SaveCurrentWindowSizeAndPosition();
 
 #endif // DOSBOX_GUI_COMMON_H

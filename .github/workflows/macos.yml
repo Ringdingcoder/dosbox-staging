@@ -3,6 +3,10 @@ permissions: read-all
 
 on:
   push:
+    branches:
+      - '**'
+    tags-ignore:
+      - dev-latest
     paths-ignore:
       - '.clang-format'
       - '.mdl-styles'
@@ -27,11 +31,11 @@ concurrency:
 jobs:
   generate_release_notes:
     name:    Generate release notes
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     if:      github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           submodules: false
 
@@ -60,17 +64,17 @@ jobs:
     strategy:
       matrix:
         conf:
-          - host: macos-15
+          - host: macos-26
             arch: x86_64
             max_warnings: 0
 
-          - host: macos-15
+          - host: macos-26
             arch: arm64
             max_warnings: 0
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           submodules: false
 
@@ -78,7 +82,7 @@ jobs:
         uses: ./.github/actions/set-common-vars
 
       - name: Set up CMake
-        uses: lukka/get-cmake@ea83089aa35e08e459464341fe24ad024ee2466f # v4.3.1
+        uses: lukka/get-cmake@a89e43e22a96abafcd7a62db652a65ecd33052c9 # v4.4.4
 
       - name: Set up vcpkg
         uses: ./.github/actions/setup-vcpkg
@@ -89,16 +93,23 @@ jobs:
       - name: Log environment
         run: arch -arch=${{ matrix.conf.arch }} ./scripts/ci/log-env.sh
 
+      # Retried because the docs build (OPT_DOCUMENTATION=ON) downloads
+      # external assets via the MkDocs Material privacy plugin; a transient
+      # 5xx or DNS hiccup on any source crashes the whole build. Wrapping
+      # the entire step keeps the change minimal; the cmake build is
+      # incremental, so a docs-flake retry skips already-compiled artifacts.
       - name: Build release
-        run: |
-          set -xo pipefail
-          cmake --preset release-macos-${{ matrix.conf.arch }}
-          cmake --build --preset release-macos-${{ matrix.conf.arch }} 2>&1 | tee build.log
+        uses: ./.github/actions/retry
+        with:
+          cmd: |
+            set -xeo pipefail
+            cmake -DOPT_DOCUMENTATION=ON --preset release-macos-${{ matrix.conf.arch }}
+            cmake --build --preset release-macos-${{ matrix.conf.arch }} 2>&1 | tee build.log
 
       - name: Run tests
         run: |
           set -xo pipefail
-          ctest --preset release-macos-${{ matrix.conf.arch }} 2>&1 | tee tests.log
+          ctest -j 4 --preset release-macos-${{ matrix.conf.arch }} 2>&1 | tee tests.log
 
       - name: Dump workspace contents
         run: find $RUNNER_WORKSPACE
@@ -128,14 +139,24 @@ jobs:
           path: build/release-macos-${{ matrix.conf.arch }}/Resources
           overwrite: true
 
+      - name:  Report repo cache usage
+        if:    always()
+        shell: bash
+        run:   gh cache list --limit 50 --sort size_in_bytes --order desc
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
 
   publish_universal_build:
     name:    Publish universal build
     needs:   [build_macos_release, generate_release_notes]
-    runs-on: macos-15
+    runs-on: macos-26
+    permissions:
+      contents: read
+      statuses: write
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           submodules: false
 
@@ -145,8 +166,11 @@ jobs:
       - name: Install brew depedencies
         run: HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1 brew install --overwrite librsvg
 
-      - name: Download binaries
+      - name: Download all temporary artifacts
         uses: actions/download-artifact@v8
+
+      - name: Dump workspace contents
+        run: find $RUNNER_WORKSPACE
 
       - name: Package
         run: |
@@ -163,7 +187,9 @@ jobs:
           set -x
           ZIP_NAME=dosbox-vcpkg-deps-macos-universal.zip
 
-          wget -nv https://github.com/dosbox-staging/dosbox-staging-ext/releases/download/$VCPKG_EXT_DEPS_VERSION/$ZIP_NAME
+          # Retry on transient GitHub release-asset CDN flakes.
+          wget -nv --tries=5 --waitretry=10 --retry-connrefused \
+            https://github.com/dosbox-staging/dosbox-staging-ext/releases/download/$VCPKG_EXT_DEPS_VERSION/$ZIP_NAME
           unzip $ZIP_NAME -d vcpkg-deps
 
           LIB_DIR="dist/DOSBox Staging.app/Contents/MacOS/lib"
@@ -176,12 +202,15 @@ jobs:
           set -x
           ZIP_NAME=Nuked-SC55-CLAP-macOS-$NUKED_SC55_CLAP_VERSION.zip
 
-          curl -L https://github.com/johnnovak/Nuked-SC55-CLAP/releases/download/$NUKED_SC55_CLAP_VERSION/$ZIP_NAME -o $ZIP_NAME
+          # Retry on transient GitHub release-asset CDN flakes.
+          curl -fL --retry 5 --retry-all-errors --retry-delay 10 \
+            https://github.com/johnnovak/Nuked-SC55-CLAP/releases/download/$NUKED_SC55_CLAP_VERSION/$ZIP_NAME -o $ZIP_NAME
           unzip $ZIP_NAME -d nuked-sc55-clap
 
           PLUGINS_DIR="dist/DOSBox Staging.app/Contents/PlugIns"
           mkdir "$PLUGINS_DIR"
           cp -R nuked-sc55-clap/* "$PLUGINS_DIR"
+
 
       - name: Create DMG disk image
         run: |
@@ -196,11 +225,6 @@ jobs:
               -format UDZO "dosbox-staging-macOS-universal-$DOSBOX_VERSION_AND_HASH.dmg"
 
 
-      - name: Download release notes HTML
-        uses: actions/download-artifact@v8
-        with:
-          name: release-notes-html
-
       - name: Upload DMG disk image
         uses: actions/upload-artifact@v7
         # GitHub automatically zips the artifacts, and there's no option
@@ -210,3 +234,14 @@ jobs:
           path: |
             dosbox-staging-macOS-universal-${{ env.DOSBOX_VERSION_AND_HASH }}.dmg
             release-notes.html
+
+      # Reports this job's own pass/fail as a separate GitHub status, since
+      # the workflow as a whole also includes the compiler-matrix sanity
+      # builds above, which can fail without this release build failing.
+      - name: Report dev build status
+        if:   (success() || failure()) && github.ref == 'refs/heads/main'
+        uses: ./.github/actions/report-dev-build-status
+        with:
+          platform:     macos
+          job_status:   ${{ job.status }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}

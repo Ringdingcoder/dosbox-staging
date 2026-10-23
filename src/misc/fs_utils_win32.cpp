@@ -3,8 +3,6 @@
 
 #include "utils/fs_utils.h"
 
-#if defined(WIN32)
-
 // Windows header needed for PathFileExistsW
 #include "Shlwapi.h"
 
@@ -21,7 +19,7 @@ std::string to_native_path(const std::string &path) noexcept
 uint16_t local_drive_create_dir(const char* path)
 {
 	wchar_t utf16_path[MAX_PATH] = {};
-	if (!codepage437_to_utf16(path, utf16_path)) {
+	if (!windows_utf8_to_utf16(path, utf16_path)) {
 		return DOSERR_ACCESS_DENIED;
 	}
 	if (CreateDirectoryW(utf16_path, nullptr)) {
@@ -40,7 +38,7 @@ uint16_t local_drive_get_attributes(const char* path,
                                     FatAttributeFlags& attributes)
 {
 	wchar_t utf16_path[MAX_PATH] = {};
-	if (!codepage437_to_utf16(path, utf16_path)) {
+	if (!windows_utf8_to_utf16(path, utf16_path)) {
 		return DOSERR_ACCESS_DENIED;
 	}
 	const auto win32_attributes = GetFileAttributesW(utf16_path);
@@ -57,7 +55,7 @@ uint16_t local_drive_set_attributes(const char* path,
                                     const FatAttributeFlags attributes)
 {
 	wchar_t utf16_path[MAX_PATH] = {};
-	if (!codepage437_to_utf16(path, utf16_path)) {
+	if (!windows_utf8_to_utf16(path, utf16_path)) {
 		return DOSERR_ACCESS_DENIED;
 	}
 	if (!SetFileAttributesW(utf16_path, attributes._data)) {
@@ -70,7 +68,7 @@ uint16_t local_drive_set_attributes(const char* path,
 NativeFileHandle open_native_file(const char* path, const bool write_access)
 {
 	wchar_t utf16_path[MAX_PATH] = {};
-	if (!codepage437_to_utf16(path, utf16_path)) {
+	if (!windows_utf8_to_utf16(path, utf16_path)) {
 		return InvalidNativeFileHandle;
 	}
 	DWORD access = GENERIC_READ;
@@ -78,12 +76,15 @@ NativeFileHandle open_native_file(const char* path, const bool write_access)
 		access |= GENERIC_WRITE;
 	}
 
+	// FILE_FLAG_BACKUP_SEMANTICS is required to open a handle to a
+	// directory (e.g. so FindNext() can query directory timestamps via
+	// get_dos_file_time()); it has no effect when opening regular files.
 	return CreateFileW(utf16_path,
 	                   access,
 	                   FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
 	                   nullptr,
 	                   OPEN_EXISTING,
-	                   FILE_ATTRIBUTE_NORMAL,
+	                   FILE_ATTRIBUTE_NORMAL | FILE_FLAG_BACKUP_SEMANTICS,
 	                   nullptr);
 }
 
@@ -91,7 +92,7 @@ NativeFileHandle create_native_file(const char* path,
                                     const std::optional<FatAttributeFlags> attributes)
 {
 	wchar_t utf16_path[MAX_PATH] = {};
-	if (!codepage437_to_utf16(path, utf16_path)) {
+	if (!windows_utf8_to_utf16(path, utf16_path)) {
 		return InvalidNativeFileHandle;
 	}
 	const auto win32_attributes = (attributes && attributes->_data != 0)
@@ -283,7 +284,7 @@ void set_dos_file_time(const NativeFileHandle handle, const uint16_t date,
 bool delete_native_file(const char* path)
 {
 	wchar_t utf16_path[MAX_PATH] = {};
-	if (!codepage437_to_utf16(path, utf16_path)) {
+	if (!windows_utf8_to_utf16(path, utf16_path)) {
 		return false;
 	}
 
@@ -344,7 +345,7 @@ bool delete_native_file(const char* path)
 bool local_drive_remove_dir(const char* path)
 {
 	wchar_t utf16_path[MAX_PATH] = {};
-	if (!codepage437_to_utf16(path, utf16_path)) {
+	if (!windows_utf8_to_utf16(path, utf16_path)) {
 		return false;
 	}
 	if (RemoveDirectoryW(utf16_path)) {
@@ -375,7 +376,7 @@ bool local_drive_remove_dir(const char* path)
 bool local_drive_path_exists(const char* path)
 {
 	wchar_t utf16_path[MAX_PATH] = {};
-	if (!codepage437_to_utf16(path, utf16_path)) {
+	if (!windows_utf8_to_utf16(path, utf16_path)) {
 		return false;
 	}
 	return PathFileExistsW(utf16_path);
@@ -384,14 +385,101 @@ bool local_drive_path_exists(const char* path)
 bool local_drive_rename_file_or_directory(const char* old_path, const char* new_path)
 {
 	wchar_t utf16_old_path[MAX_PATH] = {};
-	if (!codepage437_to_utf16(old_path, utf16_old_path)) {
+	if (!windows_utf8_to_utf16(old_path, utf16_old_path)) {
 		return false;
 	}
 	wchar_t utf16_new_path[MAX_PATH] = {};
-	if (!codepage437_to_utf16(new_path, utf16_new_path)) {
+	if (!windows_utf8_to_utf16(new_path, utf16_new_path)) {
 		return false;
 	}
 	return MoveFileW(utf16_old_path, utf16_new_path);
 }
 
-#endif
+uint32_t local_drive_get_file_size(const NativeFileHandle handle)
+{
+	const auto size = GetFileSize(handle, nullptr);
+	if (size == INVALID_FILE_SIZE) {
+		return 0;
+	}
+	return size;
+}
+
+bool windows_utf8_to_utf16(const char *in_string, wchar_t *out_string, const int out_length)
+{
+	constexpr UINT Codepage = CP_UTF8;
+	constexpr DWORD Flags = 0;
+	// -1 means read the entire null terminated string
+	constexpr int InLength = -1;
+	const auto num_chars = MultiByteToWideChar(Codepage, Flags, in_string, InLength, out_string, out_length);
+	if (num_chars >= out_length) {
+		LOG_ERR("FS: MultiByteToWideChar failed: Insufficient output buffer length");
+		return false;
+	}
+	if (num_chars > 0) {
+		// Ensure output string is null terminated (should be, but just in case)
+		out_string[num_chars] = 0;
+		return true;
+	}
+	const auto error = GetLastError();
+	// Message table source or something, is ignored for our usage
+	constexpr LPCVOID lpSource = nullptr;
+	// Also ignored, only used for FORMAT_MESSAGE_FROM_STRING
+	constexpr va_list* Arguments = nullptr;
+	char error_message[512] = {};
+	if (FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+						lpSource,
+						error,
+						LANG_USER_DEFAULT,
+						error_message,
+						sizeof(error_message),
+						Arguments)) {
+		// Just in case Windows does something dumb I'm sticking a null terminator on the end :)
+		error_message[sizeof(error_message) - 1] = 0;
+		LOG_ERR("FS: MultiByteToWideChar failed with error code %lu: %s", error, error_message);
+	} else {
+		LOG_ERR("FS: MultiByteToWideChar failed with error code %lu: FormatMessageA also failed", error);
+	}
+	return false;
+}
+
+bool windows_utf16_to_utf8(const wchar_t *in_string, char *out_string, int out_length)
+{
+	constexpr UINT Codepage = CP_UTF8;
+	constexpr DWORD Flags = 0;
+	// -1 means read the entire null terminated string
+	constexpr int InLength = -1;
+
+	// Must both be nullptr for UTF-8
+	constexpr LPCCH DefaultChar = nullptr;
+	constexpr LPBOOL WasDefaultCharUsed = nullptr;
+	const auto num_chars = WideCharToMultiByte(Codepage, Flags, in_string, InLength, out_string, out_length, DefaultChar, WasDefaultCharUsed);
+	if (num_chars >= out_length) {
+		LOG_ERR("FS: WideCharToMultiByte failed: Insufficient output buffer length");
+		return false;
+	}
+	if (num_chars > 0) {
+		// Ensure output string is null terminated (should be, but just in case)
+		out_string[num_chars] = 0;
+		return true;
+	}
+	const auto error = GetLastError();
+	// Message table source or something, is ignored for our usage
+	constexpr LPCVOID lpSource = nullptr;
+	// Also ignored, only used for FORMAT_MESSAGE_FROM_STRING
+	constexpr va_list* Arguments = nullptr;
+	char error_message[512] = {};
+	if (FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+						lpSource,
+						error,
+						LANG_USER_DEFAULT,
+						error_message,
+						sizeof(error_message),
+						Arguments)) {
+		// Just in case Windows does something dumb I'm sticking a null terminator on the end :)
+		error_message[sizeof(error_message) - 1] = 0;
+		LOG_ERR("FS: WideCharToMultiByte failed with error code %lu: %s", error, error_message);
+	} else {
+		LOG_ERR("FS: WideCharToMultiByte failed with error code %lu: FormatMessageA also failed", error);
+	}
+	return false;
+}

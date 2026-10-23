@@ -179,20 +179,16 @@ void trim(std::string& str, const std::string_view trim_chars)
 }
 
 std::vector<std::string> split_with_empties(const std::string_view seq,
-                                            const char delim)
+                                            const std::string_view delims)
 {
-	std::vector<std::string> words;
+	std::vector<std::string> words = {};
 	if (seq.empty()) {
 		return words;
 	}
 
-	// count delimeters to reserve space in our vector of words
-	const size_t n = 1u + std::count(seq.begin(), seq.end(), delim);
-	words.reserve(n);
-
 	std::string::size_type head = 0;
 	while (head != std::string::npos) {
-		const auto tail     = seq.find_first_of(delim, head);
+		const auto tail     = seq.find_first_of(delims, head);
 		const auto word_len = tail - head;
 		words.emplace_back(seq.substr(head, word_len));
 		if (tail == std::string::npos) {
@@ -200,9 +196,6 @@ std::vector<std::string> split_with_empties(const std::string_view seq,
 		}
 		head += word_len + 1;
 	}
-
-	// did we reserve the exact space needed?
-	assert(n == words.size());
 
 	return words;
 }
@@ -423,27 +416,27 @@ std::optional<int> parse_int(const std::string& s, const int base)
 	return {};
 }
 
-std::optional<float> parse_percentage(const std::string_view s,
-                                      const bool is_percent_sign_optional)
+std::optional<std::pair<int, int>> parse_int_dimensions(const std::string_view s)
 {
-	if (!is_percent_sign_optional) {
-		if (!s.ends_with('%')) {
-			return {};
+	const auto parts = split(s, "x");
+	if (parts.size() == 2) {
+		const auto w = parse_int(parts[0]);
+		const auto h = parse_int(parts[1]);
+		if (w && h) {
+			return {
+			        {*w, *h}
+                        };
 		}
 	}
-	return {parse_float(strip_suffix(s, "%"))};
+	return {};
 }
 
 std::optional<float> parse_percentage_with_percent_sign(const std::string_view s)
 {
-	const auto is_percent_sign_optional = false;
-	return parse_percentage(s, is_percent_sign_optional);
-}
-
-std::optional<float> parse_percentage_with_optional_percent_sign(const std::string_view s)
-{
-	const auto is_percent_sign_optional = true;
-	return parse_percentage(s, is_percent_sign_optional);
+	if (!s.ends_with('%')) {
+		return {};
+	}
+	return parse_float(strip_suffix(s, "%"));
 }
 
 std::string replace_all(const std::string& str, const std::string& from,

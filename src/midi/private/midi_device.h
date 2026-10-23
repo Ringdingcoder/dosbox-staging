@@ -5,11 +5,12 @@
 #ifndef DOSBOX_MIDI_DEVICE_H
 #define DOSBOX_MIDI_DEVICE_H
 
-#include "midi/midi.h"
-
 #include <cstdint>
 
+#include "midi/midi.h"
+
 namespace MidiDeviceName {
+
 // Internal synths
 constexpr auto FluidSynth  = "fluidsynth";
 constexpr auto SoundCanvas = "soundcanvas";
@@ -22,6 +23,10 @@ constexpr auto CoreMidi  = "coremidi";
 constexpr auto Win32     = "win32";
 } // namespace MidiDeviceName
 
+// Generic interface for all MIDI devices. MIDI devices can be either internal
+// (our three MIDI synths: SoundCanvas, MT-32, and FluidSynth; see
+// `midi_synth.cpp`), or external (various OS-specific ways to output raw MIDI
+// data from DOSBox Staging).
 class MidiDevice {
 public:
 	enum class Type { Internal, External };
@@ -33,9 +38,21 @@ public:
 
 	virtual void SendMidiMessage(const MidiMessage& msg)      = 0;
 	virtual void SendSysExMessage(uint8_t* sysex, size_t len) = 0;
+
+	// Halt / resume the internal renderer thread (FluidSynth, MT-32,
+	// SoundCanvas).
+	//
+	// No-op default for External devices, which don't run
+	// a renderer; their pause path is the volume-zero broadcast in
+	// `MIDI_Mute()`.
+	virtual void Pause() {}
+	virtual void Resume() {}
 };
 
+// Send All Notes Off and Reset All Controllers to all MIDI channels for this
+// device.
 void MIDI_Reset(MidiDevice* device);
+
 MidiDevice* MIDI_GetCurrentDevice();
 
 #endif // DOSBOX_MIDI_DEVICE_H

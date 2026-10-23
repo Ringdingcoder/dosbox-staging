@@ -104,6 +104,9 @@ static VGA_Line_Handler VGA_DrawLine;
 constexpr auto MaxPixelBytes = sizeof(uint32_t);
 constexpr auto MaxRowBytes   = ScalerMaxWidth * MaxPixelBytes;
 
+constexpr auto TextModeBytesPerCell = 2;
+constexpr auto FontGlyphStrideBytes = 32;
+
 // The line buffer can be written in units up to RGB888 pixels (32-bit) size
 alignas(uint64_t) static std::array<uint8_t, MaxRowBytes> templine_buffer;
 static auto TempLine = templine_buffer.data();
@@ -168,7 +171,10 @@ static uint8_t* VGA_Draw_CGA16_Line(Bitu vidstart, Bitu line)
 	assert(vidstart <= UINT16_MAX);
 	assert(line <= UINT16_MAX);
 
-	static uint8_t temp[643] = {0};
+	// There are 640 hdots in each line of the screen.
+	constexpr auto DotsPerLine = 640;
+
+	static uint8_t temp[DotsPerLine + 3] = {0};
 	const uint8_t* base = vga.tandy.draw_base + ((line & vga.tandy.line_mask)
 	                                             << vga.tandy.line_shift);
 
@@ -178,7 +184,6 @@ static uint8_t* VGA_Draw_CGA16_Line(Bitu vidstart, Bitu line)
 		return base[index & index_mask];
 	};
 
-	// There are 640 hdots in each line of the screen.
 	// The color of an even hdot always depends on only 4 bits of video RAM.
 	// The color of an odd hdot depends on 4 bits of video RAM in
 	// 1-hdot-per-pixel modes and 6 bits of video RAM in 2-hdot-per-pixel
@@ -187,15 +192,15 @@ static uint8_t* VGA_Draw_CGA16_Line(Bitu vidstart, Bitu line)
 	// composite modes.
 	temp[1] = (read_cga16_offset(0) >> 6) & 3;
 
-	for (uint16_t x = 2; x < 640; x += 2) {
+	for (uint16_t x = 2; x < DotsPerLine; x += 2) {
 		temp[x]     = (temp[x - 1] & 0xf);
 		temp[x + 1] = (temp[x] << 2) |
 		              (((read_cga16_offset(x >> 3)) >> (6 - (x & 6))) & 3);
 	}
 
-	temp[640] = temp[639] & 0xf;
-	temp[641] = temp[640] << 2;
-	temp[642] = temp[641] & 0xf;
+	temp[DotsPerLine]     = temp[DotsPerLine - 1] & 0xf;
+	temp[DotsPerLine + 1] = temp[DotsPerLine] << 2;
+	temp[DotsPerLine + 2] = temp[DotsPerLine + 1] & 0xf;
 
 	for (uint32_t i = 2, j = 0, x = 0; x < vga.draw.blocks * 2;
 	     i += 4, ++j, ++x) {
@@ -824,7 +829,7 @@ static uint8_t* VGA_Draw_LIN32_Line_HWMouse(Bitu vidstart, Bitu /*line*/)
 static const uint8_t* VGA_Text_Memwrap(Bitu vidstart)
 {
 	vidstart      = vidstart & vga.draw.linear_mask;
-	Bitu line_end = 2 * vga.draw.blocks;
+	Bitu line_end = TextModeBytesPerCell * vga.draw.blocks;
 
 	if ((vidstart + line_end) > vga.draw.linear_mask) {
 		// wrapping in this line
@@ -862,9 +867,9 @@ static uint8_t* VGA_TEXT_Draw_Line(Bitu vidstart, Bitu line)
 	const uint8_t* vidmem = VGA_Text_Memwrap(vidstart);
 
 	for (Bitu cx = 0; cx < vga.draw.blocks; ++cx) {
-		Bitu chr = vidmem[cx * 2];
-		Bitu col = vidmem[cx * 2 + 1];
-		Bitu font = vga.draw.font_tables[(col >> 3) & 1][chr * 32 + line];
+		Bitu chr = vidmem[cx * TextModeBytesPerCell];
+		Bitu col = vidmem[cx * TextModeBytesPerCell + 1];
+		Bitu font = vga.draw.font_tables[(col >> 3) & 1][chr * FontGlyphStrideBytes + line];
 
 		uint32_t mask1 = TXT_Font_Table[font >> 4] & FontMask[col >> 7];
 		uint32_t mask2 = TXT_Font_Table[font & 0xf] & FontMask[col >> 7];
@@ -901,8 +906,8 @@ static uint8_t* VGA_TEXT_Herc_Draw_Line(Bitu vidstart, Bitu line)
 	const uint8_t* vidmem = VGA_Text_Memwrap(vidstart);
 
 	for (Bitu cx = 0; cx < vga.draw.blocks; ++cx) {
-		Bitu chr    = vidmem[cx * 2];
-		Bitu attrib = vidmem[cx * 2 + 1];
+		Bitu chr    = vidmem[cx * TextModeBytesPerCell];
+		Bitu attrib = vidmem[cx * TextModeBytesPerCell + 1];
 
 		if (!(attrib & 0x77)) {
 			// 00h, 80h, 08h, 88h produce black space
@@ -939,7 +944,7 @@ static uint8_t* VGA_TEXT_Herc_Draw_Line(Bitu vidstart, Bitu line)
 			if (underline) {
 				mask1 = mask2 = FontMask[attrib >> 7];
 			} else {
-				Bitu font = vga.draw.font_tables[0][chr * 32 + line];
+				Bitu font = vga.draw.font_tables[0][chr * FontGlyphStrideBytes + line];
 
 				// blinking
 				mask1 = TXT_Font_Table[font >> 4] &
@@ -1000,9 +1005,17 @@ static uint8_t* draw_text_line_from_dac_palette(Bitu vidstart, Bitu line)
 		++blocks;
 	}
 
-	// The first write-index into the draw buffer. Increasing this shifts
-	// the console text right (and vice-versa)
-	const uint16_t draw_idx_start = 8 + vga.draw.panning;
+	// Use a left margin to support sub-character-cell panning
+	constexpr auto DrawBufferMarginBytes = 32;
+
+	// draw_idx is a pixel index and VGA is always rendered with
+	// 32-bit BGRX32 pixels.
+	constexpr auto DrawBufferMarginPixels = DrawBufferMarginBytes /
+	                                        sizeof(uint32_t);
+
+	// The first write-index into the draw buffer. Panning shifts
+	// the console text left by shifting the write start to the left.
+	const uint16_t draw_idx_start = DrawBufferMarginPixels - vga.draw.panning;
 
 	// This holds the to-be-written pixel offset, and is incremented per
 	// pixel and also per character block.
@@ -1014,7 +1027,8 @@ static uint8_t* draw_text_line_from_dac_palette(Bitu vidstart, Bitu line)
 		const auto attr = *vidmem++;
 
 		// The font pattern
-		uint16_t font = vga.draw.font_tables[(attr >> 3) & 1][(chr << 5) + line];
+		uint16_t font = vga.draw.font_tables[(attr >> 3) & 1]
+		                                    [chr * FontGlyphStrideBytes + line];
 
 		uint8_t bg_palette_idx = attr >> 4;
 		// If blinking is enabled bit7 is not mapped to attributes
@@ -1041,7 +1055,7 @@ static uint8_t* draw_text_line_from_dac_palette(Bitu vidstart, Bitu line)
 		const auto bg_colour = palette_map[bg_palette_idx];
 
 		if (vga.seq.clocking_mode.is_eight_dot_mode) {
-			for (auto n = 0; n < 8; ++n) {
+			for (auto n = 0; n < PixelsPerChar::Eight; ++n) {
 				const auto color = (font & 0x80) ? fg_colour
 				                                 : bg_colour;
 
@@ -1059,7 +1073,7 @@ static uint8_t* draw_text_line_from_dac_palette(Bitu vidstart, Bitu line)
 				font |= 1;
 			}
 
-			for (auto n = 0; n < 9; ++n) {
+			for (auto n = 0; n < PixelsPerChar::Nine; ++n) {
 				const auto color = (font & 0x100) ? fg_colour
 				                                  : bg_colour;
 
@@ -1094,14 +1108,18 @@ static uint8_t* draw_text_line_from_dac_palette(Bitu vidstart, Bitu line)
 
 			draw_idx = draw_idx_start;
 
-			for (uint8_t n = 0; n < 8; ++n) {
+			// Intentionally fixed-width, independent of 8/9-dot
+			// character mode
+			constexpr auto CursorBlockWidthPixels = 8;
+
+			for (uint8_t n = 0; n < CursorBlockWidthPixels; ++n) {
 				write_unaligned_uint32_at(draw_addr,
 				                          draw_idx++,
 				                          fg_colour);
 			}
 		}
 	}
-	return TempLine + 32;
+	return TempLine + DrawBufferMarginBytes;
 }
 
 static void VGA_ProcessSplit()
@@ -1522,8 +1540,10 @@ static void VGA_VerticalTimer(uint32_t /*val*/)
 			vga.draw.linear_mask = 0x3fff; // CGA, Tandy 4 pages
 		}
 
-		vga.draw.cursor.address = vga.config.cursor_start * 2;
-		vga.draw.address *= 2;
+		vga.draw.cursor.address = vga.config.cursor_start *
+		                          TextModeBytesPerCell;
+
+		vga.draw.address *= TextModeBytesPerCell;
 
 		// Check for blinking and blinking change delay
 		FontMask[1] = (vga.draw.blinking & (vga.draw.cursor.count >> 4))
@@ -2228,18 +2248,11 @@ ImageInfo setup_drawing()
 			vga.draw.mode = DrawMode::Part;
 
 		} else {
-			// Render the screen in 4 parts if the default legacy
-			// DOSBox VGA drawing behaviour is forced by setting
-			// `vga_render_per_scanline = off` in the config.
-			//
-			// A handful of games need this (e.g., Deus, Ishar 3,
-			// Robinson's Requiem, Time Travelers) and would crash
-			// at startup with per-scanline rendering enabled. This
-			// is most likely due to some VGA emulation deficiency.
-			//
-			vga.draw.mode = vga.draw.vga_render_per_scanline
-			                      ? DrawMode::Scanline
-			                      : DrawMode::Part;
+			// Lower resolution modes are drawn per scanline so that
+			// mid-frame VGA register changes (e.g., raster effects
+			// in demos, changing the palette in some games like
+			// Lemmings and Pinball Dreams) are emulated accurately.
+			vga.draw.mode = DrawMode::Scanline;
 		}
 		break;
 
@@ -2485,8 +2498,15 @@ ImageInfo setup_drawing()
 		const auto is_1280x1024_mode = (CurMode->swidth == 1280 &&
 		                                CurMode->sheight == 1024);
 
+		const auto is_custom_resolution_mode = (CurMode->special &
+		                                        VESA_CUSTOM_RESOLUTION);
+
 		if (is_1280x1024_mode) {
 			render_pixel_aspect_ratio = pixel_aspect_1280x1024;
+		} else if (is_custom_resolution_mode) {
+			// Custom VESA resolutions target modern square-pixel
+			// flat-screen displays, not 4:3 CRT monitors
+			render_pixel_aspect_ratio = {1};
 		} else {
 			render_pixel_aspect_ratio = calc_pixel_aspect_from_dimensions(
 			        render_width, render_height, double_width, double_height);
@@ -3138,6 +3158,15 @@ ImageInfo setup_drawing()
 		break;
 	}
 
+	// In very rare edge cases, a resize can run while the CRTC is
+	// half-programmed; we need to know the new dimensions to do the resize.
+	// Further CRTC writes that complete the mode change will start another
+	// resize.
+	if (video_mode.width == 0 || video_mode.height == 0 ||
+	    render_width == 0 || render_height == 0) {
+		return {};
+	}
+
 	VGA_CheckScanLength();
 
 	auto vblank_skip = updated_timings.vblank_skip;
@@ -3325,6 +3354,11 @@ void VGA_SetupDrawing(uint32_t /*val*/)
 
 	auto image_info = setup_drawing();
 
+	// The mode isn't fully set up yet (see setup_drawing())
+	if (image_info.width == 0 || image_info.height == 0) {
+		return;
+	}
+
 	// need to change the vertical timing?
 	bool fps_changed = false;
 	const auto fps   = VGA_GetRefreshRate();
@@ -3354,6 +3388,14 @@ void VGA_SetupDrawing(uint32_t /*val*/)
 		        image_info.video_mode);
 
 		if (shader_changed) {
+			// `RENDER_NotifyVideoModeChanged()` may itself have picked a new
+			// shader in auto-shader modes. Re-sync
+			// `vga.draw.scan_doubling_allowed` before recomputing geometry;
+			// otherwise `setup_drawing()` reads the stale
+			// `scan_doubling_allowed` flag and we write a
+			// `vga.draw.image_info` that mismatches what the new shader
+			// expects (results as stride-mismatched garbage output).
+			RENDER_SetScanAndPixelDoubling();
 			image_info = setup_drawing();
 		}
 

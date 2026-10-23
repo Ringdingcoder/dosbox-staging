@@ -5,18 +5,27 @@
 #ifndef DOSBOX_PROGRAM_MOUNT_H
 #define DOSBOX_PROGRAM_MOUNT_H
 
+#include "dos/dos.h"
+#include "dos/mount.h"
 #include "dos/programs.h"
+#include "shell/command_line.h"
+
 #include <array>
+#include <optional>
 #include <string>
 #include <vector>
 
+enum class MountFileSystemType { Fat16, Iso, None };
+
 // Struct to hold all parameters required for a mount operation
 struct MountParameters {
-	char drive                     = '\0';
+	char drive                 = '\0';
+	MountType type             = MountType::Directory;
+	MountFileSystemType fstype = MountFileSystemType::Fat16;
+
 	std::vector<std::string> paths = {};
-	std::string type               = "dir";
-	std::string fstype             = "fat";
-	std::string label              = "";
+
+	std::string label = "";
 
 	// Geometry: [0]=BytesPerSector, [1]=Sectors, [2]=Heads, [3]=Cylinders
 	std::array<uint16_t, 4> sizes = {0, 0, 0, 0};
@@ -25,9 +34,14 @@ struct MountParameters {
 	bool is_ide               = false;
 	int8_t ide_index          = -1;
 	bool is_second_cable_slot = false;
-	uint8_t mediaid           = 0;
+
+	// Defaulting to Hard Disk prevents obscure issues in games like Hyperspace 
+	uint8_t mediaid           = MediaId::HardDisk;
+
 	// 0-3 vs A-Z
 	bool is_drive_number = false;
+
+	bool is_image_mode = false;
 };
 
 class MOUNT final : public Program {
@@ -47,25 +61,42 @@ public:
 
 	bool MountImage(MountParameters& params);
 
+	std::optional<MountParameters> ProcessArguments(CommandLine* cmd);
+
 private:
+	// Like every other option, the geometry options are removed from the
+	// command line before the paths are processed. Their values are held
+	// here because they can only be applied once the mount type is known,
+	// which may require auto-detection from the paths.
+	struct GeometryOptions {
+		std::optional<std::string> freesize = {};
+		std::optional<std::string> size     = {};
+		std::optional<std::string> chs      = {};
+	};
+
 	static void AddMessages();
 	void ShowUsage();
 
 	bool HandleUnmount();
 	bool ParseArguments(MountParameters& params, bool& explicit_fs,
 	                    bool& path_relative_to_last_config);
-	bool ParseGeometry(MountParameters& params);
+	GeometryOptions ParseGeometryOptions();
+	bool ParseGeometry(MountParameters& params, const GeometryOptions& options);
 	bool ParseDrive(MountParameters& params, bool explicit_fs);
 
 	std::string ApplyRelativePath(const std::string& path,
 	                              bool is_relative_to_last_config) const;
 	std::string GetDosMappedHostPath(const std::string& dos_path) const;
 
-	bool ProcessPaths(MountParameters& params, bool path_relative_to_last_config);
+	void ProcessPaths(const std::string first_path, MountParameters& params,
+	                  bool path_relative_to_last_config);
+
+	bool MountPaths(MountParameters& params);
+
 	void MountLocal(MountParameters& params, const std::string& local_path);
 
 	bool MountImageFat(MountParameters& params);
-	bool MountImageIso(MountParameters& params);
+	bool MountImageIso(const MountParameters& params);
 	bool MountImageRaw(MountParameters& params);
 
 	void WriteMountStatus(const std::string& image_type,
