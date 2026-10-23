@@ -3,6 +3,10 @@ permissions: read-all
 
 on:
   push:
+    branches:
+      - '**'
+    tags-ignore:
+      - dev-latest
     paths-ignore:
       - '.clang-format'
       - '.mdl-styles'
@@ -95,7 +99,7 @@ jobs:
           arch: "${{ matrix.conf.arch }}"
 
       - name: Set up CMake
-        uses: lukka/get-cmake@fffaaafeea488556c2c12dad60690008bc1caacb # v4.4.2
+        uses: lukka/get-cmake@a89e43e22a96abafcd7a62db652a65ecd33052c9 # v4.4.4
 
       - name:  Log environment
         shell: pwsh
@@ -267,6 +271,9 @@ jobs:
     name:    Build installer (${{ matrix.arch }} )
     needs:   merge_artifacts
     runs-on: windows-2025-vs2026
+    permissions:
+      contents: read
+      statuses: write
     strategy:
       matrix:
         # We only provide x64 installers as ARM64 support is experimental
@@ -346,3 +353,14 @@ jobs:
             ${{ env.PACKAGE_DIR }}-setup.exe
             release-notes.html
           overwrite: true
+
+      # Reports this job's own pass/fail as a separate GitHub status, since
+      # the workflow as a whole also includes the debugger build above,
+      # which can fail without this release build failing.
+      - name: Report dev build status
+        if:   (success() || failure()) && github.ref == 'refs/heads/main'
+        uses: ./.github/actions/report-dev-build-status
+        with:
+          platform:     windows
+          job_status:   ${{ job.status }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}

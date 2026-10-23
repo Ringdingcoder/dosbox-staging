@@ -1901,16 +1901,35 @@ void DOS_Destroy()
 static void notify_dos_setting_updated(SectionProp& section,
                                        [[maybe_unused]] const std::string& prop_name)
 {
-	DOS_Locale_Destroy();
-	DOS_Locale_Init(section);
+	// Only restart the modules affected by the changed setting; every
+	// EMS & XMS restart permanently burns a few paragraphs of the DOS
+	// private memory pool and reinstalls the XMS & EMS interfaces.
+	//
+	if (prop_name == "locale_period" || prop_name == "country") {
+		DOS_Locale_Destroy();
+		DOS_Locale_Init(section);
 
-	DOS_Files_Init(section);
+	} else if (prop_name == "file_locking") {
+		DOS_Files_Init(section);
 
-	EMS_Destroy();
-	EMS_Init(section);
+	} else if (prop_name == "ems") {
+		EMS_Destroy();
+		EMS_Init(section);
 
-	XMS_Destroy();
-	XMS_Init(section);
+		// The UMB chain built by the XMS module depends on EMS
+		// availability
+		XMS_Destroy();
+		XMS_Init(section);
+
+	} else if (prop_name == "xms" || prop_name == "umb") {
+		XMS_Destroy();
+		XMS_Init(section);
+	}
+
+	// 'ver' only takes effect at startup (the VER command handles runtime
+	// changes) and 'expand_shell_variable' is evaluated on command
+	// execution.
+	//
 
 	// The MSCDEX, DRIVES, and CDROM_Image modules are only initalised
 	// once at startup.
@@ -1938,9 +1957,23 @@ static void init_dos_settings(SectionProp& section)
 	auto pstring = section.AddString("ems", WhenIdle, "on");
 	pstring->SetValues({"on", "emsboard", "emm386", "off"});
 	pstring->SetHelp(
-	        "Enable EMS support ('on' by default). Enabled provides the best compatibility\n"
-	        "but certain applications may run better with other choices, or require EMS\n"
-	        "support to be disabled to work at all.");
+	        "Enable EMS memory support ('on' by default). Possible values:\n"
+	        "\n"
+	        "  off:       Disable EMS entirely. INT 67h is not installed, so programs that\n"
+	        "             probe for it correctly detect it as absent.\n"
+	        "\n"
+	        "  on:        Standard LIM EMS via the INT 67h page-frame interface, without\n"
+	        "             emulating a protected-mode memory manager (default). Provides the\n"
+	        "             best compatibility with most software.\n"
+	        "\n"
+	        "  emsboard:  Emulates a physical EMS expansion board rather than a software\n"
+	        "             manager: real mode only, no VCPI. Useful for software that expects\n"
+	        "             board-style EMS behavior, or on pre-386 CPU types where EMM386-\n"
+	        "             style emulation isn't possible.\n"
+	        "\n"
+	        "  emm386:    Emulates EMS the way loading EMM386.EXE under real DOS would,\n"
+	        "             including VCPI support for DOS extenders that switch to protected\n"
+	        "             mode, and matching its DMA-wrapping behavior.");
 
 	pbool = section.AddBool("umb", WhenIdle, true);
 	pbool->SetHelp("Enable UMB memory support ('on' by default).");
@@ -1961,10 +1994,12 @@ static void init_dos_settings(SectionProp& section)
 	        "\n"
 	        "  auto:        Enable on AT-class machine types with the MS-DOS defaults\n"
 	        "               (9 stacks of 128 bytes each). Disable on PC/XT-class machine\n"
-			"               types (e.g., cga, pcjr, tandy).\n"
+	        "               types (e.g., cga, pcjr, tandy).\n"
+	        "\n"
 	        "  count,size:  Allocate `count` private stacks of `size` bytes each, e.g.\n"
 	        "               'stacks = 9,128'. Equivalent to the DOS 'STACKS=count,size'\n"
 	        "               setting; 'count' must be 8-64, 'size' must be 32-512.\n"
+	        "\n"
 	        "  0,0:         Disable; use the interrupted program's stack.");
 
 	pstring = section.AddString("pcjr_memory_config", OnlyAtStart, "expanded");

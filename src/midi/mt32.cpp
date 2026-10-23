@@ -621,6 +621,7 @@ static mt32emu_report_handler_i get_report_handler_interface()
 static std::unique_ptr<MT32Emu::Service> create_mt32_service()
 {
 	auto service = std::make_unique<MT32Emu::Service>();
+
 	// Has libmt32emu already created a context?
 	if (!service->getContext()) {
 		service->createContext(get_report_handler_interface(), nullptr);
@@ -650,7 +651,8 @@ static std::set<const LASynthModel*> find_available_models(MT32Emu::Service& ser
 
 MidiDeviceMt32::MidiDeviceMt32()
 {
-	auto mt32_service     = create_mt32_service();
+	auto mt32_service = create_mt32_service();
+
 	const auto model_name = get_model_setting();
 	const auto rom_dirs   = get_rom_dirs();
 
@@ -667,6 +669,8 @@ MidiDeviceMt32::MidiDeviceMt32()
 		}
 		throw std::runtime_error(msg);
 	}
+
+	const std::lock_guard<std::mutex> lock(service_mutex);
 
 	mt32emu_rom_info rom_info;
 	mt32_service->getROMInfo(&rom_info);
@@ -700,33 +704,31 @@ MidiDeviceMt32::MidiDeviceMt32()
 	MIXER_LockMixerThread();
 
 	// Set up the mixer callback
-	const auto mixer_callback = std::bind(&MidiDeviceMt32::MixerCallback,
-	                                      this,
-	                                      std::placeholders::_1);
+	const auto mixer_callback = std::bind_front(&MidiSynth::MixerCallback, this);
 
-	auto mixer_channel = MIXER_AddChannel(mixer_callback,
-	                                      sample_rate_hz,
-	                                      ChannelName::RolandMt32,
-	                                      {ChannelFeature::Sleep,
-	                                       ChannelFeature::Stereo,
-	                                       ChannelFeature::Synthesizer});
+	auto channel = MIXER_AddChannel(mixer_callback,
+	                                sample_rate_hz,
+	                                ChannelName::RolandMt32,
+	                                {ChannelFeature::Sleep,
+	                                 ChannelFeature::Stereo,
+	                                 ChannelFeature::Synthesizer});
 
-	mixer_channel->SetResampleMethod(ResampleMethod::Resample);
+	channel->SetResampleMethod(ResampleMethod::Resample);
 
 	// libmt32emu renders float audio frames between -1.0f and +1.0f, so we
 	// ask the channel to scale all the samples up to its 0db level.
-	mixer_channel->Set0dbScalar(Max16BitSampleValue);
+	channel->Set0dbScalar(Max16BitSampleValue);
 
 	const std::string filter_prefs = get_mt32_section()->GetString("mt32_filter");
 
-	if (!mixer_channel->TryParseAndSetCustomFilter(filter_prefs)) {
+	if (!channel->TryParseAndSetCustomFilter(filter_prefs)) {
 		if (!has_false(filter_prefs)) {
 			LOG_WARNING("MT32: Invalid 'mt32_filter' value: '%s', using 'off'",
 			            filter_prefs.c_str());
 		}
 
-		mixer_channel->SetHighPassFilter(FilterState::Off);
-		mixer_channel->SetLowPassFilter(FilterState::Off);
+		channel->SetHighPassFilter(FilterState::Off);
+		channel->SetLowPassFilter(FilterState::Off);
 
 		set_section_property_value("mt32", "mt32_filter", "off");
 	}
@@ -749,11 +751,11 @@ MidiDeviceMt32::MidiDeviceMt32()
 
 	// Move the local objects into the member variables
 	service       = std::move(mt32_service);
-	channel       = std::move(mixer_channel);
+	mixer_channel = std::move(channel);
 	model_and_dir = std::move(*loaded_model_and_dir);
 
 	// Start rendering audio
-	const auto render = std::bind(&MidiDeviceMt32::Render, this);
+	const auto render = std::bind_front(&MidiDeviceMt32::Render, this);
 	renderer          = std::thread(render);
 	set_thread_name(renderer, "dosbox:mt32");
 
@@ -761,136 +763,13 @@ MidiDeviceMt32::MidiDeviceMt32()
 	MIXER_UnlockMixerThread();
 }
 
-MidiDeviceMt32::~MidiDeviceMt32()
+void MidiDeviceMt32::CloseSynth()
 {
-	LOG_MSG("MT32: Shutting down");
+	const std::lock_guard<std::mutex> lock(service_mutex);
 
-	if (had_underruns) {
-		LOG_WARNING(
-		        "MT32: Fix underruns by lowering the CPU load or increasing "
-		        "the 'prebuffer' or 'blocksize' settings");
-	}
-
-	MIXER_LockMixerThread();
-
-	// Stop playback
-	if (channel) {
-		channel->Enable(false);
-	}
-
-	// Stop queueing new MIDI work and audio frames
-	work_fifo.Stop();
-	audio_frame_fifo.Stop();
-
-	// Wake the renderer via the pauser's condvar if it's parked (stopping
-	// `work_fifo` alone does not notify it); once unblocked it sees
-	// `work_fifo` has stopped and exits its loop cleanly.
-	Resume();
-
-	// Wait for the rendering thread to finish
-	if (renderer.joinable()) {
-		renderer.join();
-	}
-
-	// Stop the synthesizer
 	if (service) {
-		const std::lock_guard<std::mutex> lock(service_mutex);
 		service->closeSynth();
 		service->freeContext();
-	}
-
-	// Deregister the mixer channel and remove it
-	assert(channel);
-	MIXER_DeregisterChannel(channel);
-	channel.reset();
-
-	MIXER_UnlockMixerThread();
-}
-
-int MidiDeviceMt32::GetNumPendingAudioFrames()
-{
-	const auto now_ms = PIC_FullIndex();
-
-	// Wake up the channel and update the last rendered time datum.
-	assert(channel);
-	if (channel->WakeUp()) {
-		last_rendered_ms = now_ms;
-		return 0;
-	}
-	if (last_rendered_ms >= now_ms) {
-		return 0;
-	}
-
-	// Return the number of audio frames needed to get current again
-	assert(ms_per_audio_frame > 0.0);
-
-	const auto elapsed_ms = now_ms - last_rendered_ms;
-	const auto num_audio_frames = iround(ceil(elapsed_ms / ms_per_audio_frame));
-	last_rendered_ms += (num_audio_frames * ms_per_audio_frame);
-
-	return num_audio_frames;
-}
-
-// The request to play the channel message is placed in the MIDI work FIFO
-void MidiDeviceMt32::SendMidiMessage(const MidiMessage& msg)
-{
-	std::vector<uint8_t> message(msg.data.begin(), msg.data.end());
-
-	MidiWork work{std::move(message),
-	              GetNumPendingAudioFrames(),
-	              MessageType::Channel,
-	              PIC_AtomicIndex()};
-
-	work_fifo.Enqueue(std::move(work));
-}
-
-// The request to play the sysex message is placed in the MIDI work FIFO
-void MidiDeviceMt32::SendSysExMessage(uint8_t* sysex, size_t len)
-{
-	std::vector<uint8_t> message(sysex, sysex + len);
-
-	MidiWork work{std::move(message),
-	              GetNumPendingAudioFrames(),
-	              MessageType::SysEx,
-	              PIC_AtomicIndex()};
-
-	work_fifo.Enqueue(std::move(work));
-}
-
-// The callback operates at the audio frame-level, steadily adding samples to
-// the mixer until the requested numbers of audio frames is met.
-void MidiDeviceMt32::MixerCallback(const int requested_audio_frames)
-{
-	assert(channel);
-
-	// Report buffer underruns
-	constexpr auto warning_percent = 5.0f;
-
-	if (const auto percent_full = audio_frame_fifo.GetPercentFull();
-	    percent_full < warning_percent) {
-		static auto iteration = 0;
-		if (iteration++ % 100 == 0) {
-			LOG_WARNING("MT32: Audio buffer underrun");
-		}
-		had_underruns = true;
-	}
-
-	static std::vector<AudioFrame> audio_frames = {};
-
-	// A short read means the fifo was stopped for a pause (or a genuine
-	// underrun): add whatever we got and pad the shortfall with silence.
-	// Never hand `AddSamples_sfloat` fewer frames than it will read.
-	const auto num_dequeued = audio_frame_fifo.BulkDequeue(audio_frames,
-	                                                       requested_audio_frames);
-
-	if (num_dequeued > 0) {
-		channel->AddSamples_sfloat(check_cast<int>(num_dequeued),
-		                           &audio_frames[0][0]);
-
-		last_rendered_ms = PIC_AtomicIndex();
-	}
-	if (check_cast<int>(num_dequeued) < requested_audio_frames) {
-		channel->AddSilence();
 	}
 }
 
@@ -905,73 +784,27 @@ void MidiDeviceMt32::RenderAudioFramesToFifo(const int num_frames)
 
 	std::unique_lock<std::mutex> lock(service_mutex);
 	service->renderFloat(&audio_frames[0][0], num_frames);
-	lock.unlock();
 
 	audio_frame_fifo.BulkEnqueue(audio_frames, num_frames);
 }
 
-// The next MIDI work task is processed, which includes rendering audio frames
-// prior to applying channel and sysex messages to the service
-void MidiDeviceMt32::ProcessWorkFromFifo()
+void MidiDeviceMt32::ProcessWorkItem(const MidiWork& work)
 {
-	const auto work = work_fifo.Dequeue();
-	if (!work) {
-		return;
-	}
-
-#ifdef DEBUG_MT32
-	LOG_TRACE(
-	        "MT32: %2u audio frames prior to %s message, followed by "
-	        "%2lu more messages. Have %4lu audio frames queued",
-	        work->num_pending_audio_frames,
-	        work->message_type == MessageType::Channel ? "channel" : "sysex",
-	        work_fifo.Size(),
-	        audio_frame_fifo.Size());
-#endif
-
-	if (work->num_pending_audio_frames > 0) {
-		RenderAudioFramesToFifo(work->num_pending_audio_frames);
-	}
-
-	// Request exclusive access prior to applying messages
 	const std::lock_guard<std::mutex> lock(service_mutex);
 
-	if (work->message_type == MessageType::Channel) {
-		assert(work->message.size() <= MaxMidiMessageLen);
+	if (work.message_type == MessageType::Channel) {
+		assert(work.message.size() <= MaxMidiMessageLen);
 
-		const auto& data   = work->message.data();
+		const auto& data   = work.message.data();
 		const uint32_t msg = data[0] + (data[1] << 8) + (data[2] << 16);
 
 		service->playMsg(msg);
 	} else {
-		assert(work->message_type == MessageType::SysEx);
+		assert(work.message_type == MessageType::SysEx);
 
-		service->playSysex(work->message.data(),
-		                   static_cast<uint32_t>(work->message.size()));
+		service->playSysex(work.message.data(),
+		                   static_cast<uint32_t>(work.message.size()));
 	}
-}
-
-// Keep the FIFO populated with freshly rendered buffers
-void MidiDeviceMt32::Render()
-{
-	while (work_fifo.IsRunning()) {
-		if (pauser.ParkIfPaused(audio_frame_fifo)) {
-			continue;
-		}
-
-		work_fifo.IsEmpty() ? RenderAudioFramesToFifo()
-		                    : ProcessWorkFromFifo();
-	}
-}
-
-void MidiDeviceMt32::Pause()
-{
-	pauser.Pause();
-}
-
-void MidiDeviceMt32::Resume()
-{
-	pauser.Resume();
 }
 
 ModelAndDir MidiDeviceMt32::GetModelAndDir()

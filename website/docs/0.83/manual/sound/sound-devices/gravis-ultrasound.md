@@ -68,7 +68,7 @@ they upload their own instrument samples and use the hardware mixer directly.
 ### GUS MIDI with patch files
 
 These games have a built-in GUS driver that sends MIDI commands and loads
-instrument samples (patch files) from the [`ultradir`](#ultradir) directory to
+instrument samples (patch files) from the [`ultradir`](#ultradir) folder to
 use as wavetable instruments. The GUS acts as a MIDI synthesiser --- the result
 can sound very good, somewhere between FM synthesis and true General MIDI. The
 patch files must be placed in a `MIDI` subdirectory under
@@ -102,10 +102,10 @@ ultradir = C:\ULTRASND
 
 These games have no GUS-specific code at all --- they send standard MIDI
 commands as if talking to a [Roland MT-32](roland-mt-32.md) or [General
-MIDI](../midi.md#the-general-midi-standard) device. The `ULTRAMID.EXE` TSR
-provided by Gravis intercepts these MIDI commands and translates them into GUS
-hardware calls, loading instrument samples from the patch files on disk. Load
-`ULTRAMID.EXE` before starting the game:
+MIDI](../midi.md#roland-sound-canvas-sc-55) device. The `ULTRAMID.EXE`
+TSR provided by Gravis intercepts these MIDI commands and translates them into
+GUS hardware calls, loading instrument samples from the patch files on disk.
+Load `ULTRAMID.EXE` before starting the game:
 
 ``` ini
 [gus]
@@ -120,6 +120,7 @@ C:\ULTRASND\ULTRAMID.EXE
 
     <div class="compact" markdown>
 
+    - [7th Guest, The (1993)](https://www.mobygames.com/game/561/the-7th-guest/)
     - [Betrayal at Krondor (1993)](https://www.mobygames.com/game/236/betrayal-at-krondor/)
     - [Eye of the Beholder (1991)](https://www.mobygames.com/game/1441/eye-of-the-beholder/)
     - [Hocus Pocus (1994)](https://www.mobygames.com/game/1237/hocus-pocus/)
@@ -127,7 +128,6 @@ C:\ULTRASND\ULTRAMID.EXE
     - [Master of Orion (1993)](https://www.mobygames.com/game/466/master-of-orion/)
     - [Monkey Island 2: LeChuck's Revenge (1991)](https://www.mobygames.com/game/616/monkey-island-2-lechucks-revenge/)
     - [Sam & Max Hit the Road (1993)](https://www.mobygames.com/game/373/sam-max-hit-the-road/)
-    - [The 7th Guest (1993)](https://www.mobygames.com/game/561/the-7th-guest/)
     - [Ultima Underworld: The Stygian Abyss (1992)](https://www.mobygames.com/game/690/ultima-underworld-the-stygian-abyss/)
     - [X-COM: UFO Defense (1994)](https://www.mobygames.com/game/1358/x-com-ufo-defense/)
 
@@ -313,6 +313,19 @@ gus = on
 This can be useful for games where the GUS and Sound Blaster interfere with
 each other, or when you want to ensure a game uses its GUS code path
 exclusively.
+
+
+### Authentic clipping emulation
+
+The GUS simply sums the output its hardware mixer channels into a 16-bit
+accumulator, and clipping prevention is left to the composer or programmer ---
+some even drove output into clipping deliberately for a harder sound as an
+artistic choice. Also note that minor clipping is often barely audible.
+
+Leave the `GUS` mixer channel volume at 100 for authentic clipping behavior,
+and turn down the `MASTER` channel if it's too loud. Alternatively, lower the
+`GUS` channel's volume for more headroom, though this might yield less
+authentic results --- the choice is yours.
 
 
 ## Mixer channel

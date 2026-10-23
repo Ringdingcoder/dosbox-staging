@@ -14,12 +14,14 @@ add_executable(dosbox_tests
     drives_tests.cpp
     fraction_tests.cpp
     fs_utils_tests.cpp
+    i8042_wide_read_tests.cpp
     image_decoder_tests.cpp
     int10_modes_tests.cpp
     language_territory_tests.cpp
     math_utils_tests.cpp
     messages_adjust_tests.cpp
     mixer_tests.cpp
+    mount_tests.cpp
     port_containers_tests.cpp
     program_mixer_tests.cpp
     rect_tests.cpp
@@ -33,6 +35,7 @@ add_executable(dosbox_tests
     # stubs.cpp
     support_tests.cpp
     unicode_tests.cpp
+    window_geometry_tests.cpp
     multi_prefix_tests.cpp
 )
 

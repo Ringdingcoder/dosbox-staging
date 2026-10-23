@@ -1,74 +1,55 @@
 # DOS
 
-The `[dos]` section controls the emulated DOS environment itself --- version
-number, memory management, and regional settings.
+DOSBox Staging doesn't just run old programs --- it emulates the MS-DOS
+operating environment underneath them. Games talk to this emulated DOS
+directly: they check its version number and rely on quirks of how its shell
+behaves. When an old game misbehaves, one possible reason is that the emulated
+DOS doesn't match what the game expects. These settings let you close that
+gap.
 
-The reported DOS version defaults to 5.0, which covers the vast majority of
-games from the entire DOS era. A handful of very late titles check for DOS
-7.0, and some very early ones expect DOS 3.0, but these are edge cases you'll
-likely never hit.
 
-### Memory management
+## DOS version and compatibility
 
-The first IBM PCs only supported up to 640 KB of memory --- the so-called
-"conventional memory" that DOS programs can access directly. As PCs gained more
-RAM, a patchwork of standards emerged to make the extra memory available:
+The [`ver`](#ver) setting controls which DOS version is reported to programs.
+The default `5.0` is the most widely compatible. Some older games require
+`3.3`, while a few late-era programs need `6.22` or `7.1`. If you need to
+report a different version to just one program without changing the global
+setting, use [`setver_table_file`](#setver_table_file) with `SETVER.EXE`.
 
-- **XMS** (Extended Memory) --- the main pool of memory above 1 MB. This is
-  what the [`memsize`](general.md#memsize) setting controls (16 MB by default).
-  Nearly all games from the late DOS era use XMS.
+Setting the DOS version to 7.0 or above also turns on environment variable
+expansion in the shell by default (see
+[`expand_shell_variable`](#expand_shell_variable)).
 
-- **EMS** (Expanded Memory) --- an older scheme that maps 64 KB pages of
-  memory into the conventional memory area. Some early to mid-1990s games
-  require EMS; a few older titles may actually malfunction if it's enabled.
+The [`file_locking`](#file_locking) setting emulates `SHARE.EXE` file
+locking, which some Windows 3.1 applications need to work properly. It's on
+automatically when Windows 3.1 is running. If a DOS game crashes with file
+locking on, try setting it to `off`.
 
-- **UMB** (Upper Memory Blocks) --- small pockets of memory between 640 KB
-  and 1 MB, used to free up conventional memory by loading drivers and TSRs
-  into them.
 
-All three are enabled by default and you can safely ignore them. On the rare
-occasion a game misbehaves (usually an old title that chokes on EMS),
-disabling the offending memory type is a quick fix.
+## Shell behaviour
+
+The shell supports persistent
+[command history](../using-dosbox-staging/shell.md#command-history), stored
+via [`shell_history_file`](#shell_history_file); set that to empty to turn
+history off. [`expand_shell_variable`](#expand_shell_variable) controls
+whether things like `%PATH%` get expanded in commands, and
+[`shell_config_shortcuts`](#shell_config_shortcuts) lets you type `sbtype
+sb16` instead of `config -set sbtype sb16`.
+
+
+## Automount
+
+[`automount`](#automount_1) turns automatic drive mounting on or off. For how
+automounting actually works --- the `drives/` folder structure, mount-config
+files, and so on --- see
+[Automounting](../using-dosbox-staging/storage.md#automounting).
+
 
 ## Regional settings
 
 For language, country, keyboard layout, and code page settings, see the
 dedicated [Localisation](localisation.md) chapter.
 
-## DOS version and compatibility
-
-The [`ver`](#ver) setting controls which DOS version is reported to programs.
-The default `5.0` is the most widely compatible. Some older games require
-`3.3`, while a few late-era programs need `6.22` or `7.1`. Setting the DOS
-version to 7.0 or above automatically enables environment variable expansion
-in the DOS shell (see [`expand_shell_variable`](#expand_shell_variable)).
-
-The [`setver_table_file`](#setver_table_file) setting provides persistent
-storage for the `SETVER` command, which lets you report a different DOS version
-to specific programs without changing the global version.
-
-The [`file_locking`](#file_locking) setting emulates `SHARE.EXE` file locking.
-The default `auto` only enables it when Windows 3.1 is running, as it's
-required for some Windows 3.1 applications. In rare cases (e.g., Astral Blur
-demo), it can cause crashes in DOS games --- set it to `off` if that happens.
-
-## Shell settings
-
-The DOS shell supports persistent
-[command history](../using-dosbox-staging/shell.md#command-history) and
-environment variable expansion. The
-[`shell_history_file`](#shell_history_file) setting controls where the history
-is stored; set it to empty to disable persistence. The
-[`expand_shell_variable`](#expand_shell_variable) setting controls whether
-variables like `%PATH%` are expanded in commands --- the default `auto` enables
-this for DOS 7.0+ (matching real FreeDOS and MS-DOS 7 behaviour).
-
-## PCjr memory
-
-The [`pcjr_memory_config`](#pcjr_memory_config) setting controls memory layout
-on the emulated PCjr. The default `expanded` provides 640 KB and is compatible
-with most games. A few very old PCjr titles ([Jumpman](https://www.mobygames.com/game/80/jumpman/), [Troll](https://www.mobygames.com/game/14214/troll/)) require the
-`standard` 128 KB layout.
 
 ## Interrupt stacks
 
@@ -78,12 +59,13 @@ of stacks; whenever a hardware interrupt fires, DOSBox Staging switches to a
 free slot before invoking the handler, then restores the original stack on the
 way out.
 
-The default `auto` enables the feature on AT-class [`machine`](general.md#machine) types, using the
-same defaults MS-DOS used --- 9 stacks of 128 bytes each. It is disabled
-automatically on PC/XT-class machines (e.g., `cga`, `pcjr`, `tandy`), since this
-was the default under DOS. You will rarely need to change this; it exists for
-the edge case where a specific program misbehaves with interrupt stacks
-enabled, or needs a different stack count or size.
+The default `auto` enables the feature on AT-class
+[`machine`](machine-types.md) types, using the same defaults MS-DOS used --- 9
+stacks of 128 bytes each. It is disabled automatically on PC/XT-class machines
+(e.g., `cga`, `pcjr`, `tandy`), since this was the default under DOS. You will
+rarely need to change this; it exists for the edge case where a specific
+program misbehaves with interrupt stacks enabled, or needs a different stack
+count or size.
 
 !!! note
 
@@ -95,53 +77,12 @@ enabled, or needs a different stack count or size.
     their own data if an interrupt handler (and any handlers it triggers in
     turn) together need more space than the program left available.
 
+
 ## Configuration settings
 
-You can set the DOS parameters in the `[dos]` configuration section.
-
-
-### Memory
-
-##### ems
-
-:   Enable EMS support. Enabled provides the best compatibility but certain
-    applications may run better with other choices, or require EMS support to
-    be disabled to work at all.
-
-    Possible values: `on` *default*{ .default }, `off`
-
-
-##### xms
-
-:   Enable XMS memory support.
-
-    Possible values: `on` *default*{ .default }, `off`
-
-
-##### umb
-
-:   Enable UMB memory support.
-
-    Possible values: `on` *default*{ .default }, `off`
-
-
-##### pcjr_memory_config
-
-:   Set PCjr memory layout.
-
-    Possible values:
-
-    <div class="compact" markdown>
-
-    - `expanded` *default*{ .default } -- 640 KB total memory with
-      applications residing above 128 KB. Compatible with most games.
-    - `standard` -- 128 KB total memory with applications residing below
-      96 KB. Required for some older games (e.g., Jumpman, Troll).
-
-    </div>
-
-
 ### Shell & version
+
+You can set these parameters in the `[dos]` configuration section.
 
 ##### ver
 
@@ -200,33 +141,121 @@ You can set the DOS parameters in the `[dos]` configuration section.
     default). Setting it to empty disables persistent shell history.
 
 
-### Interrupt stacks
+### Startup & shell shortcuts
 
-##### stacks
+You can set these parameters in the `[dosbox]` configuration section.
 
-:   Use DOS-style private stacks for hardware interrupts ('auto' by default).
-    When a wrapped hardware interrupt fires, DOSBox Staging switches to one
-    stack from a private pool before invoking the previous handler. Disabling
-    this means each running program must have enough stack space for hardware
-    interrupts (and any chained handlers) itself. Most programs work correctly
-    without it; a few legacy programs depend on it to avoid corrupting their
-    own stack.
+##### autoexec_section
 
-    Note: the current implementation wraps the timer interrupt (INT 08h, IRQ0)
-    and the keyboard interrupt (INT 09h, IRQ1). MS-DOS's STACKS feature wraps
-    additional hardware-IRQ vectors; coverage may be expanded in future
-    versions.
+:   How autoexec sections are handled from multiple config files.
 
     Possible values:
 
     <div class="compact" markdown>
 
-    - `auto` *default*{ .default } -- Enable on AT-class machine types with
-      the MS-DOS defaults (9 stacks of 128 bytes each). Disable on PC/XT-class
-      machine types (e.g., `cga`, `pcjr`, `tandy`).
-    - `count,size` -- Allocate `count` private stacks of `size` bytes each,
-      e.g. 'stacks = 9,128'. Equivalent to the DOS 'STACKS=count,size' setting;
-      'count' must be 8-64, 'size' must be 32-512.
-    - `0,0` -- Disable; use the interrupted program's stack.
+    - `join` *default*{ .default } -- Combine them into one big section.
+    - `overwrite` -- Use the last one encountered, like other config
+      settings.
 
     </div>
+
+
+##### automount
+
+:   Mount `drives/[c]` folders as drives on startup, where `[c]` is a
+    lower-case drive letter from `a` to `y`. The `drives` folder can be
+    provided relative to the current folder or via built-in resources. Mount
+    settings can be optionally provided using a `[c].conf` file alongside the
+    drive's folder.
+
+    Possible values: `on` *default*{ .default }, `off`
+
+
+##### startup_verbosity
+
+:   Controls verbosity prior to displaying the program.
+
+    Possible values:
+
+    <div class="compact" markdown>
+
+    - `auto` *default*{ .default } -- `low` if exec or dir is passed,
+      otherwise `high`.
+    - `high` -- Show welcome banner and early stdout.
+    - `low` -- Show early stdout only.
+    - `quiet` -- Don't show welcome banner or early stdout.
+
+    </div>
+
+
+##### shell_config_shortcuts
+
+:   Allow shortcuts for simpler configuration management. E.g., instead of
+    `config -set sbtype sb16`, it is enough to execute `sbtype sb16`, and
+    instead of `config -get sbtype`, you can just execute the `sbtype`
+    command.
+
+    Possible values: `on` *default*{ .default }, `off`
+
+
+##### allow_write_protected_files
+
+:   Many games open all their files with writable permissions; even files that
+    they never modify. This setting lets you write-protect those files while
+    still allowing the game to read them. A second use-case: if you're using a
+    copy-on-write or network-based filesystem, this setting avoids triggering
+    write operations for these write-protected files.
+
+    Possible values: `on` *default*{ .default }, `off`
+
+
+##### mcb_fault_strategy
+
+:   How software-corrupted memory chain blocks should be handled.
+
+    Possible values:
+
+    <div class="compact" markdown>
+
+    - `repair` *default*{ .default } -- Repair (and report) faults using
+      adjacent blocks.
+    - `report` -- Report faults but otherwise proceed as-is.
+    - `allow` -- Allow faults to go unreported (hardware behaviour).
+    - `deny` -- Quit (and report) when faults are detected.
+
+    </div>
+
+
+### Interrupt stacks
+
+You can set these parameters in the `[dos]` configuration section.
+
+##### stacks
+
+:   Use DOS-style private stacks for hardware interrupts. When a wrapped
+    hardware interrupt fires, DOSBox Staging switches to one stack from a
+    private pool before invoking the previous handler. Disabling this means
+    each running program must have enough stack space for hardware interrupts
+    (and any chained handlers) itself. Most programs work correctly without
+    it; a few legacy programs depend on it to avoid corrupting their own
+    stack.
+
+    Possible values:
+
+    - `auto` *default*{ .default } -- Enable on AT-class machine types with
+      the MS-DOS defaults (9 stacks of 128 bytes each). Disable on PC/XT-class
+      [machine](machine-types.md) types (e.g., `cga`, `pcjr`, `tandy`).
+
+    - `count,size` -- Allocate `count` private stacks of `size` bytes each,
+      e.g. `stacks = 9,128`. Equivalent to the DOS `STACKS=count,size` setting;
+      `count` must be 8-64, 'size' must be 32-512.
+
+    - `0,0` -- Disable; use the interrupted program's stack.
+
+    !!! note
+
+        The current implementation wraps the timer interrupt (INT 08h, IRQ0)
+        and the keyboard interrupt (INT 09h, IRQ1). MS-DOS's STACKS feature wraps
+        additional hardware-IRQ vectors; coverage may be expanded in future
+        versions.
+

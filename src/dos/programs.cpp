@@ -49,8 +49,6 @@ using comdata_t = std::vector<uint8_t>;
 static std::vector<comdata_t> internal_progs_comdata;
 static std::vector<PROGRAMS_Creator> internal_progs;
 
-constexpr int WriteOutBufSize = 16384;
-
 void PROGRAMS_MakeFile(const char* name, PROGRAMS_Creator creator)
 {
 	comdata_t comdata(exe_block.begin(), exe_block.end());
@@ -145,14 +143,14 @@ extern std::string full_arguments;
 
 void Program::ChangeToLongCmd()
 {
-	// Get arguments directly from the shell instead of the psp.
-	// this is done in securemode: (as then the arguments to mount and
-	// friends can only be given on the shell ( so no int 21 4b) Securemode
-	// part is disabled as each of the internal command has already
-	// protection for it. (and it breaks games like cdman) it is also done
-	// for long arguments to as it is convient (as the total commandline can
-	// be longer then 127 characters. imgmount with lot's of parameters
-	// Length of arguments can be ~120. but switch when above 100 to be sure
+	// Get arguments directly from the shell instead of the psp. This is done
+	// in securemode, as then the arguments to mount and friends can only be
+	// given on the shell (so no int 21 4b). Securemode part is disabled as
+	// each of the internal command has already protection for it (and it
+	// breaks games like cdman). it is also done for long arguments to as it
+	// is convenient (as the total commandline can be longer then 127
+	// characters (e.g. MOUNT with lot's of parameters). Length of arguments
+	// can be ~120, but switch when above 100 to be sure.
 
 	if (/*control->SecureMode() ||*/ cmd->GetNumArguments() > 100) {
 		auto temp = new CommandLine(cmd->GetFileName(), full_arguments);
@@ -186,25 +184,17 @@ bool Program::SuppressWriteOut(const std::string& format) const
 	return true;
 }
 
-// TODO Only used by the unit tests, try to get rid of it later
-void Program::WriteOut(const std::string& format, const char* arguments)
-{
-	if (SuppressWriteOut(format)) {
-		return;
-	}
-
-	char buf[WriteOutBufSize];
-	std::snprintf(buf, WriteOutBufSize, format.c_str(), arguments);
-
-	CONSOLE_Write(buf);
-}
-
 void Program::WriteOut_NoParsing(const std::string& str)
 {
 	if (SuppressWriteOut(str)) {
 		return;
 	}
 
+	WriteToConsole(str);
+}
+
+void Program::WriteToConsole(const std::string& str)
+{
 	CONSOLE_Write(str);
 }
 
@@ -1084,6 +1074,8 @@ void PROGRAMS_AddMessages()
 	        "line arguments:[reset]\n  %s\n");
 
 	MSG_Add("PROGRAM_CONFIG_MISSINGPARAM", "Missing parameter.\n");
+
+	MSG_Add("PROGRAM_MISSING_OPTION_VALUE", "Option '%s' requires a value.\n");
 
 	MSG_Add("PROGRAM_PATH_TOO_LONG",
 	        "The path '%s' exceeds the DOS limit of %d characters.\n");

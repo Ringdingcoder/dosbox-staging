@@ -88,7 +88,7 @@ driver for proper SVGA support inside Windows.
   a safe starting point.
 
 - Higher resolutions up to 1600&times;1200 are available if you set
-  [`vmemsize`](../system/general.md#vmemsize) to `4` or higher.
+  [`vmemsize`](../graphics/adapters.md#vmemsize) to `4` or higher.
 
 !!! important
 
@@ -135,7 +135,7 @@ After installing the Sound Blaster 16 driver, configure MIDI output:
 This routes MIDI output through DOSBox's configured
 [`mididevice`](../sound/midi.md#mididevice), so you can use
 [Roland MT-32](../sound/sound-devices/roland-mt-32.md),
-[Sound Canvas SC-55](../sound/sound-devices/sound-canvas.md),
+[Sound Canvas SC-55](../sound/sound-devices/roland-sound-canvas.md),
 or [FluidSynth](../sound/sound-devices/fluidsynth.md), 
 emulation for Windows 3.1 games --- just change the `mididevice` setting in
 your DOSBox config.

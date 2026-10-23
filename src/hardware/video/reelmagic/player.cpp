@@ -790,12 +790,14 @@ void ReelMagic_EnableAudioChannel(const bool should_enable)
 		return;
 	}
 
-	constexpr bool Stereo = true;
-	constexpr bool SignedData = true;
+	constexpr bool Stereo      = true;
+	constexpr bool SignedData  = true;
 	constexpr bool NativeOrder = true;
-	const auto audio_callback = std::bind(MIXER_PullFromQueueCallback<ReelMagicAudio, AudioFrame, Stereo, SignedData, NativeOrder>,
-	                                std::placeholders::_1,
-	                                &reel_magic_audio);
+
+	const auto audio_callback = std::bind(
+	        MIXER_PullFromQueueCallback<ReelMagicAudio, AudioFrame, Stereo, SignedData, NativeOrder>,
+	        std::placeholders::_1,
+	        &reel_magic_audio);
 
 	reel_magic_audio.channel = MIXER_AddChannel(audio_callback,
 	                                 UseMixerRate,

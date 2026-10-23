@@ -1,33 +1,59 @@
 # FluidSynth
 
+!!! tip "New to MIDI in DOS games?"
+
+    If you're not familiar with how MIDI works in DOS games, read the overview
+    in the [MIDI](../midi.md) section first --- it explains how DOS games use
+    MIDI and the difference between the [Roland MT-32](roland-mt-32.md) family
+    of devices and [Roland Sound Canvas / General
+    MIDI](roland-sound-canvas.md).
+
 **FluidSynth** is a built-in software MIDI synthesiser that uses **SoundFont**
-(`.sf2`) sample banks to generate audio. Unlike [Sound Canvas](sound-canvas.md)
-emulation, it does not attempt to replicate any specific hardware device ---
-instead, the character of the music depends entirely on which SoundFont you
-load. This makes it very flexible but also means results vary: a good SoundFont
-can sound close to an SC-55 on many games, while a poor one can sound
-noticeably wrong.
+(`.sf2`) sample banks to generate audio. It can play **General MIDI (GM)**
+music, but it does not emulate any particular MIDI sound module.
 
-FluidSynth is lighter on CPU than Sound Canvas emulation and is a good
-option when you don't have SC-55 ROMs or when you prefer a particular
-SoundFont's character.
+This distinction is important: General MIDI is a **standard**, not a sound
+module. The [Roland Sound Canvas](roland-sound-canvas.md), for example, is a
+specific MIDI sound module that supports General MIDI. Its particular samples,
+synthesis, and effects give it a characteristic sound. FluidSynth instead
+generates its sounds from whichever SoundFont you select, so two SoundFonts
+can produce noticeably different results when playing back the same General
+MIDI music.
 
-For background on the General MIDI standard and help deciding which MIDI
-device to use for a particular game, see the [MIDI overview](../midi.md#which-midi-device-should-i-use).
+This makes FluidSynth very flexible, but it also means that it does not
+reproduce the sound of a particular DOS-era MIDI module. If you want the
+authentic sound of the Roland SC-55 (the MIDI module most game composers
+used), use [Sound Canvas emulation](roland-sound-canvas.md) instead.
+
+FluidSynth is lighter on CPU than Sound Canvas emulation and is a good option
+when you don't have SC-55 ROMs or when you prefer a particular SoundFont's
+character.
+
+For more background on MIDI and General MIDI, and for help deciding which MIDI
+device to use for a particular game, see the [MIDI](../midi.md) section.
+
+!!! warning "Roland MT-32 is not General MIDI"
+
+    Don't confuse the Sound Canvas with the [Roland MT-32](roland-mt-32.md).
+    Although both are MIDI sound modules, the MT-32 is a programmable synthesiser
+    with a very different sound engine, while the Sound Canvas supports
+    General MIDI. Music written for one often sounds completely wrong on the
+    other. See [MT-32 vs General MIDI](../midi.md#mt-32-vs-general-midi) for
+    details.
 
 
 ## SoundFont setup
 
-Download a SoundFont file and place it in the `soundfonts` directory inside
+Download a SoundFont file and place it in the `soundfonts` folder inside
 your DOSBox configuration folder:
 
 <div class="compact" markdown>
 
-| Platform   | SoundFont directory                                      |
-| ---------- | -------------------------------------------------------- |
-| Windows    | `C:\Users\<USERNAME>\AppData\Local\DOSBox\soundfonts\`   |
-| macOS      | `~/Library/Preferences/DOSBox/soundfonts/`               |
-| Linux      | `~/.config/dosbox/soundfonts/`                           |
+| Platform   | SoundFont folder
+| ---------- | --------------------------------------------------------
+| Windows    | `C:\Users\<USERNAME>\AppData\Local\DOSBox\soundfonts\`
+| macOS      | `/Users/<USERNAME>/Library/Preferences/DOSBox/soundfonts/`
+| Linux      | `$HOME/.config/dosbox/soundfonts/`
 
 </div>
 
@@ -41,6 +67,15 @@ mididevice = fluidsynth
 [fluidsynth]
 soundfont = GeneralUser-GS
 ```
+
+## Listing the available SoundFonts
+
+Run the `MIXER /LISTMIDI` command to see the list of available SoundFonts:
+
+![DOSBox Staging mixer showing the active SoundFonts](https://www.dosbox-staging.org/static/images/manual/mixer-listmidi-fluidsynth.png){ loading=lazy }
+
+If FluidSynth is active, the selected SoundFont is highlighted.
+
 
 ## Recommended SoundFonts
 
@@ -75,43 +110,51 @@ Other options worth trying:
 For a hands-on walkthrough of setting up FluidSynth with a specific game,
 see the [Star Wars: Dark
 Forces](../../../getting-started/star-wars-dark-forces.md#fluidsynth)
-chapter of the getting started guide.
+chapter of the Getting Started guide.
 
 
 ## SoundFont locations
 
 If [`soundfont_dir`](#soundfont_dir) is set, DOSBox Staging searches that
-directory first. Otherwise, it searches the following directories for
-SoundFont files (in order):
+folder first. Otherwise, it searches the following folders for SoundFont files
+(in order):
 
 **Windows**
 
-1. `%LOCALAPPDATA%\DOSBox\soundfonts\`
+<div class="compact" markdown>
+
+1. `C:\Users\<USERNAME>\AppData\Local\DOSBox\soundfonts\`
 2. `C:\soundfonts\`
+
+</div>
 
 **macOS**
 
-1. `~/Library/Preferences/DOSBox/soundfonts/`
-2. `~/Library/Audio/Sounds/Banks/`
+<div class="compact" markdown>
+
+1. `/Users/<USERNAME>/Library/Preferences/DOSBox/soundfonts/`
+2. `/Users/<USERNAME>/Library/Audio/Sounds/Banks/`
+
+</div>
 
 **Linux**
 
-1. `$XDG_DATA_HOME/dosbox/soundfonts/` (defaults to `~/.local/share/dosbox/soundfonts/`)
-2. `$XDG_DATA_HOME/soundfonts/` (defaults to `~/.local/share/soundfonts/`)
-3. `$XDG_DATA_HOME/sounds/sf2/` (defaults to `~/.local/share/sounds/sf2/`)
+1. `$XDG_DATA_HOME/dosbox/soundfonts/` (defaults to `$HOME/.local/share/dosbox/soundfonts/`)
+2. `$XDG_DATA_HOME/soundfonts/` (defaults to `$HOME/.local/share/soundfonts/`)
+3. `$XDG_DATA_HOME/sounds/sf2/` (defaults to `$HOME/.local/share/sounds/sf2/`)
 4. `$XDG_DATA_DIRS/soundfonts/` (defaults to `/usr/local/share/soundfonts/` and `/usr/share/soundfonts/`)
 5. `$XDG_DATA_DIRS/sounds/sf2/` (defaults to `/usr/local/share/sounds/sf2/` and `/usr/share/sounds/sf2/`)
-6. `$XDG_CONFIG_HOME/dosbox/soundfonts/` (defaults to `~/.config/dosbox/soundfonts/`)
+6. `$XDG_CONFIG_HOME/dosbox/soundfonts/` (defaults to `$HOME/.config/dosbox/soundfonts/`)
 
 
 ## Reverb and chorus
 
 The [`fsynth_reverb`](#fsynth_reverb) and [`fsynth_chorus`](#fsynth_chorus)
-settings apply reverb and chorus effects *within the FluidSynth synthesiser
-engine itself*, before the audio reaches the DOSBox mixer. This is separate
-from the mixer-level [`reverb`](../mixer-effects.md#reverb) and
-[`chorus`](../mixer-effects.md#chorus) effects, which are applied after
-mixing to all audio channels. The FluidSynth effects only affect MIDI
+settings apply reverb and chorus effects *within* the FluidSynth synthesiser
+engine, *before* the audio reaches the DOSBox mixer. This is separate from the
+mixer-level [`reverb`](../mixer-effects.md#reverb) and
+[`chorus`](../mixer-effects.md#chorus) effects, which are applied to the
+output of the emulated sound devices. So these effects only affect MIDI
 playback through FluidSynth.
 
 The default `auto` mode applies optimised reverb and chorus settings for the
@@ -150,8 +193,8 @@ FluidSynth settings are to be configured in the `[fluidsynth]` section.
 
     <div class="compact" markdown>
 
-    - The user-defined SoundFont directory (see [`soundfont_dir`](#soundfont_dir))
-    - The `soundfonts` directory in your DOSBox configuration directory
+    - The user-defined SoundFont folder (see [`soundfont_dir`](#soundfont_dir))
+    - The `soundfonts` folder in your DOSBox configuration folder
     - Other common system locations
 
     </div>
@@ -166,8 +209,8 @@ FluidSynth settings are to be configured in the `[fluidsynth]` section.
 
 ##### soundfont_dir
 
-:   Extra user-defined SoundFont directory (unset by default). If set,
-    SoundFonts are looked up in this directory first, then in the standard
+:   Extra user-defined SoundFont folder (unset by default). If set,
+    SoundFonts are looked up in this folder first, then in the standard
     system locations.
 
 

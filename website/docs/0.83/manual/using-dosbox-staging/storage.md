@@ -1,6 +1,32 @@
 # Storage
 
-## How DOS uses drives
+DOS programs can only access files that are available on DOS drives (**A:**,
+**C:**, **D:**, etc.). Unlike modern operating systems, DOS has no concept of
+a single unified filesystem, so before a program can access your game files
+they must first be **mounted** as one or more DOS drives. Mounting simply
+means mapping a [host folder](#mounting-folders), [hard disk
+image](#mounting-hard-disk-images), [floppy disk
+image](#mounting-floppy-images), or [CD-ROM image](#mounting-cd-rom-images) to
+a DOS drive letter.
+
+DOSBox Staging offers two ways to do this. For most users, the recommended
+approach is [automounting](#automounting), which automatically creates DOS
+drives from a simple per-game folder structure. Alternatively, you can
+[manually mount drives](#manual-mounting) using the `MOUNT` command for
+maximum flexibility.
+
+The following sections explain how DOS drive letters work, the different types
+of storage media used by DOS PCs, and how to mount folders and disk images
+in DOSBox Staging.
+
+!!! note "Terminology"
+
+    DOS refers to folders as **directories**, while modern operating systems
+    generally use the term **folder**. They refer to the same thing, and
+    throughout this manual we use the two terms interchangeably.
+
+
+## DOS drive letters
 
 DOS identifies storage devices by drive letters, not by names or mount points.
 Each drive letter (A: through Z:) maps to exactly one storage device or
@@ -22,10 +48,10 @@ The letter assignments follow a fixed convention:
   partition, the CD-ROM is usually D:; with two partitions, it becomes E:,
   and so on.
 
-In DOSBox Staging, you assign drive letters yourself when you mount
-directories or disk images, so you have full control over the layout. The
-conventions above are worth following because many games assume them ---
-especially C: for the hard disk and D: for the CD-ROM.
+In DOSBox Staging, you assign drive letters yourself when you mount folders or
+disk images, so you have full control over the layout. The conventions above
+are worth following because many games assume them --- especially C: for the
+hard disk and D: for the CD-ROM.
 
 
 ## DOS storage media
@@ -62,29 +88,32 @@ to the hard disk.
 
 ## DOSBox Staging drives
 
-DOSBox Staging provides two special drives in addition to whatever you mount:
+DOSBox Staging provides two special [automounted](#automounting) drives in
+addition to whatever you mount:
 
-- **Z:** contains the built-in programs and commands (MOUNT, CONFIG, MIXER,
-  etc.). It is always present and always in the PATH. See
-  [DOS commands & programs](commands.md) for the full list.
+- **Z:** contains the built-in programs and commands (`MOUNT`, `BOOT`,
+  `MIXER`, `IMGMOUNT`, `MOUSECTL`, `SHOWPIC`, etc.). It is always present
+  and always in the PATH. See [DOS commands & programs](commands.md) for the
+  full list.
 
-- **Y:** contains a small set of bundled third-party utilities (DEBUG,
-  DELTREE, XCOPY). It is [automounted](../system/general.md#automount) by
-  default with its `Y:\DOS` directory added to the PATH.
+- **Y:** contains a small set of [bundled third-party
+  utilities](commands.md#bundled-third-party-programs) in its `Y:\DOS`
+  directory which is added automatically to the PATH (e.g. `DEBUG`, `DELTREE`
+  and `XCOPY`).
 
 
 ## Automounting
 
 The easiest way to set up drives is automounting. Place your game files in a
-`drives/` directory structure, and DOSBox Staging mounts them automatically on
+`drives/` folder structure, and DOSBox Staging mounts them automatically on
 startup. The
 [Getting Started guide](../../getting-started/setting-up-prince-of-persia.md#the-c-drive)
 demonstrates this approach step by step.
 
 
-### Directory structure
+### Folder structure
 
-Create lowercase single-letter subdirectories under `drives/` to mount as DOS
+Create lowercase single-letter subfolders under `drives/` to mount as DOS
 drives:
 
 ```
@@ -93,20 +122,21 @@ drives/
   d/     -> mounted as D:
 ```
 
-The `drives/` folder is looked up relative to the current working directory or
-from the built-in resources directory.
+The `drives/` folder is looked up relative to the current [working
+directory](starting.md#the-working-directory) (folder) or from the built-in
+resources folder.
 
 
 ### Floppy and CD-ROM images
 
 Automounting also supports disk images for floppy and CD-ROM drives:
 
-- Place IMG or IMA floppy images in `drives/a/` or `drives/b/` to mount
+- Place **IMG** or **IMA** floppy images in `drives/a/` or `drives/b/` to mount
   them as floppy drives.
-- Place ISO, CUE/BIN, or MDS/MDF CD-ROM images in any drive directory (e.g.,
-  `drives/d/`) to mount them as CD-ROM drives.
+- Place **ISO**, **CUE/BIN**, or **MDS/MDF** CD-ROM images in any drive folder
+  (e.g., `drives/d/`) to mount them as CD-ROM drives.
 
-When multiple images are placed in the same directory, they are all mounted
+When multiple images are placed in the same folder, they are all mounted
 and you can switch between them during gameplay --- see
 [Disk swapping](#disk-swapping) below.
 
@@ -116,8 +146,8 @@ type.
 
 ### Drive configuration files
 
-Each drive directory can have an accompanying configuration file named
-`[letter].conf` (e.g., `c.conf`) placed alongside the directory. Example:
+Each drive folder can have an accompanying configuration file named
+`[letter].conf` (e.g., `c.conf`) placed alongside the folder. Example:
 
 ```ini
 [drive]
@@ -150,8 +180,8 @@ the log after each swap.
 
 ### Swapping with automounting
 
-Place multiple disk images in the same drive directory and DOSBox Staging
-mounts them all automatically. For example, for a three-disk floppy game:
+Place multiple disk images in the same drive folder and DOSBox Staging mounts
+them all automatically. For example, for a three-disk floppy game:
 
 ```
 drives/
@@ -210,13 +240,8 @@ mount F cd3.cue
 mount G cd4.cue
 ```
 
-!!! note
-
-    CD-ROM drive letters must be continuous --- D:, E:, F:, G: works,
-    but D:, F:, H: does not.
-
 This also works with automounting --- place each CD image in its own drive
-directory:
+folder:
 
 ```
 drives/
@@ -231,9 +256,9 @@ drives/
 ```
 
 This approach is needed for games that expect multiple CD drives to be
-available simultaneously, such as
-[Under a Killing Moon (1994)](https://www.mobygames.com/game/850/under-a-killing-moon/)
-which shipped on four CDs and could run with all four drives mounted at once.
+available simultaneously, such as [Under a Killing
+Moon](https://www.mobygames.com/game/850/under-a-killing-moon/) which shipped
+on four CDs and could run with all four drives mounted at once.
 
 !!! tip
 
@@ -248,16 +273,16 @@ which shipped on four CDs and could run with all four drives mounted at once.
 
     <div class="compact" markdown>
 
-    - [Wing Commander (1990)](https://www.mobygames.com/game/3/wing-commander/) --- multiple 5.25" or 3.5" floppies
-    - [The Secret of Monkey Island (1990)](https://www.mobygames.com/game/616/the-secret-of-monkey-island/) --- 4 or 8 floppies depending on disk size
-    - [Indiana Jones and the Fate of Atlantis (1992)](https://www.mobygames.com/game/316/indiana-jones-and-the-fate-of-atlantis/) --- 11 HD floppies
-    - [Day of the Tentacle (1993)](https://www.mobygames.com/game/719/maniac-mansion-day-of-the-tentacle/) --- 6 HD floppies
-    - [Sam & Max Hit the Road (1993)](https://www.mobygames.com/game/745/sam-max-hit-the-road/) --- 6 HD floppies
-    - [Phantasmagoria (1995)](https://www.mobygames.com/game/1164/roberta-williams-phantasmagoria/) --- 7 CDs
-    - [The Beast Within: A Gabriel Knight Mystery (1995)](https://www.mobygames.com/game/118/the-beast-within-a-gabriel-knight-mystery/) --- 6 CDs
-    - [Wing Commander IV: The Price of Freedom (1996)](https://www.mobygames.com/game/343/wing-commander-iv-the-price-of-freedom/) --- 6 CDs
-    - [Riven: The Sequel to Myst (1997)](https://www.mobygames.com/game/1262/riven-the-sequel-to-myst/) --- 5 CDs
     - [Baldur's Gate (1998)](https://www.mobygames.com/game/712/baldurs-gate/) --- 5 CDs
+    - [Beast Within: A Gabriel Knight Mystery, The (1995)](https://www.mobygames.com/game/118/the-beast-within-a-gabriel-knight-mystery/) --- 6 CDs
+    - [Day of the Tentacle (1993)](https://www.mobygames.com/game/719/maniac-mansion-day-of-the-tentacle/) --- 6 HD floppies
+    - [Indiana Jones and the Fate of Atlantis (1992)](https://www.mobygames.com/game/316/indiana-jones-and-the-fate-of-atlantis/) --- 11 HD floppies
+    - [Phantasmagoria (1995)](https://www.mobygames.com/game/1164/roberta-williams-phantasmagoria/) --- 7 CDs
+    - [Riven: The Sequel to Myst (1997)](https://www.mobygames.com/game/1262/riven-the-sequel-to-myst/) --- 5 CDs
+    - [Sam & Max Hit the Road (1993)](https://www.mobygames.com/game/745/sam-max-hit-the-road/) --- 6 HD floppies
+    - [Secret of Monkey Island, The (1990)](https://www.mobygames.com/game/616/the-secret-of-monkey-island/) --- 4 or 8 floppies depending on disk size
+    - [Wing Commander (1990)](https://www.mobygames.com/game/3/wing-commander/) --- multiple 5.25" or 3.5" floppies
+    - [Wing Commander IV: The Price of Freedom (1996)](https://www.mobygames.com/game/343/wing-commander-iv-the-price-of-freedom/) --- 6 CDs
 
     </div>
 
@@ -270,34 +295,50 @@ DOS prompt for the full reference.
 
 !!! note
 
-    `IMGMOUNT` is deprecated. Use `MOUNT` for both directories and disk
-    images.
+    `IMGMOUNT` is deprecated. Use `MOUNT` for both folders and disk images.
 
 
-### Mounting directories
+### Mounting folders
 
 ```
 mount C /path/to/game/files
 ```
 
-This mounts a host directory as a DOS hard disk drive. This is the most common
-way to make game files accessible to DOS.
+This mounts a host folder as a DOS hard disk drive. This is the most common
+way for making games files accessible to DOS.
+
+Folder-mounted hard disks report approximately 250 MB of free space by
+default. This is a made-up number; reporting the actual available space of
+your host drive wouldn't make any sense for DOS. So the emulator needs to
+report a fake but realistic fixed number.
+
+You can use the `-freesize` option to adjust the amount of available free space
+per drive (in MB for hard disks, KB for floppies):
+
+```
+mount C /path/to/game -freesize 1024
+```
 
 !!! warning
 
     Some games check for free disk space and refuse to install if there isn't
-    enough. Directory-mounted hard disks report approximately 250 MB of free
-    space by default. Use the `-freesize` flag to adjust it (in MB for hard
-    disks, KB for floppies):
+    enough (e.g., [Fallout](https://www.mobygames.com/game/223/fallout/),
+    [M.A.X](https://www.mobygames.com/game/249397/max-mechanized-assault-exploration/),
+    [KKND](https://www.mobygames.com/game/520/kknd-krush-kill-n-destroy/), and
+    [TekWar](https://www.mobygames.com/game/2420/william-shatners-tekwar/)).
+    Then some earlier games from the era of small hard drives get confused if
+    there is _too much_ space available,  (e.g., [King's Quest
+    IV](https://www.mobygames.com/game/129/kings-quest-iv-the-perils-of-rosella/)
+    complaining about not enough disk space when saving the game if the free
+    space is more than 50 MB). Check out our [Game
+    issues](https://github.com/dosbox-staging/dosbox-staging/wiki/Game-issues)
+    wiki page for more examples.
 
-    ```
-    mount C /path/to/game -freesize 1024
-    ```
-
-!!! warning
+!!! warning "Volume labels"
 
     Some games --- particularly those with copy protection --- check the
-    volume label of the drive. Use the `-label` flag to set it explicitly:
+    volume label of the drive and refuse to install or run if it doesn't match
+    their expectations. Use the `-label` option to set it explicitly:
 
     ```
     mount A /path/to/floppy -t floppy -label DISK1
@@ -307,7 +348,7 @@ way to make game files accessible to DOS.
 #### Overlay mounts
 
 An overlay mount adds a write layer on top of an existing drive. Modified
-files are stored in the overlay directory on the host, leaving the original
+files are stored in the overlay folder on the host, leaving the original
 drive data unchanged. This is useful for keeping a clean copy of game files
 while still allowing the game to save data:
 
@@ -436,7 +477,7 @@ FAT12, FAT16, and FAT32 filesystems are supported.
 
 ### Read-only mounts
 
-Use the `-ro` flag to mount a drive as read-only:
+Use the `-ro` option to mount a drive as read-only:
 
 ```
 mount D /path/to/shared -ro
@@ -522,9 +563,9 @@ Storage-related settings are in the `[dosbox]` section:
 
 <div class="compact" markdown>
 
-- [`automount`](../system/general.md#automount)
-- [`hard_disk_speed`](../system/general.md#hard_disk_speed)
-- [`floppy_disk_speed`](../system/general.md#floppy_disk_speed)
+- [`automount`](../system/dos.md#automount_1)
+- [`hard_disk_speed`](../system/overview.md#hard_disk_speed)
+- [`floppy_disk_speed`](../system/overview.md#floppy_disk_speed)
 
 </div>
 

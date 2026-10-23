@@ -25,9 +25,18 @@
     },
     {
       "name": "sdl3",
-      "platform": "!linux"
+      "platform": "!linux",
+      "features": [
+        {
+          "name": "macos-keyboard-grab",
+          "platform": "osx"
+        }
+      ]
     },
-    "sdl3-image",
+    {
+      "name": "sdl3-image",
+      "features": ["png"]
+    },
     "speexdsp",
     "zlib-ng",
     {
@@ -35,5 +44,5 @@
       "host": true
     }
   ],
-  "builtin-baseline": "9e593bb18ea69cc5095e012465dcd675a822ed0d"
+  "builtin-baseline": "5f96cd15fd745122cf27e0524606d6c1efc5fd07"
 }

@@ -1,6 +1,6 @@
 # Graphics adapters
 
-The [`machine`](../system/general.md#machine) setting selects which video
+The [`machine`](#machine) setting selects which video
 adapter DOSBox Staging emulates. This determines the graphics modes available
 to DOS programs and, in some cases, enables additional hardware like sound
 chips.
@@ -14,7 +14,7 @@ targeting specific [SVGA chipsets](#vga-and-svga).
 
 For an overview of which graphics standard was typical in each era, see
 [The DOS eras](../introduction/dos-eras.md). The
-[Getting Started guide](../../getting-started/enhancing-prince-of-persia.md#graphics-options)
+[Getting Started guide](../../getting-started/customising-prince-of-persia.md#graphics-options)
 walks through switching between adapters for a specific game.
 
 
@@ -36,7 +36,9 @@ and a number of Sierra and other titles that shipped with Hercules drivers.
 
 DOSBox Staging emulates the Hercules with selectable monochrome phosphor
 palettes (amber, green, white, paperwhite) that can be cycled with ++f11++ or
-set via the [`monochrome_palette`](rendering.md#monochrome_palette) setting.
+set via the
+[`monochrome_palette`](rendering/colour-and-image-adjustments.md#monochrome_palette)
+setting.
 
 {{ figure(
     "https://www.dosbox-staging.org/static/images/getting-started/pop-hercules-amber.png",
@@ -109,9 +111,9 @@ specific configuration.
 Released in 1983, the **IBM PCjr** was IBM's ambitious but ill-fated attempt
 at a home computer. It extended CGA with additional video modes — most notably
 16-colour 320&times;200, a significant step up from CGA's 4-colour limit — and
-added a Texas Instruments SN76496 [3-voice sound
-chip](../sound/sound-devices/tandy.md), the first built-in sound hardware
-beyond the PC speaker on any IBM PC platform.
+added a [3-voice sound chip](../sound/sound-devices/tandy.md) (Texas
+Instruments SN76496 ), the first built-in sound hardware beyond the PC speaker
+on any IBM PC platform.
 
 It was discontinued after just one year. The chiclet keyboard was universally
 mocked, the price was too high, and compatibility with standard IBM PC
@@ -121,27 +123,14 @@ opportunity, cloned the PCjr's enhanced graphics and sound into the [Tandy
 their Radio Shack stores nationwide in the USA. The rest is history --- the
 PCjr is a footnote, the Tandy 1000 is beloved.
 
-Setting `machine = pcjr` enables PCjr graphics,
-[PCjr sound](../sound/sound-devices/tandy.md) and
-[composite video](composite-video.md) emulation.
+Setting `machine = pcjr` enables PCjr graphics, [PCjr
+sound](../sound/sound-devices/tandy.md) and [composite
+video](composite-video.md) emulation.
 
 
 ### Tandy 1000
 
 `machine = tandy`
-
-The Tandy 1000 (1984) by Tandy Corporation successfully cloned the PCjr's
-enhanced graphics and sound into a longer-lived, more popular product line.
-All CGA and PCjr video modes are supported, including 16-colour 320&times;200.
-Later Tandy models with "Video II" hardware added 16-colour 640&times;200. The
-built-in TI SN76496 3-voice sound chip gave Tandy machines a major audio
-advantage over standard PCs.
-
-Combined with enhanced graphics and sound, the Tandy 1000 was the best
-consumer-grade DOS gaming platform of the mid-1980s. Many Sierra titles
-(King's Quest, Space Quest, Leisure Suit Larry), Defender of the Crown, and
-Sid Meier's Pirates! look and sound noticeably better in Tandy mode compared
-to standard CGA.
 
 The **Tandy 1000** released in 1984 by Tandy Corporation successfully cloned
 the [IBM PCjr's](#ibm-pcjr) enhanced graphics and sound into a longer-lived,
@@ -206,7 +195,7 @@ text adventures that benefited from the extra detail. Legend Entertainment's
 [Spellcasting 101](https://www.mobygames.com/game/1027/spellcasting-101-sorcerers-get-all-the-girls/)
 and [Timequest](https://www.mobygames.com/game/1026/timequest/) are good
 examples of games built specifically around it. Most games used
-[dithering](rendering.md#dedithering) creatively to simulate more colours than
+[dithering](rendering/special-features.md#dedithering) creatively to simulate more colours than
 the 16-colour palette could display directly.
 
 !!! note
@@ -241,6 +230,10 @@ extensions, the VESA BIOS Extensions (VBE) standard was created to provide a
 uniform programming interface. DOSBox Staging emulates four SVGA chipsets,
 ranging from late 1980s designs to the mid-1990s [S3 Trio64](#s3-trio64).
 
+On most VGA and SVGA adapters, text modes use 9-pixel-wide character cells. A
+few early adapters used 8-pixel-wide characters --- enable
+[`vga_8dot_font`](#vga_8dot_font) if you want this.
+
 {{ figure(
     "https://www.dosbox-staging.org/static/images/getting-started/pop-vga.jpg",
     "Prince of Persia in VGA mode --- VGA adapters line-double 200-line modes, resulting in \"chunky\" looking pixels"
@@ -254,7 +247,7 @@ ranging from late 1980s designs to the mid-1990s [S3 Trio64](#s3-trio64).
 The **Paradise PVGA1A** (1988) was an early SVGA chipset from Western Digital,
 and the closest thing DOSBox Staging offers to a plain IBM VGA adapter. It has
 no VESA VBE support and defaults to 512 KB of video memory (configurable to
-256 KB or 1 MB via [`vmemsize`](../system/general.md#vmemsize)).
+256 KB or 1 MB via [`vmemsize`](#vmemsize)).
 
 Use this for games or demos that expect strict VGA behaviour with no SVGA
 extensions --- particularly titles that break or behave unexpectedly on more
@@ -287,7 +280,7 @@ the most popular SVGA chipsets of the early 1990s — widely adopted,
 well-supported, and significantly more capable than its predecessor. It offers
 a wider range of extended modes and defaults to 1 MB of video memory
 (configurable to 256 KB or 512 KB via
-[`vmemsize`](../system/general.md#vmemsize)). No VESA VBE is supported on this
+[`vmemsize`](#vmemsize)). No VESA VBE is supported on this
 card.
 
 The ET4000's popularity made it a common target for demoscene productions of
@@ -304,12 +297,12 @@ adapter in DOSBox Staging. By the mid-1990s, S3 cards were ubiquitous, and the
 Trio64 represents the peak of the DOS-era SVGA landscape. It provides full
 VESA VBE 2.0 support with a linear framebuffer, defaults to 4 MB of video
 memory (configurable from 512 KB to 8 MB via
-[`vmemsize`](../system/general.md#vmemsize)), and handles everything from
+[`vmemsize`](#vmemsize)), and handles everything from
 standard VGA up to high-resolution SVGA modes including 1600×1200.
 
 This is the right choice for the vast majority of DOS games — if you're not
 sure which adapter to use, stay here. Use the
-[`vesa_modes`](../system/general.md#vesa_modes) setting to control which SVGA
+[`vesa_modes`](#vesa_modes) setting to control which SVGA
 modes are exposed to software.
 
 !!! note
@@ -335,6 +328,60 @@ Two variants are available for specific compatibility needs:
 - `machine = vesa_nolfb` --- S3 Trio64 with VESA VBE 2.0 but without the
   linear framebuffer hack. Needed by a small number of titles.
 
+
+### Custom VESA resolutions
+
+The [`vesa_custom_resolution`](#vesa_custom_resolution) setting replaces the
+1152x864 VESA resolution with a custom one of your choosing, from 320x200 up
+to 1920x1440. Custom resolutions always use square pixels.
+
+This is useful for games that build their video mode list by asking the VESA
+BIOS what resolutions are available, rather than using a fixed internal list.
+For example, you can play [Quake](https://www.mobygames.com/game/374/quake/)
+and Build Engine games such as
+[Duke Nukem 3D](https://www.mobygames.com/game/365/duke-nukem-3d/),
+[Shadow Warrior](https://www.mobygames.com/game/1779/shadow-warrior/), and
+[Blood](https://www.mobygames.com/game/793/blood/) in widescreen by setting
+`vesa_custom_resolution = 1920x1080` --- the custom resolution simply shows up
+in the game's own video mode selector. Low resolutions work too: 960x540 or
+480x270 give you chunky-pixel 16:9 widescreen.
+
+You can also run Windows 3.1 in widescreen or at modern high resolutions with
+the [VBESVGA driver](https://github.com/PluMGMK/vbesvga.drv), which picks up
+any resolution the VESA BIOS reports.
+
+Colour depth variants of the custom resolution that don't fit into the video
+memory are skipped with a warning in the logs; increase
+[`vmemsize`](#vmemsize) to make them available (e.g., 1920x1080 in 32-bit
+colour needs 8 MB of video memory).
+
+!!! warning
+
+    The feature only works with the default `svga_s3` [`machine`](#machine) type;
+    the other `svga_*` and `vesa_*` machine types are not supported.
+
+
+## Video memory delay
+
+The [`vmem_delay`](#vmem_delay) setting emulates the CPU-throttling effect of
+accessing slow video memory via the ISA bus on old video cards. This can fix
+flashing graphics and speed issues in Hercules, CGA, EGA, and early VGA games.
+
+Enable it only on a per-game basis as it slows down emulation. The following
+games benefit from the enabling `vmem_delay` --- there are probably many others:
+
+<div class="compact" markdown>
+
+- [Corncob 3-D (1992)](https://www.mobygames.com/game/40284/corncob-3-d-the-other-worlds-campaign/)
+- [Corncob Deluxe (1993)](https://www.mobygames.com/game/3480/corncob-deluxe/)
+- **Crazy Brix** --- needs `vmem_delay = 2000` and `cpu_cycles = 70000`
+- [Future Wars (1989)](https://www.mobygames.com/game/2205/future-wars-adventures-in-time/) --- also needs `cpu_cycles = 1000`
+- [Gold of the Aztecs, The (1990)](https://www.mobygames.com/game/17245/the-gold-of-the-aztecs/)
+- [Hostages (1990)](https://www.mobygames.com/game/6939/hostage-rescue-mission/) --- also needs `cpu_cycles = 1500`
+- [Operation Stealth (1990)](https://www.mobygames.com/game/2236/007-james-bond-the-stealth-affair/) --- when VGA or EGA is selected in the game's setup
+- [Quest for Glory II (1990)](https://www.mobygames.com/game/169/quest-for-glory-ii-trial-by-fire/) --- fixes the too fast vertical scrolling in the intro
+
+</div>
 
 ## Summary
 
@@ -369,5 +416,176 @@ video adapter:
 - **[ReelMagic](reelmagic.md)** --- Sigma Designs MPEG-1 hardware decoder
   from 1993 for full-motion video in a handful of DOS titles.
 
-These are independent of the [`machine`](../system/general.md#machine) setting
+These are independent of the [`machine`](#machine) setting
 and can be used with any adapter.
+
+## Configuration settings
+
+You can set these in the `[dosbox]` configuration section.
+
+##### machine
+
+:   Set the video adapter or machine to emulate.
+
+    Possible values:
+
+    <div class="compact" markdown>
+
+    - `hercules` -- Hercules Graphics Card (HGC) (see
+      [`monochrome_palette`](rendering/colour-and-image-adjustments.md#monochrome_palette)).
+    - `cga_mono` -- CGA adapter connected to a monochrome monitor (see
+      [`monochrome_palette`](rendering/colour-and-image-adjustments.md#monochrome_palette)).
+    - `cga` -- IBM Color Graphics Adapter (CGA). Also enables composite
+      video emulation (see [Composite video](composite-video.md)).
+    - `pcjr` -- An IBM PCjr machine. Also enables PCjr sound and composite
+      video emulation. See [Machine types](../system/machine-types.md).
+    - `tandy` -- A Tandy 1000 machine with TGA graphics. Also enables Tandy
+      sound and composite video emulation. See
+      [Machine types](../system/machine-types.md).
+    - `ega` -- IBM Enhanced Graphics Adapter (EGA).
+    - `svga_paradise` -- Paradise PVGA1A SVGA card (no VESA VBE; 512K vmem
+      by default, can be set to 256K or 1MB with [`vmemsize`](#vmemsize)).
+      This is the closest to IBM's original VGA adapter.
+    - `svga_et3000` -- Tseng Labs ET3000 SVGA card (no VESA VBE; fixed 512K
+      vmem).
+    - `svga_et4000` -- Tseng Labs ET4000 SVGA card (no VESA VBE; 1MB vmem
+      by default, can be set to 256K or 512K with [`vmemsize`](#vmemsize)).
+    - `svga_s3` *default*{ .default } -- S3 Trio64 (VESA VBE 2.0; 4MB vmem
+      by default, can be set to 512K, 1MB, 2MB, or 8MB with
+      [`vmemsize`](#vmemsize)).
+    - `vesa_oldvbe` -- Same as `svga_s3` but limited to VESA VBE 1.2.
+    - `vesa_nolfb` -- Same as `svga_s3` (VESA VBE 2.0), plus the "no linear
+      framebuffer" hack (needed only by a few games).
+
+    </div>
+
+##### vmemsize
+
+:   Video memory in MB (1--8) or KB (256 to 8192). See the [`machine`](#machine)
+    setting for the list of valid options and defaults per adapter.
+
+    Possible values: `auto` *default*{ .default } (uses the default for the
+    selected video adapter), or a specific size in MB or KB.
+
+
+##### vesa_modes
+
+:   Controls which VESA video modes are available.
+
+    Possible values:
+
+    - `compatible` *default*{ .default } -- Only the most compatible VESA
+      modes for the configured video memory size. Recommended with 4 or 8 MB
+      of video memory ([`vmemsize`](#vmemsize)) for the widest compatibility
+      with games. 320&times;200 high colour modes are excluded as they were
+      not properly supported until the late '90s. The 256-colour linear
+      framebuffer 320&times;240, 400&times;300, and 512&times;384 modes are
+      also excluded as they cause timing problems in Build Engine games.
+
+    - `halfline` -- Same as `compatible`, but the 120h VESA mode is replaced
+      with a special halfline mode used by [Extreme
+      Assault](https://www.mobygames.com/game/1396/extreme-assault/). Use only
+      if needed.
+
+    - `all` -- All modes are available, including extra DOSBox-specific VESA
+      modes. Use 8 MB of video memory for the best results. Some games
+      misbehave in the presence of certain VESA modes; try `compatible` mode
+      if this happens. The 320&times;200 high colour modes available in this mode
+      are often required by late '90s demoscene productions.
+
+    The following table shows the available resolutions in `compatible` mode
+    and the minimum video memory required for each colour depth. Standard VGA
+    modes (320&times;200, 640&times;480, etc.) are always available regardless
+    of the `vesa_modes` setting.
+
+    <div class="compact" markdown>
+
+    | Resolution      | 4-bit | 8-bit | 16-bit | 24-bit | 32-bit |
+    |-----------------|-------|-------|--------|--------|--------|
+    | 320&times;240   | ---   | any   | any    | any    | any    |
+    | 400&times;300   | ---   | any   | any    | any    | any    |
+    | 512&times;384   | ---   | any   | any    | 1 MB   | ---    |
+    | 640&times;400   | ---   | any   | ---    | ---    | 1 MB   |
+    | 640&times;480   | any   | any   | 1 MB   | 1 MB   | 2 MB   |
+    | 800&times;600   | any   | any   | 1 MB   | 2 MB   | 2 MB   |
+    | 1024&times;768  | any   | 1 MB  | 2 MB   | ---    | 4 MB   |
+    | 1152&times;864  | ---   | 1 MB  | 2 MB   | 4 MB   | 4 MB   |
+    | 1280&times;960  | 1 MB  | 2 MB  | 4 MB   | 4 MB   | 8 MB   |
+    | 1280&times;1024 | 1 MB  | 2 MB  | 4 MB   | 4 MB   | 8 MB   |
+    | 1600&times;1200 | 1 MB  | 2 MB  | 4 MB   | 8 MB   | 8 MB   |
+
+    </div>
+
+    The 16-bit column includes the 15-bit high colour modes; 512&times;384
+    high colour is 15-bit only.
+
+    In `compatible` mode, the 256-colour 320&times;240, 400&times;300, and
+    512&times;384 modes are not visible to games that require a linear
+    framebuffer (e.g., Quake); use `vesa_modes = all` for those.
+
+    The `all` mode adds the following on top of `compatible`:
+
+    <div class="compact" markdown>
+
+    - 320&times;200 modes (8/15/16/32-bit)
+    - 320&times;400 and 320&times;480 modes in all colour depths
+    - 512&times;384 modes (4/16/32-bit)
+    - 640&times;350 modes (4/8/15-bit)
+    - 640&times;400 modes (4/15/16/24-bit)
+    - 1024&times;768 24-bit and 1152&times;864 4-bit modes
+
+    </div>
+
+##### vesa_custom_resolution
+
+:   Replace the 1152x864 VESA resolution with a custom one. Useful for playing
+    games in widescreen that support custom VESA resolutions (e.g., Quake and
+    Build Engine games such as Duke Nukem 3D and Blood), or for running
+    Windows 3.1 in widescreen with the VBESVGA driver. Custom resolutions
+    always use square pixels.
+
+    Possible values:
+
+    - `none` *default*{ .default } -- Don't replace the 1152&times;864 VESA
+      resolution.
+
+    - `WxH` -- Replacement resolution in WxH format (e.g., `1920x1080`,
+      `960x540`, `480x270`). Valid range is `320x200` to
+      `1920x1440`; width must be a multiple of 8. Colour depth variants
+      that don't fit into the video memory are skipped with a warning in the
+      logs; increase [`vmemsize`](#vmemsize) to fit them (e.g.,
+      1920&times;1080 32-bit needs 8 MB).
+
+    See [Custom VESA resolutions](#custom-vesa-resolutions) for more details.
+
+    !!! note
+
+        The feature only works with the `svga_s3` machine type; any other
+        `svga_*` and `vesa_*` machine types are not supported.
+
+
+##### vga_8dot_font
+
+:   Use 8-pixel-wide fonts on VGA adapters.
+
+    Possible values: `on`, `off` *default*{ .default }
+
+
+##### vmem_delay
+
+:   Set video memory access delay emulation.
+
+    Possible values:
+
+    - `off` *default*{ .default } -- Disable video memory access delay
+      emulation. This is preferable for most games to avoid slowdowns.
+    - `on` -- Enable video memory access delay emulation (3000 ns). This can
+      help reduce or eliminate flicker in Hercules, CGA, EGA, and early VGA
+      games.
+    - `<number>` -- Set access delay in nanoseconds. Valid range is 0 to
+      20000 ns; 500 to 5000 ns is the most useful range.
+
+    !!! note
+
+        Only set this on a per-game basis when necessary as it slows down
+        the whole emulator.

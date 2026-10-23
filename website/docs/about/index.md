@@ -5,7 +5,7 @@ hide:
 
 # About
 
-[![DOSBox Staging](../assets/images/dosbox-staging-no-border.svg){ align=right width=33% .about-logo }](https://www.dosbox-staging.org/)
+[![DOSBox Staging](../assets/images/dosbox-staging-logo.svg){ align=right width=33% .about-logo }](https://www.dosbox-staging.org/)
 
 **DOSBox Staging** is a modern continuation of DOSBox with advanced features
 and current development practices.
@@ -18,7 +18,7 @@ many advanced features.
 a lot less configuration than with older DOSBox versions. Most games and
 applications require no tweaking and will work fine with the stock
 settings. However, the extensive configuration options and advanced features
-are available if you wish to delve deeper. Please refer to the [Feature
+are available if you wish to delve deeper. Please refer to the [feature
 highlights](../index.md) on our front page to learn more
 about these.
 
@@ -43,8 +43,8 @@ The key features for developers are summarised [here](https://github.com/dosbox-
 - Encourage **new contributors** by removing barriers to entry.
 - Prioritise **code quality** to minimise technical
   debt and ease maintenance. This generally means following the
-  [Staging Coding Style Guide](https://github.com/dosbox-staging/dosbox-staging/blob/main/CONTRIBUTING.md#coding-style)
-  and best practices such as the [C++ Core Guidelines](http://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines).
+  [code contributing guide](https://github.com/dosbox-staging/dosbox-staging/blob/main/docs/CONTRIBUTING.md#contributing-code)
+  and best practices such as the [C++ core guidelines](http://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines).
 
 
 ## Non-goals

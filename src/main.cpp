@@ -70,6 +70,53 @@ static void restore_console_encoding()
 	}
 }
 
+/**
+ * Sets the console icon in a DPI-aware manner.
+ *
+ * While SDL does set the console icon autonomously, it doesn't take display
+ * scaling into account, which may result in poor icon clarity on scaled
+ * screens.
+ *
+ * This function can only set the console icon on systems that still use
+ * the legacy Windows Console Host. It does nothing if the system is
+ * configured to use the Windows Terminal.
+ */
+static void set_console_icon()
+{
+	const auto handle = GetConsoleWindow();
+	if (!handle) {
+		return;
+	}
+
+	const auto dpi = GetDpiForWindow(handle);
+
+	auto load_icon = [&](const int metric) {
+		const auto size = GetSystemMetricsForDpi(metric, dpi);
+		return LoadImageW(GetModuleHandleW(nullptr),
+		                  L"DOSBOX_ICO",
+		                  IMAGE_ICON,
+		                  size,
+		                  size,
+		                  LR_DEFAULTCOLOR);
+	};
+
+	// Loaded icons are never destroyed, they survive until the application
+	// is closed
+	if (const auto icon = load_icon(SM_CXSMICON)) {
+		SendMessageW(handle,
+		             WM_SETICON,
+		             ICON_SMALL,
+		             reinterpret_cast<LPARAM>(icon));
+	}
+
+	if (const auto icon = load_icon(SM_CXICON)) {
+		SendMessageW(handle,
+		             WM_SETICON,
+		             ICON_BIG,
+		             reinterpret_cast<LPARAM>(icon));
+	}
+}
+
 static BOOL WINAPI console_event_handler(DWORD event)
 {
 	switch (event) {
@@ -484,7 +531,7 @@ static void maybe_create_resource_directories()
 	auto try_create_resource_dir = [](std_fs::path const& dir) {
 		if (!create_dir_if_not_exist(dir)) {
 			LOG_WARNING("CONFIG: Can't create directory '%s'",
-						dir.string().c_str());
+			            dir.string().c_str());
 		}
 	};
 	const auto plugins_dir = get_config_dir() / PluginsDir;
@@ -642,6 +689,7 @@ int main(int argc, char* argv[])
 
 #ifdef WIN32
 	switch_console_to_utf8();
+	set_console_icon();
 #endif
 
 	// Set up logging after command line was parsed and trivial arguments
@@ -654,7 +702,7 @@ int main(int argc, char* argv[])
 	SDL_SetAppMetadataProperty(SDL_PROP_APP_METADATA_VERSION_STRING, version_string);			
 	SDL_SetAppMetadataProperty(SDL_PROP_APP_METADATA_IDENTIFIER_STRING, DOSBOX_APP_ID);			
 	SDL_SetAppMetadataProperty(SDL_PROP_APP_METADATA_COPYRIGHT_STRING, DOSBOX_COPYRIGHT);			
-	SDL_SetAppMetadataProperty(SDL_PROP_APP_METADATA_URL_STRING, DOSBOX_WEBSITE);			
+	SDL_SetAppMetadataProperty(SDL_PROP_APP_METADATA_URL_STRING, DOSBOX_WEBSITE);
 
 	LOG_MSG("%s version %s", DOSBOX_PROJECT_NAME, version_string);
 	LOG_MSG("---");

@@ -28,17 +28,17 @@ First-time users and people migrating from other DOSBox variants should start by
 
 ## Build status
 
-[![Windows (VisualStudio) build status][build-win-msvc-badge]][build-win-msvc-ci]
-[![macOS build status][build-mac-badge]][build-mac-ci]
-[![Linux x86\_64 build status][build-lin1-badge]][build-lin1-ci]
+[![Windows build status][build-windows-badge]][build-windows-ci]
+[![macOS build status][build-macos-badge]][build-macos-ci]
+[![Linux build status][build-linux-badge]][build-linux-ci]
 
 ## Stable release builds
 
 Regular users should use our stable release builds available on our project website:
 
-- [Windows](https://www.dosbox-staging.org/releases/windows/)
-- [macOS](https://www.dosbox-staging.org/releases/macos/)
-- [Linux](https://www.dosbox-staging.org/releases/linux/)
+- [Windows](https://www.dosbox-staging.org/download/windows/)
+- [macOS](https://www.dosbox-staging.org/download/macos/)
+- [Linux](https://www.dosbox-staging.org/download/linux/)
 
 
 ## Development builds
@@ -67,7 +67,7 @@ Development builds are automatically created on every commit merged to the `main
 [2]: https://github.com/dosbox-staging/dosbox-staging/actions/workflows/pvs-studio.yml
 [3]: https://github.com/emilk/loguru
 [4]: https://github.com/dosbox-staging/dosbox-staging/tree/main/tests
-[Development builds]: https://www.dosbox-staging.org/releases/development-builds/
+[Development builds]: https://www.dosbox-staging.org/download/development-builds/
 
 ## Source code analysis tools
 
@@ -82,18 +82,18 @@ DOSBox Staging has the following library dependencies:
 
 | Dependency                                                | Provides feature                                | vcpkg package name | vcpkg version     | Optional?           |
 | --------------------------------------------------------- | ----------------------------------------------- | ------------------ | ----------------- | ------------------- |
-| [FluidSynth](https://www.fluidsynth.org/)                 | General MIDI playback                           | fluidsynth         | 2.5.1             | **no** :red_circle: |
-| [GoogleTest](https://github.com/google/googletest)        | Unit testing (development)                      | gtest              | 1.70.0#2          | yes :green_circle:  |
+| [Asio](https://think-async.com/Asio/)                     | Network API for emulated serial and IPX         | asio               | 1.32.0            | **no** :red_circle: |
+| [FluidSynth](https://www.fluidsynth.org/)                 | General MIDI playback                           | fluidsynth         | 2.5.7             | **no** :red_circle: |
+| [GoogleTest](https://github.com/google/googletest)        | Unit testing (development)                      | gtest              | 1.18.0            | yes :green_circle:  |
 | [IIR](https://github.com/berndporr/iir1)                  | Audio filtering                                 | iir1               | 1.10.0            | **no** :red_circle: |
-| [libmt32emu](https://github.com/munt/munt)                | Roland MT-32 and CM-32L emulation               | libmt32emu         | 2.7.1             | yes :green_circle:  |
-| [libpng](http://www.libpng.org/pub/png/libpng.html)       | PNG encoding of screen captures                 | libpng             | 1.6.53            | **no** :red_circle: |
-| [libslirp](https://gitlab.freedesktop.org/slirp/libslirp) | General purpose TCP-IP emulator                 | libslirp           | 4.9.0             | yes :green_circle:  |
+| [libmt32emu](https://github.com/munt/munt)                | Roland MT-32 and CM-32L emulation               | libmt32emu         | 2.8.3             | yes :green_circle:  |
+| [libpng](http://www.libpng.org/pub/png/libpng.html)       | PNG encoding of screen captures                 | libpng             | 1.6.58            | **no** :red_circle: |
+| [libslirp](https://gitlab.freedesktop.org/slirp/libslirp) | General purpose TCP-IP emulator                 | libslirp           | 4.9.1             | yes :green_circle:  |
 | [Opus File](https://opus-codec.org/)                      | CD Audio playback for Opus-encoded audio tracks | opusfile           | 0.12+20221121#1   | **no** :red_circle: |
-| [SDL 3](https://github.com/libsdl-org/SDL)                | OS-agnostic API for video, audio, and eventing  | sdl3               | 3.4.10            | **no** :red_circle: |
-| [SDL_image 3](https://github.com/libsdl-org/SDL_image)    | Image decoding for many popular formats         | sdl3-image         | 3.4.4             | **no** :red_circle: |
-| [Asio](https://think-async.com/Asio/)                     | Network API for emulated serial and IPX         | asio               | 1.30.2            | **no** :red_circle: |
+| [SDL 3](https://github.com/libsdl-org/SDL)                | OS-agnostic API for video, audio, and eventing  | sdl3               | 3.4.16#1          | **no** :red_circle: |
+| [SDL_image 3](https://github.com/libsdl-org/SDL_image)    | Image decoding for many popular formats         | sdl3-image         | 3.4.4#1           | **no** :red_circle: |
 | [SpeexDSP](https://github.com/xiph/speexdsp)              | Audio resampling                                | speexdsp           | 1.2.1#1           | **no** :red_circle: |
-| [zlib-ng](https://github.com/zlib-ng/zlib-ng)             | ZMBV video capture                              | zlib-ng            | 2.3.2             | yes¹ :green_circle: |
+| [zlib-ng](https://github.com/zlib-ng/zlib-ng)             | ZMBV video capture                              | zlib-ng            | 2.3.3             | yes¹ :green_circle: |
 
 _¹ You can use plain old zlib instead._
 
@@ -126,6 +126,12 @@ For building versions prior to 0.83.0 (e.g. when bisecting), see the
 [legacy Meson build guide](docs/build-meson.md).
 
 
+## Website & documentation
+
+Please refer to the [documentation guide](DOCUMENTATION.md) before making
+changes to the website or the documentation.
+
+
 ## Imported branches, community patches, old forks
 
 Upstream commits are imported to this repo in a timely manner,
@@ -145,11 +151,6 @@ Additionally, we attach some optional metadata to the commits in the form of
 git fetch origin "refs/notes/*:refs/notes/*"
 ```
 
-## Website & documentation
-
-Please refer to the [documentation guide](DOCUMENTATION.md) before making
-changes to the website or the documentation.
-
 [`svn/*`]:     https://github.com/dosbox-staging/dosbox-staging/branches/all?utf8=%E2%9C%93&query=svn%2F
 [`svn/trunk`]: https://github.com/dosbox-staging/dosbox-staging/tree/svn/trunk
 [`vogons/*`]:  https://github.com/dosbox-staging/dosbox-staging/branches/all?utf8=%E2%9C%93&query=vogons%2F
@@ -160,11 +161,11 @@ changes to the website or the documentation.
 [discord-badge]: https://img.shields.io/discord/514567252864008206?color=%237289da&logo=discord&logoColor=white&label=discord
 [discord]:       https://discord.gg/WwAg3Xf
 
-[build-lin1-badge]: https://img.shields.io/github/actions/workflow/status/dosbox-staging/dosbox-staging/linux.yml?label=Linux%20%28x86_64%29
-[build-lin1-ci]:    https://github.com/dosbox-staging/dosbox-staging/actions/workflows/linux.yml?query=branch%3Amain
+[build-windows-badge]: https://img.shields.io/github/actions/workflow/status/dosbox-staging/dosbox-staging/windows.yml?label=Windows%20%28x86_64%29
+[build-windows-ci]:    https://github.com/dosbox-staging/dosbox-staging/actions/workflows/windows.yml?query=branch%3Amain
 
-[build-win-msvc-badge]: https://img.shields.io/github/actions/workflow/status/dosbox-staging/dosbox-staging/windows-msvc.yml?label=Windows%20%28Visual%20Studio%29
-[build-win-msvc-ci]:    https://github.com/dosbox-staging/dosbox-staging/actions/workflows/windows-msvc.yml?query=branch%3Amain
+[build-macos-badge]: https://img.shields.io/github/actions/workflow/status/dosbox-staging/dosbox-staging/macos.yml?label=macOS%20%28x86_64%2C%20arm64%29
+[build-macos-ci]:    https://github.com/dosbox-staging/dosbox-staging/actions/workflows/macos.yml?query=branch%3Amain
 
-[build-mac-badge]: https://img.shields.io/github/actions/workflow/status/dosbox-staging/dosbox-staging/macos.yml?label=macOS%20%28x86_64%2C%20arm64%29
-[build-mac-ci]:    https://github.com/dosbox-staging/dosbox-staging/actions/workflows/macos.yml?query=branch%3Amain
+[build-linux-badge]: https://img.shields.io/github/actions/workflow/status/dosbox-staging/dosbox-staging/linux.yml?label=Linux%20%28x86_64%29
+[build-linux-ci]:    https://github.com/dosbox-staging/dosbox-staging/actions/workflows/linux.yml?query=branch%3Amain
