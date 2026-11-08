@@ -15,11 +15,11 @@
 #include <vector>
 
 #ifdef WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
 #include <process.h>
 #include <windows.h>
 
-#include <winsock2.h>
-#include <ws2tcpip.h>
 // Windows doesn't define socklen_t
 typedef int socklen_t;
 #else
