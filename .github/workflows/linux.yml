@@ -181,7 +181,7 @@ jobs:
         with:
           cmd: |
             set -xeo pipefail
-            cmake ${{ matrix.conf.cmake_flags }} -DOPT_DOCUMENTATION=ON --preset ${{ matrix.conf.cmake_preset }}
+            cmake ${{ matrix.conf.cmake_flags }} -DOPT_DOCUMENTATION=OFF --preset ${{ matrix.conf.cmake_preset }}
             cmake --build --preset ${{ matrix.conf.cmake_preset }} 2>&1 | tee build.log
 
       - name: Run tests
@@ -251,7 +251,7 @@ jobs:
         with:
           cmd: |
             set -xe
-            cmake -DOPT_DOCUMENTATION=ON --preset release-linux-vcpkg
+            cmake -DOPT_DOCUMENTATION=OFF --preset release-linux-vcpkg
             cmake --build --preset release-linux-vcpkg
 
       - name: Dump workspace contents

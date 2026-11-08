@@ -103,7 +103,7 @@ jobs:
         with:
           cmd: |
             set -xeo pipefail
-            cmake -DOPT_DOCUMENTATION=ON --preset release-macos-${{ matrix.conf.arch }}
+            cmake -DOPT_DOCUMENTATION=OFF --preset release-macos-${{ matrix.conf.arch }}
             cmake --build --preset release-macos-${{ matrix.conf.arch }} 2>&1 | tee build.log
 
       - name: Run tests

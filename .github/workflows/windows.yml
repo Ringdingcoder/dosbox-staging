@@ -116,7 +116,7 @@ jobs:
         with:
           cmd: |
             set -eo pipefail
-            cmake -DOPT_DOCUMENTATION=ON --preset release-windows
+            cmake -DOPT_DOCUMENTATION=OFF --preset release-windows
             cmake --build --preset release-windows 2>&1 | tee build.log
 
       - name:  Run tests
@@ -132,7 +132,7 @@ jobs:
         with:
           cmd: |
             set -eo pipefail
-            cmake -DOPT_DOCUMENTATION=ON --preset release-windows -DOPT_DEBUGGER=ON -DOPT_HEAVY_DEBUGGER=ON
+            cmake -DOPT_DOCUMENTATION=OFF --preset release-windows -DOPT_DEBUGGER=ON -DOPT_HEAVY_DEBUGGER=ON
             cmake --build --preset release-windows 2>&1 | tee build.log
 
       - name: Summarize warnings
