@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "shell/shell.h"
+#include "shell/network_compat.h"
 
 #include <chrono>
 #include <cstdarg>

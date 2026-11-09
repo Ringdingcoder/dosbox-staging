@@ -6,7 +6,6 @@
 #define DOSBOX_SHELL_H
 
 #include "dosbox.h"
-#include "shell/network_compat.h"
 
 #include <memory>
 #include <optional>
