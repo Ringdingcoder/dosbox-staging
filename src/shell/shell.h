@@ -6,6 +6,7 @@
 #define DOSBOX_SHELL_H
 
 #include "dosbox.h"
+#include "shell/network_compat.h"
 
 #include <memory>
 #include <optional>
@@ -62,9 +63,8 @@ class AutoexecEditor;
 class MoreOutputStrings;
 
 struct SHELL_Cmd {
-	void (DosShell::*handler)(char* args) = nullptr; // Handler for this
-	                                                 // command
-	const char* help       = ""; // String with command help
+	void (DosShell::*handler)(char* args) = nullptr; // This command's handler
+	const char* help       = "";
 	HELP_Filter filter     = HELP_Filter::Common;
 	HELP_Category category = HELP_Category::Misc;
 };
