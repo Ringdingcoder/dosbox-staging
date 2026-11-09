@@ -3082,6 +3082,10 @@ static void init_sdl_config_settings(SectionProp& section)
 	pstring->SetValues({"host", "player", "off"});
 	pstring->SetHelp(
             "MM2 multiplayer mode.");
+
+	pstring = section.AddString("multi_host", OnlyAtStart, "");
+	pstring->SetHelp(
+            "Multiplayer host to connect to.");
 }
 
 void GFX_AddConfigSection()
