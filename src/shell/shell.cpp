@@ -24,6 +24,7 @@ typedef int socklen_t;
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <arpa/inet.h>
+#include <netdb.h>
 #endif
 
 #include <lz4.h>
@@ -1662,7 +1663,33 @@ static uint8_t decomp_buf[3*MAX_SEND_SIZE], decomp_buf_lh[3*MAX_SEND_SIZE];
 static int decomp_pos, decomp_pos_lh;
 static char real_sendbuf[140000];
 
-bool sock_init(int *sock)
+struct in_addr name_lookup(const char *host)
+{
+    struct hostent hostbuf, *hp;
+    size_t hstbuflen;
+    char *tmphstbuf;
+    int res;
+    int herr;
+    struct in_addr result;
+
+    hstbuflen = 1024;
+    tmphstbuf = (char*) malloc(hstbuflen);
+
+    while ((res = gethostbyname_r(host, &hostbuf, tmphstbuf, hstbuflen,
+                                  &hp, &herr)) == ERANGE)
+    {
+        tmphstbuf = (char*) reallocarray(tmphstbuf, hstbuflen, 2);
+        hstbuflen *= 2;
+    }
+
+    if (res || hp == NULL)
+        pr_error("name_lookup");
+    result = *(struct in_addr*) hp->h_addr;
+    free(tmphstbuf);
+    return result;
+}
+
+bool sock_init(int *sock, const char *host)
 {
     struct sockaddr_in servaddr;
     int port = 5677;
@@ -1682,7 +1709,7 @@ bool sock_init(int *sock)
     memset(&servaddr, 0, sizeof(servaddr));
 
     servaddr.sin_family = AF_INET;
-    servaddr.sin_addr.s_addr = 0x0100007f;
+    servaddr.sin_addr.s_addr = name_lookup(host).s_addr;
     servaddr.sin_port = htons(port);
 
     if (connect(*sock, (struct sockaddr *) &servaddr, sizeof(servaddr)) != 0) {
@@ -1716,8 +1743,9 @@ void SHELL_AlternativeRun()
 
     int sock_comm;
     shell_networkinit = true;
+    auto host = get_sdl_section()->GetString("multi_host");
     // Connect to host
-    if (!sock_init(&sock_comm))
+    if (!sock_init(&sock_comm, host.c_str()))
         return;
     shell_networkinit = false;
 
