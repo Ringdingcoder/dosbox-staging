@@ -6,7 +6,6 @@
 #define DOSBOX_SHELL_H
 
 #include "dosbox.h"
-#include "shell/network_compat.h"
 
 #include <memory>
 #include <optional>
@@ -79,7 +78,7 @@ public:
 	ShellHistory(const ShellHistory&)            = delete;
 	ShellHistory& operator=(const ShellHistory&) = delete;
 	ShellHistory(ShellHistory&&)                 = delete;
-	ShellHistory& operator=(ShellHistory&&)      = delete;
+	ShellHistory& operator=(const ShellHistory&&)      = delete;
 
 private:
 	std::vector<std::string> commands{};
