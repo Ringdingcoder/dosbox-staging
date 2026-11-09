@@ -10,7 +10,7 @@
 #include <cstdlib>
 #include <cstring>
 
-#if defined(WIN32)
+#if defined(_WIN32) || defined(WIN32)
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #else
@@ -20,7 +20,7 @@
 
 // shell.cpp uses the GNU gethostbyname_r signature. Provide that signature on
 // Windows and macOS using the portable getaddrinfo API instead.
-#if defined(WIN32) || defined(MACOSX)
+#if defined(_WIN32) || defined(WIN32) || defined(__APPLE__) || defined(MACOSX)
 static inline int portable_gethostbyname_r(const char* name,
                                            struct hostent* host,
                                            char* buffer,
@@ -37,19 +37,34 @@ static inline int portable_gethostbyname_r(const char* name,
 	struct addrinfo* addresses = nullptr;
 	const int lookup_result = getaddrinfo(name, nullptr, &hints, &addresses);
 
-	struct in_addr address = {};
-	if (lookup_result == 0) {
-		for (auto* entry = addresses; entry; entry = entry->ai_next) {
-			if (entry->ai_family == AF_INET && entry->ai_addr) {
-				address = reinterpret_cast<struct sockaddr_in*>(entry->ai_addr)->sin_addr;
-				break;
-			}
+	if (lookup_result != 0) {
+		*result = nullptr;
+		if (host_error) {
+			*host_error = HOST_NOT_FOUND;
 		}
-		freeaddrinfo(addresses);
+		return EHOSTUNREACH;
 	}
 
-	// The caller starts with a 1024-byte buffer. Keep the hostent's pointer
-	// arrays and data in that buffer, as required by the reentrant API.
+	struct in_addr address = {};
+	bool found_address = false;
+	for (auto* entry = addresses; entry; entry = entry->ai_next) {
+		if (entry->ai_family == AF_INET && entry->ai_addr) {
+			address = reinterpret_cast<struct sockaddr_in*>(entry->ai_addr)->sin_addr;
+			found_address = true;
+			break;
+		}
+	}
+	freeaddrinfo(addresses);
+
+	if (!found_address) {
+		*result = nullptr;
+		if (host_error) {
+			*host_error = HOST_NOT_FOUND;
+		}
+		return EHOSTUNREACH;
+	}
+
+	// Store the hostent's pointer arrays and data in the caller's buffer.
 	const auto pointer_bytes = 4 * sizeof(char*);
 	const auto required_size = pointer_bytes + sizeof(address) + std::strlen(name) + 1;
 	if (buffer_size < required_size) {
@@ -73,7 +88,7 @@ static inline int portable_gethostbyname_r(const char* name,
 	host->h_addr_list = address_list;
 	*result = host;
 	if (host_error) {
-		*host_error = (lookup_result == 0) ? 0 : HOST_NOT_FOUND;
+		*host_error = 0;
 	}
 	return 0;
 }
